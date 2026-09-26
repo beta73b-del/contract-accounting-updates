@@ -23,6 +23,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Quarantine known broken release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view v2.16.3 --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit v2.16.3 --prerelease --repo $env:GITHUB_REPOSITORY
+          }
+
       - name: Read version
         shell: pwsh
         run: |
@@ -42,6 +52,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r app/requirements.txt
 
+      - name: Verify source completeness
+        shell: pwsh
+        run: |
+          $mainSize = (Get-Item app/main.py).Length
+          $dbSize = (Get-Item app/db.py).Length
+          if ($mainSize -lt 200000) { throw "app/main.py is incomplete: $mainSize bytes" }
+          if ($dbSize -lt 80000) { throw "app/db.py is incomplete: $dbSize bytes" }
+          python -m compileall -q app
+          python -c "import sys; sys.path.insert(0, 'app'); import main; assert hasattr(main, 'App'), 'App class missing'; assert hasattr(main, 'main'), 'main entry point missing'"
+
       - name: Verify application version
         shell: pwsh
         run: |
@@ -57,6 +77,16 @@ jobs:
           Copy-Item app/dist/UchetZakupok.exe release/UchetZakupok.exe -Force
           $hash = (Get-FileHash release/UchetZakupok.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  UchetZakupok.exe" | Set-Content release/UchetZakupok.exe.sha256 -Encoding ascii
+
+      - name: Smoke-test Windows EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path smoke | Out-Null
+          $exe = (Resolve-Path release/UchetZakupok.exe).Path
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Resolve-Path smoke).Path -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "UchetZakupok.exe exited during startup smoke test (exit code $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
 
       - name: Publish GitHub Release
         shell: pwsh
