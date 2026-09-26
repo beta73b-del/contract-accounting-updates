@@ -1059,40 +1059,66 @@ class PurchaseDialog(tk.Toplevel):
         ttk.Label(btn_frame, text="  Ctrl+S — сохранить | Ctrl+Enter — сохранить и закрыть | Esc — закрыть",
                   foreground=app_theme.MUTED).pack(side="left")
 
-        # Вся рабочая часть карточки, включая документы, находится в одной
-        # прокручиваемой области. Поэтому документы двигаются вверх/вниз вместе
-        # с остальными данными карточки, а не остаются закреплёнными отдельно.
+        # Вся рабочая часть карточки находится в одной прокручиваемой области.
         body = self._build_vscroll_area(self)
-
-        # --- Документы: новая карточка компактна, существующая сразу раскрыта ---
-        self._build_documents_section(body)
 
         content_row = ttk.Frame(body)
         content_row.pack(fill="both", expand=True)
 
-        # --- Левая часть: быстрые основные поля + сворачиваемые дополнительные ---
+        # --- Левая часть: данные сгруппированы по смыслу, а не одним длинным списком. ---
         left_col = ttk.Frame(content_row)
         left_col.pack(side="left", fill="y", padx=(0, 12))
 
         self.widgets = {}
-        header_frame = ttk.LabelFrame(left_col, text="Основные данные", padding=8)
-        header_frame.pack(fill="x", pady=(0, 8))
-        primary_keys = {
+
+        contract_keys = {
             "platform", "customer", "contract_no", "contract_date", "law",
-            "contract_sum", "purchase_cost", "contract_status", "sign_deadline", "deadline",
-            "payment_status", "payment_deadline", "exec_status"
+            "contract_sum", "purchase_cost"
         }
-        primary_specs = [spec for spec in self.HEADER_LABELS if spec[0] in primary_keys]
+        deadline_keys = {"sign_deadline", "deadline", "payment_deadline"}
+        state_keys = {"contract_status", "exec_status", "payment_status"}
+
+        contract_specs = [spec for spec in self.HEADER_LABELS if spec[0] in contract_keys]
+        deadline_specs = [spec for spec in self.HEADER_LABELS if spec[0] in deadline_keys]
+        state_specs = [spec for spec in self.HEADER_LABELS if spec[0] in state_keys]
+        primary_keys = contract_keys | deadline_keys | state_keys
         additional_specs = [spec for spec in self.HEADER_LABELS if spec[0] not in primary_keys]
-        primary_half = (len(primary_specs) + 1) // 2
-        self._build_header_column(header_frame, primary_specs[:primary_half], col_offset=0)
-        self._build_header_column(header_frame, primary_specs[primary_half:], col_offset=2)
+
+        contract_frame = ttk.LabelFrame(left_col, text="Контракт", padding=8)
+        contract_frame.pack(fill="x", pady=(0, 8))
+        contract_half = (len(contract_specs) + 1) // 2
+        self._build_header_column(contract_frame, contract_specs[:contract_half], col_offset=0)
+        self._build_header_column(contract_frame, contract_specs[contract_half:], col_offset=2)
+
+        deadline_frame = ttk.LabelFrame(left_col, text="Сроки", padding=8)
+        deadline_frame.pack(fill="x", pady=(0, 8))
+        deadline_half = (len(deadline_specs) + 1) // 2
+        self._build_header_column(deadline_frame, deadline_specs[:deadline_half], col_offset=0)
+        self._build_header_column(deadline_frame, deadline_specs[deadline_half:], col_offset=2)
         ttk.Label(
-            header_frame,
-            text=("Напоминание «Подписать до» активно при статусах «Формирование» и "
-                  "«На подписи у Заказчика». При статусе «Заключен» напоминание отключается."),
+            deadline_frame,
+            text=("«Подписать до» контролируется при статусах «Формирование» и "
+                  "«На подписи у Заказчика». После статуса «Заключен» напоминание отключается."),
             wraplength=760, justify="left", foreground=app_theme.MUTED
-        ).grid(row=primary_half, column=0, columnspan=4, sticky="w", pady=(8, 2))
+        ).grid(row=deadline_half, column=0, columnspan=4, sticky="w", pady=(8, 2))
+
+        state_frame = ttk.LabelFrame(left_col, text="Состояние", padding=8)
+        state_frame.pack(fill="x", pady=(0, 8))
+        state_half = (len(state_specs) + 1) // 2
+        self._build_header_column(state_frame, state_specs[:state_half], col_offset=0)
+        self._build_header_column(state_frame, state_specs[state_half:], col_offset=2)
+
+        # Главное действие карточки — настоящий крупный button, а не кликабельная надпись.
+        next_action_frame = ttk.LabelFrame(left_col, text="Следующее действие", padding=8)
+        next_action_frame.pack(fill="x", pady=(0, 8))
+        self.next_action_var = tk.StringVar(value="—")
+        self.next_action_button = ttk.Button(
+            next_action_frame,
+            textvariable=self.next_action_var,
+            command=self._perform_next_action,
+            style="NextAction.TButton",
+        )
+        self.next_action_button.pack(fill="x")
 
         # Дополнительные расходы и служебные сведения не мешают быстрому заведению.
         self.additional_visible = existing is not None
@@ -1110,12 +1136,10 @@ class PurchaseDialog(tk.Toplevel):
 
         if existing is not None:
             self._fill_header_from_existing(existing)
-            self._refresh_document_advice()
         else:
             if prefill is not None:
                 self._fill_header_from_existing(prefill)
             # Быстрый старт новой карточки: готовые рабочие статусы.
-            # Техническая дата добавления проставляется БД автоматически и в карточке не показывается.
             for key, value in (("contract_status", "Формирование"),
                                ("exec_status", "В процессе")):
                 try:
@@ -1123,19 +1147,8 @@ class PurchaseDialog(tk.Toplevel):
                         self._set_field(key, value)
                 except Exception:
                     self._set_field(key, value)
-            # Любая новая карточка всегда начинает с неоплаченного состояния.
-            # Это значение задаём явно даже после prefill/клонирования.
             self._set_field("payment_status", "Не оплачено")
 
-        # Крупная персональная подсказка: что по этому контракту делать следующим.
-        self.next_action_var = tk.StringVar(value="Следующее действие: —")
-        self.next_action_label = tk.Label(
-            header_frame, textvariable=self.next_action_var, anchor="w", justify="left",
-            padx=10, pady=7, bd=1, relief="solid", bg=app_theme.SOFT_BLUE, fg=app_theme.INK,
-            cursor="hand2"
-        )
-        self.next_action_label.grid(row=primary_half + 1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
-        self.next_action_label.bind("<Button-1>", self._perform_next_action)
         self._bind_next_action_updates()
         self._refresh_next_action()
 
@@ -1206,6 +1219,11 @@ class PurchaseDialog(tk.Toplevel):
                   justify="left", foreground=app_theme.ACCENT).pack(fill="x", anchor="w", pady=(2, 0))
 
         self._refresh_items_tree()
+
+        # Документы расположены ниже основных данных и товаров и всегда открываются
+        # компактно. После добавления первого файла блок раскрывается автоматически.
+        self._build_documents_section(body)
+        self._refresh_document_advice()
 
         def _safe_step(name, fn):
             """Выполняет один шаг финализации окна; если он упадёт — логируем и идём дальше,
@@ -1439,7 +1457,7 @@ class PurchaseDialog(tk.Toplevel):
     def _build_documents_section(self, parent):
         self.doc_frame = ttk.LabelFrame(parent, text="📎 Документы", padding=8)
         self.doc_frame.pack(fill="x", pady=(0, 8))
-        self.doc_expanded = not self._initially_new
+        self.doc_expanded = False
         self.doc_count_var = tk.StringVar(value="Документы — 0 файлов")
 
         top = ttk.Frame(self.doc_frame)
@@ -1454,7 +1472,7 @@ class PurchaseDialog(tk.Toplevel):
         actions = ttk.Frame(self.doc_body)
         actions.pack(fill="x", pady=(6, 6))
         ttk.Button(actions, text="Открыть...", command=self._open_document).pack(side="left", padx=(0, 6))
-        ttk.Button(actions, text="Скачать...", command=self._download_document).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="Сохранить копию...", command=self._download_document).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Изменить категорию", command=self._change_document_category).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Удалить", command=self._delete_document).pack(side="left")
 
@@ -1955,18 +1973,21 @@ class PurchaseDialog(tk.Toplevel):
         else:
             text = "Следующее действие: контракт завершён — действий не требуется"
 
-        if self._next_action_target:
-            text += f"   •   нажмите, чтобы отметить «{self._next_action_target[1]}»"
         self.next_action_var.set(text)
-        colors = {
-            "overdue": (app_theme.SOFT_RED, app_theme.RED),
-            "today": (app_theme.SOFT_RED, app_theme.RED),
-            "soon": (app_theme.SOFT_YELLOW, app_theme.AMBER),
-            "normal": (app_theme.SOFT_BLUE, app_theme.INK),
+        style_by_state = {
+            "overdue": "NextActionDanger.TButton",
+            "today": "NextActionDanger.TButton",
+            "soon": "NextActionWarning.TButton",
+            "normal": "NextAction.TButton",
         }
-        bg, fg = colors.get(state, colors["normal"])
         try:
-            self.next_action_label.configure(bg=bg, fg=fg)
+            if self._next_action_target:
+                self.next_action_button.configure(
+                    style=style_by_state.get(state, "NextAction.TButton"),
+                    state="normal",
+                )
+            else:
+                self.next_action_button.configure(style="NextActionDone.TButton", state="disabled")
         except Exception:
             pass
 
@@ -3503,36 +3524,48 @@ class App(tk.Tk):
         frame = ttk.Frame(self, padding=(12, 5), style="Status.TFrame")
         frame.pack(side="bottom", fill="x")
         ttk.Separator(frame, orient="horizontal").pack(fill="x", pady=(0, 3))
-        ttk.Label(frame, textvariable=self.storage_status_var, style="CardMuted.TLabel").pack(side="left")
-        ttk.Label(frame, textvariable=self.health_status_var, style="CardMuted.TLabel").pack(side="right", padx=(12,0))
+        self.storage_status_label = ttk.Label(
+            frame,
+            textvariable=self.storage_status_var,
+            style="StatusBusy.TLabel",
+        )
+        self.storage_status_label.pack(side="left")
 
     def _update_storage_status(self, state, error=None):
-        info = db.storage_status()
-        last = info.get("last_sync")
-        if last:
-            try:
-                last = datetime.fromisoformat(last).strftime("%d.%m.%Y %H:%M:%S")
-            except ValueError:
-                pass
-        text = f"Хранилище: локальная рабочая база | облачная копия: {state}"
-        if last:
-            text += f" | последняя синхронизация: {last}"
-        if error:
-            text += f" | ошибка: {error}"
+        # В нормальном режиме пользователь видит только короткое подтверждение.
+        # Технические подробности выводятся лишь при проблеме.
+        if error or str(state).upper().startswith("НЕ "):
+            detail = str(error or state).strip()
+            text = "⚠ Данные не синхронизированы"
+            if detail and detail.upper() != "НЕ СИНХРОНИЗИРОВАНО":
+                text += f" — {detail}"
+            style = "StatusError.TLabel"
+        elif state in ("сохранение...", "резервная копия перед обновлением..."):
+            text = "Сохранение данных…"
+            style = "StatusBusy.TLabel"
+        else:
+            text = "● Данные сохранены"
+            style = "StatusOk.TLabel"
         self.storage_status_var.set(text)
+        try:
+            self.storage_status_label.configure(style=style)
+        except Exception:
+            pass
         self._update_health_status()
 
     def _update_health_status(self):
-        parts=[]
-        backups=db.list_backups()
+        # Техническая диагностика сохраняется для логики приложения, но не занимает
+        # постоянное место в рабочем интерфейсе.
+        parts = []
+        backups = db.list_backups()
         if backups:
-            age=(datetime.now()-backups[0][1]).total_seconds()/3600
+            age = (datetime.now() - backups[0][1]).total_seconds() / 3600
             parts.append("Backup: ✓" if age <= 36 else f"Backup: ⚠ {int(age)}ч")
         else:
             parts.append("Backup: ⚠ нет")
-        enabled=db.get_setting(self.conn,"email_enabled","0") == "1" if self.conn else False
-        sender=(db.get_setting(self.conn,"email_sender","") or "").strip() if self.conn else ""
-        password=(db.get_setting(self.conn,"email_app_password","") or "").strip() if self.conn else ""
+        enabled = db.get_setting(self.conn, "email_enabled", "0") == "1" if self.conn else False
+        sender = (db.get_setting(self.conn, "email_sender", "") or "").strip() if self.conn else ""
+        password = (db.get_setting(self.conn, "email_app_password", "") or "").strip() if self.conn else ""
         if enabled and sender and password:
             parts.append("Почта: ✓")
         elif enabled:
@@ -3550,8 +3583,8 @@ class App(tk.Tk):
                 parts.append("Планировщик: ✓" if self._health_scheduler_installed else "Планировщик: ⚠")
             except Exception:
                 parts.append("Планировщик: ⚠")
-        health_text = " | ".join(parts)
-        self.health_status_var.set(health_text)
+        self.health_status_var.set(" | ".join(parts))
+
 
     def _configure_connection_autosync(self):
         if self.conn is None:
@@ -3732,7 +3765,7 @@ class App(tk.Tk):
         self.config(menu=menubar)
 
     def _open_update_settings(self):
-        """Однократная настройка публичного GitHub repository для автообновлений."""
+        """Настройки обновлений без технических параметров GitHub."""
         win = tk.Toplevel(self)
         win.title("Обновления")
         win.transient(self)
@@ -3740,53 +3773,69 @@ class App(tk.Tk):
         frame = ttk.Frame(win, padding=16)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text=f"Установленная версия: v{__version__}",
-                  font=(app_theme.FONT, BASE_FONT_SIZE, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ttk.Label(frame, text="Автообновление активно", foreground=app_theme.GREEN,
-                  font=(app_theme.FONT, BASE_FONT_SIZE, "bold")).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        ttk.Label(frame, text="GitHub repository:").grid(row=2, column=0, sticky="w", padx=(0, 8))
-        repo_var = tk.StringVar(value=db.get_setting(self.conn, "update_github_repo", DEFAULT_UPDATE_REPO) or DEFAULT_UPDATE_REPO)
-        entry = ttk.Entry(frame, textvariable=repo_var, width=46)
-        entry.grid(row=2, column=1, sticky="ew")
-        ttk.Label(frame, text="Пример: login/contract-accounting-updates",
-                  style="Muted.TLabel").grid(row=3, column=1, sticky="w", pady=(3, 9))
-        enabled_var = tk.BooleanVar(value=db.get_setting(self.conn, "update_auto_enabled", "1") != "0")
-        ttk.Checkbutton(frame, text="Проверять обновления автоматически при запуске",
-                        variable=enabled_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        status_var = tk.StringVar(value="Проверка идёт тихо в фоне; без обновления никаких окон не появляется.")
-        ttk.Label(frame, textvariable=status_var, wraplength=470, justify="left",
-                  style="Muted.TLabel").grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(
+            frame,
+            text=f"Установленная версия: v{__version__}",
+            font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
+        ).pack(anchor="w", pady=(0, 6))
 
-        def save(show_message=False):
-            raw = repo_var.get().strip()
-            repo = auto_update.normalize_repo(raw)
-            if raw and not repo:
-                messagebox.showerror("Обновления", "Укажите repository в формате login/repository или вставьте его GitHub URL.", parent=win)
-                return False
-            db.set_setting(self.conn, "update_github_repo", repo)
-            db.set_setting(self.conn, "update_auto_enabled", "1" if enabled_var.get() else "0")
-            repo_var.set(repo)
-            if show_message:
-                status_var.set("Настройки сохранены.")
-            return True
+        enabled_var = tk.BooleanVar(
+            value=db.get_setting(self.conn, "update_auto_enabled", "1") != "0"
+        )
+        auto_status_var = tk.StringVar()
+        status_var = tk.StringVar(
+            value="Проверка при запуске выполняется в фоне и не мешает работе."
+        )
+
+        def refresh_auto_status():
+            auto_status_var.set(
+                "Автоматическая проверка: включена"
+                if enabled_var.get()
+                else "Автоматическая проверка: выключена"
+            )
+
+        def save_auto():
+            db.set_setting(
+                self.conn,
+                "update_auto_enabled",
+                "1" if enabled_var.get() else "0",
+            )
+            refresh_auto_status()
+
+        refresh_auto_status()
+        ttk.Label(
+            frame,
+            textvariable=auto_status_var,
+            foreground=app_theme.GREEN,
+            font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
+        ).pack(anchor="w", pady=(0, 8))
+        ttk.Checkbutton(
+            frame,
+            text="Проверять обновления автоматически при запуске",
+            variable=enabled_var,
+            command=save_auto,
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Label(
+            frame,
+            textvariable=status_var,
+            wraplength=470,
+            justify="left",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
 
         def check_now():
-            if not save(False):
-                return
-            if not repo_var.get().strip():
-                messagebox.showinfo("Обновления", "Сначала укажите GitHub repository.", parent=win)
-                return
-            status_var.set("Проверяю GitHub Releases...")
+            status_var.set("Проверяю наличие новой версии...")
             self._start_update_check(manual=True, parent=win, status_var=status_var)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
-        ttk.Button(buttons, text="Проверить сейчас", command=check_now).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Сохранить", style="Primary.TButton",
-                   command=lambda: save(True)).pack(side="left", padx=(0, 8))
+        buttons.pack(fill="x")
+        ttk.Button(
+            buttons,
+            text="Проверить обновления сейчас",
+            style="Primary.TButton",
+            command=check_now,
+        ).pack(side="left", padx=(0, 8))
         ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="left")
-        frame.columnconfigure(1, weight=1)
-        entry.focus_set()
 
     def _start_update_check(self, manual=False, parent=None, status_var=None):
         """Проверяет latest GitHub Release в отдельном потоке."""
@@ -3796,12 +3845,8 @@ class App(tk.Tk):
             return
         if not manual and db.get_setting(self.conn, "update_auto_enabled", "1") == "0":
             return
-        repo = auto_update.normalize_repo(db.get_setting(self.conn, "update_github_repo", DEFAULT_UPDATE_REPO) or DEFAULT_UPDATE_REPO)
-        if not repo:
-            # До первой настройки GitHub автообновление полностью бесшумно.
-            if manual and status_var is not None:
-                status_var.set("GitHub repository не указан.")
-            return
+        # Репозиторий обновлений является частью приложения и не редактируется пользователем.
+        repo = DEFAULT_UPDATE_REPO
         if not getattr(sys, "frozen", False) and not manual:
             # При разработке из main.py не показываем релизы конечному пользователю.
             return
@@ -4112,7 +4157,6 @@ class App(tk.Tk):
         self.tab_purchases = ttk.Frame(nb)
         self.tab_attention = ttk.Frame(nb)
         self.tab_summary = ttk.Frame(nb)
-        self.tab_deadlines = ttk.Frame(nb)
         self.tab_stock = ttk.Frame(nb)
         self.tab_competitors = ttk.Frame(nb)
         self.tab_calculator = ttk.Frame(nb)
@@ -4133,7 +4177,6 @@ class App(tk.Tk):
         nb.add(self.tab_attention, text="ТРЕБУЕТ ВНИМАНИЯ (0)",
                image=self._attention_tab_icon, compound="left")
         nb.add(self.tab_summary, text="Итоги")
-        nb.add(self.tab_deadlines, text="Ближайшие дедлайны")
         nb.add(self.tab_stock, text="Склад")
         nb.add(self.tab_competitors, text="Анализ конкурентов")
         nb.add(self.tab_calculator, text="Калькулятор цены")
@@ -4141,7 +4184,6 @@ class App(tk.Tk):
         self._build_purchases_tab()
         self._build_attention_tab()
         self._build_summary_tab()
-        self._build_deadlines_tab()
         self._build_stock_tab()
         self._build_competitors_tab()
         self._build_calculator_tab()
@@ -4787,70 +4829,117 @@ class App(tk.Tk):
 
     # ---- Вкладка "Склад" ----
     def _build_stock_tab(self):
-        top = ttk.Frame(self.tab_stock, padding=8)
-        top.pack(fill="x")
-        ttk.Button(top, text="Добавить приход", command=self._add_receipt).pack(side="left", padx=4)
-        ttk.Button(top, text="Редактировать приход", command=self._edit_receipt).pack(side="left", padx=4)
-        ttk.Button(top, text="Удалить приход", command=self._delete_receipt).pack(side="left", padx=4)
+        # Внутренние вкладки уменьшают вертикальную перегрузку склада.
+        self.stock_notebook = ttk.Notebook(self.tab_stock)
+        self.stock_notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
-        ttk.Label(self.tab_stock, padding=(8, 8, 8, 0), wraplength=1300, justify="left",
-                  text="«Резерв» = товар в незавершённых контрактах + ручной резерв под "
-                       "потенциальных клиентов (см. раздел ниже), которым выставлен счёт, "
-                       "но оплата ещё не пришла.",
-                  foreground=app_theme.MUTED).pack(fill="x")
-        ttk.Label(self.tab_stock, text="Остатки по товарам", padding=(8, 8, 8, 0),
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
+        self.stock_balances_tab = ttk.Frame(self.stock_notebook)
+        self.stock_receipts_tab = ttk.Frame(self.stock_notebook)
+        self.stock_reservations_tab = ttk.Frame(self.stock_notebook)
+
+        self.stock_notebook.add(self.stock_balances_tab, text="Остатки")
+        self.stock_notebook.add(self.stock_receipts_tab, text="Приходы")
+        self.stock_notebook.add(self.stock_reservations_tab, text="Резервы")
+
+        # --- Остатки ---
+        balances_header = ttk.Frame(self.stock_balances_tab, padding=(8, 8, 8, 4))
+        balances_header.pack(fill="x")
+        ttk.Label(
+            balances_header,
+            text="Остатки по товарам",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).pack(side="left")
+        self.stock_total_var = tk.StringVar(value="Итого по складу: 0 ₽")
+        ttk.Label(
+            balances_header,
+            textvariable=self.stock_total_var,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+            foreground=app_theme.ACCENT,
+        ).pack(side="right")
+
+        ttk.Label(
+            self.stock_balances_tab,
+            padding=(8, 0, 8, 8),
+            wraplength=1300,
+            justify="left",
+            text=("«Резерв» = товар в незавершённых контрактах + ручной резерв "
+                  "под потенциальных клиентов."),
+            foreground=app_theme.MUTED,
+        ).pack(fill="x")
+
         sum_cols = ["product", "on_hand", "reserved", "available", "warning", "value"]
         sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Внимание", "Стоимость остатка"]
-        self.stock_summary_tree = ttk.Treeview(self.tab_stock, columns=sum_cols, show="headings", height=8)
+        self.stock_summary_tree = ttk.Treeview(
+            self.stock_balances_tab,
+            columns=sum_cols,
+            show="headings",
+        )
         for key, label in zip(sum_cols, sum_labels):
             self.stock_summary_tree.heading(key, text=label, anchor="center")
-            self.stock_summary_tree.column(key, width=220 if key == "product" else 150,
-                                            anchor="center")
-        self.stock_summary_tree.pack(fill="x", padx=8, pady=(0, 8))
-        # Один клик только выделяет товар (общий Treeview-обработчик).
-        # Движение товара открывается только двойным щелчком левой кнопки.
+            self.stock_summary_tree.column(
+                key,
+                width=260 if key == "product" else 160,
+                anchor="center",
+            )
+        self.stock_summary_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.stock_summary_tree.bind("<Double-1>", lambda e: self._show_stock_movement())
         self.stock_summary_tree.tag_configure("negative", background=app_theme.SOFT_RED, foreground=app_theme.RED)
         self.stock_summary_tree.tag_configure("positive", background=app_theme.SOFT_GREEN, foreground=app_theme.GREEN)
         self.stock_summary_tree.tag_configure("zero", background=app_theme.WASH, foreground=app_theme.MUTED)
         self.stock_summary_tree.tag_configure("low", background=app_theme.SOFT_YELLOW, foreground=app_theme.AMBER)
 
-        log_header = ttk.Frame(self.tab_stock)
-        log_header.pack(fill="x", padx=8, pady=(8, 0))
-        ttk.Label(log_header, text="История прихода товара",
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
-        self.stock_total_var = tk.StringVar(value="Итого по складу: 0,00 ₽")
-        ttk.Label(log_header, textvariable=self.stock_total_var,
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), foreground=app_theme.ACCENT).pack(side="right")
+        # --- Приходы ---
+        receipts_top = ttk.Frame(self.stock_receipts_tab, padding=8)
+        receipts_top.pack(fill="x")
+        ttk.Button(receipts_top, text="+ Добавить приход", command=self._add_receipt,
+                   style="Primary.TButton").pack(side="left", padx=(0, 6))
+        ttk.Button(receipts_top, text="Редактировать", command=self._edit_receipt).pack(side="left", padx=4)
+        ttk.Button(receipts_top, text="Удалить", command=self._delete_receipt,
+                   style="Danger.TButton").pack(side="left", padx=4)
 
         log_cols = ["receipt_date", "product", "qty", "unit_cost", "supplier", "line_total"]
         log_labels = ["Дата", "Товар", "Кол-во", "Цена за ед.", "Поставщик", "Сумма позиции"]
-        self.stock_log_tree = ttk.Treeview(self.tab_stock, columns=log_cols, show="headings", height=8)
+        self.stock_log_tree = ttk.Treeview(
+            self.stock_receipts_tab,
+            columns=log_cols,
+            show="headings",
+        )
         for key, label in zip(log_cols, log_labels):
             self.stock_log_tree.heading(key, text=label, anchor="center")
-            self.stock_log_tree.column(key, width=160, anchor="center")
+            self.stock_log_tree.column(key, width=180, anchor="center")
         self.stock_log_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.stock_log_tree.bind("<Double-1>", lambda e: self._edit_receipt())
 
-        # --- Ручной резерв под потенциальных клиентов (без привязки к контракту) ---
-        res_header = ttk.Frame(self.tab_stock)
-        res_header.pack(fill="x", padx=8, pady=(8, 0))
-        ttk.Label(res_header, text="Резерв под потенциальных клиентов (без контракта)",
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
+        # --- Резервы ---
+        reservations_top = ttk.Frame(self.stock_reservations_tab, padding=8)
+        reservations_top.pack(fill="x")
+        ttk.Button(reservations_top, text="+ Добавить резерв", command=self._add_reservation,
+                   style="Primary.TButton").pack(side="left", padx=(0, 6))
+        ttk.Button(reservations_top, text="Редактировать", command=self._edit_reservation).pack(side="left", padx=4)
+        ttk.Button(reservations_top, text="Удалить", command=self._delete_reservation,
+                   style="Danger.TButton").pack(side="left", padx=4)
 
-        res_top = ttk.Frame(self.tab_stock, padding=(8, 4, 8, 4))
-        res_top.pack(fill="x")
-        ttk.Button(res_top, text="Добавить резерв", command=self._add_reservation).pack(side="left", padx=4)
-        ttk.Button(res_top, text="Редактировать резерв", command=self._edit_reservation).pack(side="left", padx=4)
-        ttk.Button(res_top, text="Удалить резерв", command=self._delete_reservation).pack(side="left", padx=4)
+        ttk.Label(
+            self.stock_reservations_tab,
+            text=("Ручной резерв под потенциальных клиентов без привязки к контракту."),
+            padding=(8, 0, 8, 8),
+            foreground=app_theme.MUTED,
+        ).pack(fill="x")
 
         res_cols = ["reserved_date", "product", "qty", "organization", "note"]
         res_labels = ["Дата", "Товар", "Кол-во", "Организация", "Примечание"]
-        self.reservation_tree = ttk.Treeview(self.tab_stock, columns=res_cols, show="headings", height=6)
+        self.reservation_tree = ttk.Treeview(
+            self.stock_reservations_tab,
+            columns=res_cols,
+            show="headings",
+        )
         for key, label in zip(res_cols, res_labels):
             self.reservation_tree.heading(key, text=label, anchor="center")
-            self.reservation_tree.column(key, width=160, anchor="center")
+            self.reservation_tree.column(
+                key,
+                width=230 if key in ("organization", "note") else 170,
+                anchor="center",
+            )
         self.reservation_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.reservation_tree.bind("<Double-1>", lambda e: self._edit_reservation())
 
@@ -5249,7 +5338,6 @@ class App(tk.Tk):
         self.refresh_purchases()
         self.refresh_attention()
         self.refresh_summary()
-        self.refresh_deadlines()
         self.refresh_stock()
         self.refresh_competitors()
         self.refresh_calculator()
