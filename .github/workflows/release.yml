@@ -64,6 +64,11 @@ jobs:
         run: |
           python -c "import sys; sys.path.insert(0, 'app'); import app_version; v=open('VERSION', encoding='utf-8').read().strip(); assert app_version.__version__ == v, f'app_version={app_version.__version__}, VERSION={v}'"
 
+      - name: Verify month-added accounting logic
+        shell: pwsh
+        run: |
+          python -c "import os,sys,tempfile; sys.path.insert(0,'app'); import db,main; p=os.path.join(tempfile.mkdtemp(),'logic.db'); conn=db.get_connection(p); pid=db.insert_purchase(conn, {'customer':'Тест','contract_no':'T-1','contract_date':'2024-01-15','contract_sum':1000,'payment_status':'Не оплачено','exec_status':'В процессе','contract_status':'Формирование'}, []); conn.execute('UPDATE purchases SET created_at=? WHERE id=?',('2026-05-15 12:00:00',pid)); conn.commit(); assert len(db.fetch_all(conn,year=2026,month=5))==1; assert len(db.fetch_all(conn,year=2026,month=1))==0; s=db.monthly_summary(conn,year=2026,month=5); assert len(s)==1 and s[0]['month']==5 and s[0]['contract_sum']==1000; assert all(x[0] != 'created_at' for x in main.PurchaseDialog.HEADER_LABELS); assert all(x[0] != 'created_at' for x in main.App.PURCHASE_COLS); conn.close()"
+
       - name: Build Windows EXE
         shell: pwsh
         run: |
