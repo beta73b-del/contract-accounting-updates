@@ -69,7 +69,7 @@ jobs:
         run: |
           python -c "import os,sys,tempfile; sys.path.insert(0,'app'); import db,main; p=os.path.join(tempfile.mkdtemp(),'logic.db'); conn=db.get_connection(p); pid=db.insert_purchase(conn, {'customer':'Тест','contract_no':'T-1','contract_date':'2024-01-15','contract_sum':1000,'payment_status':'Не оплачено','exec_status':'В процессе','contract_status':'Формирование'}, []); conn.execute('UPDATE purchases SET created_at=? WHERE id=?',('2026-05-15 12:00:00',pid)); conn.commit(); assert len(db.fetch_all(conn,year=2026,month=5))==1; assert len(db.fetch_all(conn,year=2026,month=1))==0; s=db.monthly_summary(conn,year=2026,month=5); assert len(s)==1 and s[0]['month']==5 and s[0]['contract_sum']==1000; assert all(x[0] != 'created_at' for x in main.PurchaseDialog.HEADER_LABELS); assert all(x[0] != 'created_at' for x in main.App.PURCHASE_COLS); conn.close()"
 
-      - name: Verify UX v2.16.8 structure
+      - name: Verify UX structure
         shell: pwsh
         run: |
           @'
@@ -102,6 +102,13 @@ jobs:
           assert 'self.stock_notebook.add(self.stock_balances_tab, text="Остатки")' in main
           assert 'self.stock_notebook.add(self.stock_receipts_tab, text="Приходы")' in main
           assert 'self.stock_notebook.add(self.stock_reservations_tab, text="Резервы")' in main
+          assert 'self.additional_visible = False' in main
+          assert 'self.additional_section = ttk.Frame(left_col)' in main
+          assert 'self.additional_frame = ttk.LabelFrame(' in main
+          assert 'self.additional_section,' in main
+          assert main.index('self.additional_section = ttk.Frame(left_col)') < main.index('self._build_responsible_section(left_col)')
+          assert 'Дополнительно ▼   Расходы, примечание и служебные сведения' in main
+          assert 'Дополнительно ▲   Скрыть дополнительные поля' in main
           '@ | python -
 
       - name: Build Windows EXE
