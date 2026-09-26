@@ -973,10 +973,9 @@ def open_file_external(path, parent=None):
 class PurchaseDialog(tk.Toplevel):
     """Карточка контракта с быстрым сценарием создания, товарами и документами."""
 
-    DATE_FIELD_KEYS = ("created_at", "contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline")
+    DATE_FIELD_KEYS = ("contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline")
 
     HEADER_LABELS = [
-        ("created_at", "Дата (ДД.ММ.ГГГГ)", "entry", None),
         ("platform", "Площадка (ЭТП)", "combo", db.PLATFORM_OPTIONS),
         ("customer", "Заказчик", "entry", None),
         ("contract_no", "Номер контракта", "entry", None),
@@ -1079,7 +1078,7 @@ class PurchaseDialog(tk.Toplevel):
         header_frame = ttk.LabelFrame(left_col, text="Основные данные", padding=8)
         header_frame.pack(fill="x", pady=(0, 8))
         primary_keys = {
-            "created_at", "platform", "customer", "contract_no", "contract_date", "law",
+            "platform", "customer", "contract_no", "contract_date", "law",
             "contract_sum", "purchase_cost", "contract_status", "sign_deadline", "deadline",
             "payment_status", "payment_deadline", "exec_status"
         }
@@ -1115,8 +1114,8 @@ class PurchaseDialog(tk.Toplevel):
         else:
             if prefill is not None:
                 self._fill_header_from_existing(prefill)
-            # Быстрый старт новой карточки: готовые рабочие статусы и сегодняшняя дата.
-            self._set_field("created_at", date.today().strftime(DATE_FMT))
+            # Быстрый старт новой карточки: готовые рабочие статусы.
+            # Техническая дата добавления проставляется БД автоматически и в карточке не показывается.
             for key, value in (("contract_status", "Формирование"),
                                ("exec_status", "В процессе")):
                 try:
@@ -3692,10 +3691,6 @@ class App(tk.Tk):
                   style="HeaderTitle.TLabel").pack(anchor="w")
         ttk.Label(title_box, text="ИП ПЕТРУШКИН А. А.",
                   style="HeaderOwner.TLabel").pack(anchor="w", pady=(5, 0))
-        self.header_clock_var = tk.StringVar(value="")
-        ttk.Label(title_box, textvariable=self.header_clock_var,
-                  style="HeaderClockBig.TLabel").pack(anchor="w", pady=(2, 0))
-        self._update_header_clock()
 
         right = ttk.Frame(header, style="Header.TFrame")
         right.pack(side="right", fill="y")
@@ -3706,15 +3701,6 @@ class App(tk.Tk):
             justify="right",
             wraplength=640,
         ).pack(side="right", padx=(18, 3))
-
-    def _update_header_clock(self):
-        """Обновляет текущую дату и время в фирменной шапке раз в секунду."""
-        try:
-            if hasattr(self, "header_clock_var"):
-                self.header_clock_var.set(datetime.now().strftime("%d.%m.%Y  %H:%M:%S"))
-            self.after(1000, self._update_header_clock)
-        except tk.TclError:
-            pass
 
     # ---------------- Меню ----------------
     def _build_menu(self):
@@ -4162,8 +4148,8 @@ class App(tk.Tk):
 
     # ---- Вкладка "Контракты" ----
     PURCHASE_COLS = [
-        ("created_at", "Дата", 120), ("num", "№ / Дата контракта", 175),
-        ("platform", "Площадка", 130), ("customer", "Заказчик", 260),
+        ("num", "№ / Дата контракта", 175),
+        ("platform", "Площадка", 130), ("customer", "Заказчик", 380),
         ("product", "Товары / Кол-во", 260), ("contract_sum", "Сумма контракта", 130),
         ("deadline", "Срок исполнения", 150),
         ("payment_status", "Оплата", 130),
@@ -4338,10 +4324,9 @@ class App(tk.Tk):
         for r, customer_text, items_text in prepared_rows:
             contract_sum = r["contract_sum"] or 0.0
             contract_date_str = fmt_date(r["contract_date"])
-            created_str = fmt_date((r.get("created_at") or "").split(" ")[0])
             contract_no = r["contract_no"] or "—"
             num_cell = f"{contract_no} от {contract_date_str}" if contract_date_str else contract_no
-            values = [created_str or "—", num_cell or "—", r["platform"] or "—", customer_text, items_text,
+            values = [num_cell or "—", r["platform"] or "—", customer_text, items_text,
                       fmt_money(contract_sum), fmt_date(r["deadline"]) or "—", r["payment_status"] or "—"]
             tree_insert_wrapped(self.tree, "", "end", iid=str(r["id"]), values=values)
 
@@ -4624,7 +4609,7 @@ class App(tk.Tk):
                 fmt_pct(margin_total), fmt_qty(total_qty)], tags=("total",))
 
     def _open_summary_month_contracts(self):
-        """Показывает расшифровку выбранного месяца итогов по дате заключения."""
+        """Показывает расшифровку выбранного месяца итогов по месяцу добавления."""
         sel = self.summary_tree.selection()
         if not sel:
             return
@@ -4638,10 +4623,9 @@ class App(tk.Tk):
         except (ValueError, TypeError):
             return
 
-        # Важно: Итоги исторически считаются по contract_date. На главной странице
-        # активный старый контракт переносится в текущий рабочий месяц, поэтому он
-        # может не быть виден в своём историческом месяце главной таблицы, но обязан
-        # присутствовать здесь как расшифровка финансового итога.
+        # Итоги и главная таблица используют один принцип: месяц фактического
+        # добавления контракта (created_at). Само поле created_at остаётся техническим
+        # и пользователю не показывается.
         rows = db.fetch_all(self.conn, year=year, month=month, operational_period=False)
 
         win = tk.Toplevel(self)
@@ -4653,13 +4637,13 @@ class App(tk.Tk):
         header.pack(fill="x")
         ttk.Label(header, text=f"{MONTHS_RU[month]} {year}",
                   font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
-        ttk.Label(header, text="Итоги и эта расшифровка относятся к месяцу по дате заключения контракта.").pack(
+        ttk.Label(header, text="Итоги и эта расшифровка относятся к месяцу добавления контракта.").pack(
             side="left", padx=(14, 0))
 
-        cols = ("created", "num", "contract_date", "customer", "products", "sum", "exec", "payment")
-        labels = ("Дата", "№ контракта", "Дата контракта", "Заказчик", "Товары / Кол-во",
+        cols = ("num", "contract_date", "customer", "products", "sum", "exec", "payment")
+        labels = ("№ контракта", "Дата контракта", "Заказчик", "Товары / Кол-во",
                   "Сумма контракта", "Исполнение", "Оплата")
-        widths = (110, 150, 120, 300, 340, 150, 140, 140)
+        widths = (150, 120, 410, 340, 150, 140, 140)
         tree = ttk.Treeview(win, columns=cols, show="headings", selectmode="browse")
         for key, label, width in zip(cols, labels, widths):
             tree.heading(key, text=label, anchor="center")
@@ -4672,10 +4656,9 @@ class App(tk.Tk):
                 f"{it['product'] or '—'} — {fmt_qty(it['qty'])} шт."
                 for it in r.get("items", [])
             ) or "—"
-            created = fmt_date(str(r.get("created_at") or "").split(" ")[0]) or "—"
             contract_date = fmt_date(r.get("contract_date")) or "—"
             contract_no = r.get("contract_no") or "—"
-            values = (created, contract_no, contract_date, r.get("customer") or "—", items_text,
+            values = (contract_no, contract_date, r.get("customer") or "—", items_text,
                       fmt_money(r.get("contract_sum") or 0.0), r.get("exec_status") or "—",
                       r.get("payment_status") or "—")
             tree_insert_wrapped(tree, "", "end", iid=str(r["id"]), values=values)
