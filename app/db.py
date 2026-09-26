@@ -998,3 +998,996 @@ def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) 
     if commit:
         conn.commit()
     row = conn.execute("SELECT name FROM product_catalog WHERE normalized_key = ?", (key,)).fetchone()
+    return row["name"] if row else name
+
+def catalog_products(conn: sqlite3.Connection):
+    _sync_product_catalog(conn)
+    rows = conn.execute("SELECT name FROM product_catalog WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()
+    return [r["name"] for r in rows]
+
+def rename_product(conn: sqlite3.Connection, old_name: str, new_name: str):
+    old_name = str(old_name or "").strip()
+    new_name = " ".join(str(new_name or "").split()).strip()
+    if not old_name or not new_name:
+        raise ValueError("Название товара не может быть пустым")
+    old_key = normalize_product_key(old_name)
+    new_key = normalize_product_key(new_name)
+    if old_key == new_key:
+        canonical = new_name
+        conn.execute("UPDATE product_catalog SET name=? WHERE normalized_key=?", (canonical, old_key))
+    else:
+        canonical = ensure_product(conn, new_name, commit=False)
+    for table in ("purchase_items", "stock_receipts", "manual_reservations", "competitor_records"):
+        conn.execute(f"UPDATE {table} SET product=? WHERE product=?", (canonical, old_name))
+    if old_key != new_key:
+        conn.execute("DELETE FROM product_catalog WHERE normalized_key=?", (old_key,))
+    conn.commit()
+    return canonical
+
+
+def add_audit(conn: sqlite3.Connection, purchase_id, action: str, details: str = ""):
+    conn.execute(
+        "INSERT INTO audit_log(purchase_id, event_at, action, details) VALUES(?,?,?,?)",
+        (purchase_id, datetime.now().isoformat(timespec="seconds"), action, details or ""),
+    )
+
+def fetch_audit(conn: sqlite3.Connection, purchase_id: int):
+    return conn.execute(
+        "SELECT * FROM audit_log WHERE purchase_id=? ORDER BY id DESC", (purchase_id,)
+    ).fetchall()
+
+def duplicate_contracts(conn: sqlite3.Connection, contract_no: str, exclude_id=None):
+    target = str(contract_no or "").strip().casefold()
+    if not target:
+        return []
+    rows = conn.execute(
+        "SELECT id, contract_no, contract_date, customer "
+        "FROM purchases WHERE deleted_at IS NULL AND trim(COALESCE(contract_no, '')) <> '' "
+        "ORDER BY id"
+    ).fetchall()
+    excluded = int(exclude_id) if exclude_id is not None else None
+    return [
+        row for row in rows
+        if (excluded is None or int(row["id"]) != excluded)
+        and str(row["contract_no"] or "").strip().casefold() == target
+    ]
+
+def _audit_changes(old_row, old_items, header, items):
+    changes=[]
+    if old_row is not None:
+        for key in HEADER_FIELDS:
+            old = old_row[key] if key in old_row.keys() else None
+            new = header.get(key)
+            if (old or None) != (new or None):
+                label=_AUDIT_LABELS.get(key,key)
+                changes.append(f"{label}: {old or '—'} → {new or '—'}")
+    old_pairs=[(x["product"], float(x["qty"] or 0)) for x in old_items or []]
+    new_pairs=[(x.get("product"), float(x.get("qty") or 0)) for x in items or []]
+    if old_pairs != new_pairs:
+        def fmt(pairs): return "; ".join(f"{p} — {q:g}" for p,q in pairs) or "—"
+        changes.append(f"Товары: {fmt(old_pairs)} → {fmt(new_pairs)}")
+    return changes
+
+# ---------------------------------------------------------------- Контракты (шапка + позиции)
+def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
+    header = dict(header)
+    header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cols = ", ".join(HEADER_FIELDS)
+    placeholders = ", ".join(["?"] * len(HEADER_FIELDS))
+    values = [header.get(f) for f in HEADER_FIELDS]
+    cur = conn.execute(f"INSERT INTO purchases ({cols}) VALUES ({placeholders})", values)
+    purchase_id = cur.lastrowid
+    _insert_items(conn, purchase_id, items)
+    add_audit(conn, purchase_id, "Создан контракт", f"№ {header.get('contract_no') or '—'}")
+    conn.commit()
+    return purchase_id
+
+
+def _has_key(item, key):
+    if hasattr(item, "keys"):
+        return key in item.keys()
+    return False
+
+
+def _insert_items(conn: sqlite3.Connection, purchase_id: int, items: list):
+    for item in items:
+        product = item["product"] if _has_key(item, "product") else None
+        qty = item["qty"] if _has_key(item, "qty") else None
+        if not product:
+            continue
+        product = ensure_product(conn, product, commit=False)
+        conn.execute(
+            "INSERT INTO purchase_items (purchase_id, product, qty) VALUES (?, ?, ?)",
+            (purchase_id, product, qty),
+        )
+
+
+def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, items: list):
+    header = dict(header)
+    old = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    old_items = fetch_items(conn, purchase_id)
+    header["created_at"] = (header.get("created_at")
+                             or (old["created_at"] if old else None)
+                             or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    changes = _audit_changes(old, old_items, header, items)
+    set_clause = ", ".join(f"{f} = ?" for f in HEADER_FIELDS)
+    values = [header.get(f) for f in HEADER_FIELDS] + [purchase_id]
+    conn.execute(f"UPDATE purchases SET {set_clause} WHERE id = ?", values)
+    conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
+    _insert_items(conn, purchase_id, items)
+    if changes:
+        add_audit(conn, purchase_id, "Изменён контракт", "\n".join(changes))
+    conn.commit()
+
+
+def fetch_items(conn: sqlite3.Connection, purchase_id: int):
+    return conn.execute(
+        "SELECT * FROM purchase_items WHERE purchase_id = ? ORDER BY id", (purchase_id,)
+    ).fetchall()
+
+
+def _products_summary(items, limit=2):
+    names = [i["product"] for i in items if i["product"]]
+    if not names:
+        return ""
+    shown = ", ".join(names[:limit])
+    if len(names) > limit:
+        shown += f" (+{len(names) - limit} ещё)"
+    return shown
+
+
+def _qty_total(items):
+    return sum((i["qty"] or 0.0) for i in items)
+
+
+def _fetch_items_for_purchase_ids(conn: sqlite3.Connection, purchase_ids):
+    """Загружает позиции сразу пачкой, без N+1 запроса на каждый контракт."""
+    ids = [int(x) for x in purchase_ids]
+    result = {pid: [] for pid in ids}
+    if not ids:
+        return result
+    # SQLite обычно допускает 999+ bind-параметров; режем с запасом.
+    for offset in range(0, len(ids), 800):
+        chunk = ids[offset:offset + 800]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT * FROM purchase_items WHERE purchase_id IN ({marks}) ORDER BY purchase_id, id",
+            chunk,
+        ).fetchall()
+        for item in rows:
+            result.setdefault(int(item["purchase_id"]), []).append(item)
+    return result
+
+
+def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, search: str = None,
+              contract_status: str = None, payment_status: str = None, exec_status: str = None,
+              order_by_today: bool = True, operational_period: bool = False):
+    """
+    Возвращает шапки контрактов и позиции. Фильтрация выполняется в SQL, а все
+    товарные позиции загружаются одним пакетным проходом вместо отдельного SELECT
+    на каждый контракт. Это критично для баз с тысячами контрактов.
+    """
+    query = "SELECT p.* FROM purchases p WHERE p.deleted_at IS NULL"
+    params = []
+    # Нормализованное SQL-представление исторической даты. Оно поддерживает и
+    # штатный ISO YYYY-MM-DD, и старые DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY.
+    historical_date = (
+        "(CASE "
+        "WHEN substr(COALESCE(p.contract_date,''),5,1)='-' THEN p.contract_date "
+        "WHEN substr(COALESCE(p.contract_date,''),3,1) IN ('.','/','-') "
+        "THEN substr(p.contract_date,7,4)||'-'||substr(p.contract_date,4,2)||'-'||substr(p.contract_date,1,2) "
+        "ELSE p.contract_date END)"
+    )
+    if operational_period and (year or month):
+        # Главная страница использует «рабочий месяц» вместо простого месяца
+        # заключения контракта. Пока по контракту остаётся хотя бы одно открытое
+        # обязательство (исполнение ИЛИ оплата), его виртуальная дата относится к
+        # текущему месяцу. После статусов «Исполнено» И «Оплачено» контракт снова
+        # относится к своему историческому периоду по contract_date.
+        #
+        # Благодаря CASE один и тот же принцип работает и для фильтра «весь год»:
+        # активный старый контракт виден в текущем году, но не дублируется в том
+        # историческом году, где был заключён.
+        today_iso = date.today().isoformat()
+        active_expr = ("(COALESCE(p.exec_status,'') <> 'Исполнено' "
+                       "OR COALESCE(p.payment_status,'') <> 'Оплачено')")
+        # Если в старой/ошибочной записи год даты контракта выпал за рабочий
+        # диапазон, не прячем её в несуществующем историческом периоде. Такая
+        # запись остаётся в текущем рабочем месяце, пока пользователь не исправит
+        # дату в карточке. Новые сохранения дополнительно валидируются в UI.
+        valid_date_expr = f"(CAST(substr({historical_date},1,4) AS INTEGER) BETWEEN 2000 AND 2100)"
+        virtual_date = f"(CASE WHEN {active_expr} OR NOT {valid_date_expr} THEN ? ELSE {historical_date} END)"
+        if year:
+            query += f" AND (substr({virtual_date},1,4)=? OR strftime('%Y', {virtual_date})=?)"
+            # virtual_date повторяется дважды в выражении, поэтому today_iso
+            # также передаётся дважды — в порядке SQL placeholder'ов.
+            params.extend([today_iso, str(year), today_iso, str(year)])
+        if month:
+            mm = f"{month:02d}"
+            query += f" AND (substr({virtual_date},6,2)=? OR strftime('%m', {virtual_date})=?)"
+            params.extend([today_iso, mm, today_iso, mm])
+    else:
+        if year:
+            query += f" AND substr({historical_date},1,4)=?"
+            params.append(str(year))
+        if month:
+            mm = f"{month:02d}"
+            query += f" AND substr({historical_date},6,2)=?"
+            params.append(mm)
+    if contract_status:
+        query += " AND p.contract_status = ?"
+        params.append(contract_status)
+    if payment_status:
+        query += " AND p.payment_status = ?"
+        params.append(payment_status)
+    if exec_status:
+        query += " AND p.exec_status = ?"
+        params.append(exec_status)
+    if search:
+        like = f"%{search.strip()}%"
+        query += (" AND (COALESCE(p.customer,'') LIKE ? COLLATE NOCASE "
+                  "OR COALESCE(p.contract_no,'') LIKE ? COLLATE NOCASE "
+                  "OR COALESCE(p.registry_record,'') LIKE ? COLLATE NOCASE "
+                  "OR EXISTS (SELECT 1 FROM purchase_items si "
+                  "WHERE si.purchase_id=p.id AND COALESCE(si.product,'') LIKE ? COLLATE NOCASE))")
+        params.extend([like, like, like, like])
+    # Главная таблица первым столбцом показывает «Дата» (= created_at), поэтому
+    # сортируем именно по ней, а не по дате заключения контракта. Поддерживаем
+    # штатный ISO YYYY-MM-DD[ HH:MM:SS] и старые DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY.
+    created_sort = (
+        "(CASE "
+        "WHEN substr(COALESCE(p.created_at,''),5,1)='-' THEN substr(p.created_at,1,10) "
+        "WHEN substr(COALESCE(p.created_at,''),3,1) IN ('.','/','-') "
+        "THEN substr(p.created_at,7,4)||'-'||substr(p.created_at,4,2)||'-'||substr(p.created_at,1,2) "
+        "ELSE COALESCE(p.created_at,'') END)"
+    )
+    query += f" ORDER BY {created_sort} DESC, p.id DESC"
+    header_rows = conn.execute(query, params).fetchall()
+
+    items_map = _fetch_items_for_purchase_ids(conn, [h["id"] for h in header_rows])
+    result = []
+    for h in header_rows:
+        items = items_map.get(int(h["id"]), [])
+        row = dict(h)
+        row["items"] = items
+        row["product"] = _products_summary(items)
+        row["qty"] = _qty_total(items)
+        result.append(row)
+    return result
+
+
+def dashboard_kpis(conn: sqlite3.Connection):
+    """KPI главного экрана одним агрегатным запросом + агрегат склада."""
+    r = conn.execute(
+        """SELECT
+               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN 1 ELSE 0 END) AS work_count,
+               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS work_sum,
+               SUM(CASE WHEN COALESCE(payment_status,'') <> 'Оплачено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS awaiting
+           FROM purchases WHERE deleted_at IS NULL"""
+    ).fetchone()
+    auto = conn.execute(
+        """SELECT COALESCE(SUM(i.qty),0) AS q FROM purchase_items i
+           JOIN purchases p ON p.id=i.purchase_id
+           WHERE p.deleted_at IS NULL
+             AND (p.handover_date IS NULL OR p.handover_date='')
+             AND COALESCE(p.exec_status,'') <> 'Отправлено'"""
+    ).fetchone()["q"] or 0.0
+    manual = conn.execute("SELECT COALESCE(SUM(qty),0) AS q FROM manual_reservations").fetchone()["q"] or 0.0
+    return {"work_count": int(r["work_count"] or 0), "work_sum": float(r["work_sum"] or 0),
+            "awaiting": float(r["awaiting"] or 0), "reserve_qty": float(auto) + float(manual)}
+
+
+def deadline_rows(conn: sqlite3.Connection):
+    """Только контракты, способные попасть во вкладку дедлайнов, с кратким товаром."""
+    rows = conn.execute(
+        """SELECT p.* FROM purchases p
+           WHERE p.deleted_at IS NULL AND (
+             (COALESCE(p.contract_status,'') <> 'Заключен' AND p.sign_deadline IS NOT NULL AND p.sign_deadline <> '')
+             OR
+             (COALESCE(p.exec_status,'') <> 'Исполнено' AND p.deadline IS NOT NULL AND p.deadline <> ''
+              AND (p.handover_date IS NULL OR p.handover_date=''))
+             OR
+             (COALESCE(p.payment_status,'') <> 'Оплачено' AND p.payment_deadline IS NOT NULL AND p.payment_deadline <> '')
+           )
+           ORDER BY p.id"""
+    ).fetchall()
+    items_map = _fetch_items_for_purchase_ids(conn, [r["id"] for r in rows])
+    out=[]
+    for h in rows:
+        d=dict(h); items=items_map.get(int(h["id"]), [])
+        d["items"]=items; d["product"]=_products_summary(items); d["qty"]=_qty_total(items)
+        out.append(d)
+    return out
+
+
+def fetch_by_id(conn: sqlite3.Connection, purchase_id: int):
+    h = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    if h is None:
+        return None
+    row = dict(h)
+    row["items"] = fetch_items(conn, purchase_id)
+    row["product"] = _products_summary(row["items"])
+    row["qty"] = _qty_total(row["items"])
+    return row
+
+
+def distinct_years(conn: sqlite3.Connection):
+    """Годы контрактов для фильтров. Ошибочные годы (например 0920) не показываем."""
+    rows = conn.execute(
+        "SELECT contract_date FROM purchases "
+        "WHERE contract_date IS NOT NULL AND contract_date <> '' AND deleted_at IS NULL"
+    ).fetchall()
+    years = set()
+    for r in rows:
+        text = str(r["contract_date"] or "").strip()
+        parsed = None
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                parsed = datetime.strptime(text, fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed is not None and 2000 <= parsed.year <= 2100:
+            years.add(parsed.year)
+    return sorted(years)
+
+def distinct_products(conn: sqlite3.Connection):
+    return catalog_products(conn)
+
+
+def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
+    """
+    Финансовые итоги группируются по ДАТЕ КОНТРАКТА (contract_date), а не по дате вручения.
+    Поэтому контракт от июня всегда относится к июню, даже если товар передан позже.
+
+    Количество «реализовано/оплачено» учитывается только после фактической передачи товара
+    (handover_date заполнена), но также относится к месяцу самого контракта.
+    Поддерживаются старые записи с датами YYYY-MM-DD и ДД.ММ.ГГГГ.
+    """
+    from calculations import calc_tax, calc_profit, calc_margin_pct
+
+    def _parse_db_date(value):
+        if not value:
+            return None
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                parsed = datetime.strptime(text, fmt).date()
+                if 2000 <= parsed.year <= 2100:
+                    return parsed
+                return None
+            except ValueError:
+                continue
+        return None
+
+    rows = conn.execute(
+        "SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id"
+    ).fetchall()
+
+    grouped = {}
+    for r in rows:
+        contract_date = _parse_db_date(r["contract_date"])
+        if contract_date is None:
+            continue
+        if year is not None and contract_date.year != int(year):
+            continue
+        if month is not None and contract_date.month != int(month):
+            continue
+
+        key = (contract_date.year, contract_date.month)
+        g = grouped.setdefault(key, {
+            "contract_sum": 0.0,
+            "purchase_cost": 0.0,
+            "logistics": 0.0,
+            "commission": 0.0,
+            "other_costs": 0.0,
+            "guarantee": 0.0,
+            "qty_total": 0.0,
+            "qty_paid": 0.0,
+            "qty_unpaid": 0.0,
+        })
+        for field in ("contract_sum", "purchase_cost", "logistics", "commission", "other_costs", "guarantee"):
+            g[field] += float(r[field] or 0.0)
+
+        # Реализация считается только после фактического вручения.
+        if _parse_db_date(r["handover_date"]) is not None:
+            qty_row = conn.execute(
+                "SELECT COALESCE(SUM(qty), 0) AS qty FROM purchase_items WHERE purchase_id = ?",
+                (r["id"],),
+            ).fetchone()
+            qty = float(qty_row["qty"] or 0.0)
+            g["qty_total"] += qty
+            if r["payment_status"] == "Оплачено":
+                g["qty_paid"] += qty
+            else:
+                g["qty_unpaid"] += qty
+
+    result = []
+    for (y, m), g in sorted(grouped.items()):
+        contract_sum = g["contract_sum"]
+        purchase_cost = g["purchase_cost"]
+        logistics = g["logistics"]
+        commission = g["commission"]
+        other_costs = g["other_costs"]
+        guarantee = g["guarantee"]
+        tax = calc_tax(contract_sum)
+        profit = calc_profit(contract_sum, purchase_cost, logistics, commission,
+                             other_costs, guarantee, tax)
+        result.append({
+            "year": y,
+            "month": m,
+            "contract_sum": contract_sum,
+            "purchase_cost": purchase_cost,
+            "expenses": logistics + commission + other_costs + guarantee,
+            "tax": tax,
+            "profit": profit,
+            "margin_pct": calc_margin_pct(profit, contract_sum),
+            "qty_total": g["qty_total"],
+            "qty_paid": g["qty_paid"],
+            "qty_unpaid": g["qty_unpaid"],
+        })
+    return result
+
+
+def top_customers(conn: sqlite3.Connection, limit: int = 5):
+    rows = conn.execute(
+        "SELECT customer, SUM(contract_sum) AS total FROM purchases "
+        "WHERE customer IS NOT NULL AND customer <> '' AND deleted_at IS NULL "
+        "GROUP BY customer ORDER BY total DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [(r["customer"], r["total"] or 0.0) for r in rows]
+
+
+def top_platforms(conn: sqlite3.Connection, limit: int = 5):
+    rows = conn.execute(
+        "SELECT platform, SUM(contract_sum) AS total, COUNT(*) AS cnt FROM purchases "
+        "WHERE platform IS NOT NULL AND platform <> '' AND deleted_at IS NULL "
+        "GROUP BY platform ORDER BY total DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [(r["platform"], r["total"] or 0.0, r["cnt"]) for r in rows]
+
+
+# ---------------------------------------------------------------- Склад (приход + резерв)
+def insert_receipt(conn: sqlite3.Connection, data: dict) -> int:
+    cols = ", ".join(RECEIPT_FIELDS)
+    placeholders = ", ".join(["?"] * len(RECEIPT_FIELDS))
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    values = [data.get(f) for f in RECEIPT_FIELDS]
+    cur = conn.execute(f"INSERT INTO stock_receipts ({cols}) VALUES ({placeholders})", values)
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_receipt(conn: sqlite3.Connection, receipt_id: int, data: dict):
+    set_clause = ", ".join(f"{f} = ?" for f in RECEIPT_FIELDS)
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    values = [data.get(f) for f in RECEIPT_FIELDS] + [receipt_id]
+    conn.execute(f"UPDATE stock_receipts SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+
+
+def delete_receipt(conn: sqlite3.Connection, receipt_id: int):
+    conn.execute("DELETE FROM stock_receipts WHERE id = ?", (receipt_id,))
+    conn.commit()
+
+
+def fetch_receipts(conn: sqlite3.Connection, search: str = None):
+    query = "SELECT * FROM stock_receipts WHERE 1=1"
+    params = []
+    if search:
+        query += " AND product LIKE ?"
+        params.append(f"%{search}%")
+    query += " ORDER BY receipt_date DESC, id DESC"
+    return conn.execute(query, params).fetchall()
+
+
+def fetch_receipt_by_id(conn: sqlite3.Connection, receipt_id: int):
+    return conn.execute("SELECT * FROM stock_receipts WHERE id = ?", (receipt_id,)).fetchone()
+
+
+def available_for_contract(conn: sqlite3.Connection, product: str, purchase_id=None) -> float:
+    """Доступно для нового количества в карточке, исключая её собственный текущий резерв."""
+    product = ensure_product(conn, product) if product else product
+    row = next((r for r in stock_summary(conn) if r["product"] == product), None)
+    available = float(row["available"] or 0.0) if row else 0.0
+    if purchase_id is not None:
+        p = conn.execute("SELECT handover_date, exec_status FROM purchases WHERE id=?", (purchase_id,)).fetchone()
+        if p and not p["handover_date"] and (p["exec_status"] or "") != "Отправлено":
+            own = conn.execute("SELECT COALESCE(SUM(qty),0) AS q FROM purchase_items WHERE purchase_id=? AND product=?", (purchase_id, product)).fetchone()["q"]
+            available += float(own or 0.0)
+    return available
+
+def stock_summary(conn: sqlite3.Connection):
+    """Сводка склада.
+
+    Физический остаток = приход − товары по контрактам, которые уже отправлены
+    (exec_status = "Отправлено") ИЛИ имеют дату вручения.
+    Автоматический резерв = товары всех неудалённых контрактов, которые ещё не
+    отправлены и не вручены. Ручной резерв добавляется отдельно.
+    Доступно = физический остаток − общий резерв.
+    """
+    received_rows = conn.execute(
+        "SELECT product, SUM(qty) AS q FROM stock_receipts "
+        "WHERE product IS NOT NULL AND product <> '' GROUP BY product"
+    ).fetchall()
+    shipped_rows = conn.execute(
+        "SELECT i.product AS product, SUM(i.qty) AS q FROM purchase_items i "
+        "JOIN purchases p ON p.id = i.purchase_id "
+        "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
+        "AND ((p.handover_date IS NOT NULL AND p.handover_date <> '') "
+        "OR p.exec_status = 'Отправлено') GROUP BY i.product"
+    ).fetchall()
+    reserved_rows = conn.execute(
+        "SELECT i.product AS product, SUM(i.qty) AS q FROM purchase_items i "
+        "JOIN purchases p ON p.id = i.purchase_id "
+        "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
+        "AND (p.handover_date IS NULL OR p.handover_date = '') "
+        "AND COALESCE(p.exec_status, '') <> 'Отправлено' GROUP BY i.product"
+    ).fetchall()
+    manual_reserved_rows = conn.execute(
+        "SELECT product, SUM(qty) AS q FROM manual_reservations "
+        "WHERE product IS NOT NULL AND product <> '' GROUP BY product"
+    ).fetchall()
+    received = {r["product"]: (r["q"] or 0.0) for r in received_rows}
+    shipped = {r["product"]: (r["q"] or 0.0) for r in shipped_rows}
+    reserved = {r["product"]: (r["q"] or 0.0) for r in reserved_rows}
+    manual_reserved = {r["product"]: (r["q"] or 0.0) for r in manual_reserved_rows}
+    products = sorted(set(received) | set(shipped) | set(reserved) | set(manual_reserved))
+    result = []
+    for product in products:
+        on_hand = received.get(product, 0.0) - shipped.get(product, 0.0)
+        auto_res = reserved.get(product, 0.0)
+        manual_res = manual_reserved.get(product, 0.0)
+        total_res = auto_res + manual_res
+        result.append({
+            "product": product,
+            "on_hand": on_hand,
+            "reserved": total_res,
+            "auto_reserved": auto_res,
+            "manual_reserved": manual_res,
+            "available": on_hand - total_res,
+        })
+    return result
+
+
+def stock_total_value(conn: sqlite3.Connection):
+    """Стоимость текущего физического остатка склада после фактической реализации.
+    Для каждого товара используется средневзвешенная себестоимость приходов."""
+    received = conn.execute(
+        "SELECT product, SUM(qty) AS qty, SUM(qty * COALESCE(unit_cost, 0)) AS value "
+        "FROM stock_receipts WHERE product IS NOT NULL AND product <> '' GROUP BY product"
+    ).fetchall()
+    shipped = conn.execute(
+        "SELECT i.product AS product, SUM(i.qty) AS qty FROM purchase_items i "
+        "JOIN purchases p ON p.id = i.purchase_id "
+        "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
+        "AND ((p.handover_date IS NOT NULL AND p.handover_date <> '') OR p.exec_status = 'Отправлено') "
+        "GROUP BY i.product"
+    ).fetchall()
+    shipped_map = {r['product']: (r['qty'] or 0.0) for r in shipped}
+    total = 0.0
+    for r in received:
+        qty = r['qty'] or 0.0
+        if qty <= 0:
+            continue
+        avg_cost = (r['value'] or 0.0) / qty
+        remaining = max(0.0, qty - shipped_map.get(r['product'], 0.0))
+        total += remaining * avg_cost
+    return round(total, 2)
+
+def stock_product_movement(conn: sqlite3.Connection, product: str):
+    """Хронология движения: приход, автоматический резерв, реализация и ручной резерв."""
+    events = []
+    rows = conn.execute(
+        "SELECT receipt_date AS dt, qty, unit_cost, supplier FROM stock_receipts "
+        "WHERE product = ? ORDER BY receipt_date, id", (product,)).fetchall()
+    for r in rows:
+        events.append({"date": r["dt"], "type": "Приход", "qty": r["qty"] or 0.0,
+                       "unit_cost": r["unit_cost"] or 0.0, "counterparty": r["supplier"] or "",
+                       "details": "Поступление на склад"})
+
+    rows = conn.execute(
+        "SELECT p.contract_date AS contract_date, p.handover_date AS handover_date, "
+        "p.exec_status, i.qty, p.contract_no, p.customer FROM purchase_items i "
+        "JOIN purchases p ON p.id = i.purchase_id "
+        "WHERE i.product = ? AND p.deleted_at IS NULL ORDER BY p.id", (product,)).fetchall()
+    for r in rows:
+        shipped = bool((r["handover_date"] or "").strip()) or r["exec_status"] == "Отправлено"
+        if shipped:
+            dt = r["handover_date"] or r["contract_date"] or ""
+            events.append({"date": dt, "type": "Реализация", "qty": -(r["qty"] or 0.0),
+                           "unit_cost": None, "counterparty": r["customer"] or "",
+                           "details": f"Контракт {r['contract_no'] or '—'}"})
+        else:
+            events.append({"date": r["contract_date"] or "", "type": "Резерв контракта",
+                           "qty": r["qty"] or 0.0, "unit_cost": None,
+                           "counterparty": r["customer"] or "",
+                           "details": f"Контракт {r['contract_no'] or '—'}"})
+
+    rows = conn.execute(
+        "SELECT reserved_date AS dt, qty, organization FROM manual_reservations "
+        "WHERE product = ? ORDER BY reserved_date, id", (product,)).fetchall()
+    for r in rows:
+        events.append({"date": r["dt"], "type": "Резерв", "qty": r["qty"] or 0.0,
+                       "unit_cost": None, "counterparty": r["organization"] or "",
+                       "details": "Ручной резерв"})
+    events.sort(key=lambda e: (e["date"] or "", e["type"]))
+    balance = 0.0
+    for e in events:
+        if e["type"] in ("Приход", "Реализация"):
+            balance += e["qty"]
+        e["balance"] = balance
+    return events
+
+
+# ---------------------------------------------------------------- Вложения
+def insert_attachment(conn: sqlite3.Connection, purchase_id: int, filename: str,
+                       stored_path: str, note: str = None, category: str = "Прочее") -> int:
+    added_date = date.today().isoformat()
+    stored_path = make_attachment_relative(stored_path, purchase_id, filename)
+    category = category if category in DOCUMENT_CATEGORIES else "Прочее"
+    cur = conn.execute(
+        "INSERT INTO attachments (purchase_id, filename, stored_path, added_date, category, note) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (purchase_id, filename, stored_path, added_date, category, note),
+    )
+    add_audit(conn, purchase_id, "Добавлен документ", f"{category}: {filename}")
+    conn.commit()
+    return cur.lastrowid
+
+
+def fetch_attachments(conn: sqlite3.Connection, purchase_id: int):
+    return conn.execute(
+        "SELECT * FROM attachments WHERE purchase_id = ? ORDER BY id", (purchase_id,)
+    ).fetchall()
+
+
+def update_attachment_category(conn: sqlite3.Connection, attachment_id: int, category: str):
+    category = category if category in DOCUMENT_CATEGORIES else "Прочее"
+    row = conn.execute("SELECT * FROM attachments WHERE id=?", (attachment_id,)).fetchone()
+    if row is None:
+        return
+    old = row["category"] or "Прочее"
+    conn.execute("UPDATE attachments SET category=? WHERE id=?", (category, attachment_id))
+    if old != category:
+        add_audit(conn, row["purchase_id"], "Изменена категория документа",
+                  f"{row['filename']}: {old} → {category}")
+    conn.commit()
+
+
+def delete_attachment(conn: sqlite3.Connection, attachment_id: int, remove_file: bool = True):
+    row = conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    if row and remove_file and row["stored_path"]:
+        path = resolve_attachment_path(row["stored_path"], row["purchase_id"], row["filename"])
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    if row:
+        add_audit(conn, row["purchase_id"], "Удалён документ", f"{row["category"] or 'Прочее'}: {row["filename"]}")
+    conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+    conn.commit()
+
+
+# ---------------------------------------------------------------- Анализ конкурентов
+def normalize_competitor_name(name: str) -> str:
+    """Ключ компании для объединения вариантов написания.
+
+    Игнорируются регистр, пробелы, кавычки, тире/дефисы и прочая пунктуация.
+    Буква ё приводится к е. Буквы и цифры сохраняются, поэтому разные
+    содержательные названия не склеиваются.
+    """
+    value = unicodedata.normalize("NFKC", str(name or "")).casefold().replace("ё", "е")
+    return "".join(ch for ch in value if ch.isalnum())
+
+
+def canonical_competitor_name(conn: sqlite3.Connection, name: str, exclude_id: int = None) -> str:
+    """Возвращает уже используемое написание той же компании, если оно есть."""
+    clean = re.sub(r"\s+", " ", str(name or "").strip())
+    key = normalize_competitor_name(clean)
+    if not key:
+        return clean
+    query = "SELECT id, competitor FROM competitor_records WHERE competitor IS NOT NULL AND trim(competitor) <> ''"
+    params = []
+    if exclude_id is not None:
+        query += " AND id <> ?"
+        params.append(int(exclude_id))
+    query += " ORDER BY id"
+    for row in conn.execute(query, params).fetchall():
+        if normalize_competitor_name(row["competitor"]) == key:
+            return row["competitor"]
+    return clean
+
+def insert_competitor_record(conn: sqlite3.Connection, data: dict) -> int:
+    cols = ", ".join(COMPETITOR_FIELDS)
+    placeholders = ", ".join(["?"] * len(COMPETITOR_FIELDS))
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    if data.get("competitor"):
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"])
+    values = [data.get(f) for f in COMPETITOR_FIELDS]
+    cur = conn.execute(f"INSERT INTO competitor_records ({cols}) VALUES ({placeholders})", values)
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_competitor_record(conn: sqlite3.Connection, record_id: int, data: dict):
+    set_clause = ", ".join(f"{f} = ?" for f in COMPETITOR_FIELDS)
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    if data.get("competitor"):
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"], exclude_id=record_id)
+    values = [data.get(f) for f in COMPETITOR_FIELDS] + [record_id]
+    conn.execute(f"UPDATE competitor_records SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+
+
+def delete_competitor_record(conn: sqlite3.Connection, record_id: int):
+    conn.execute("DELETE FROM competitor_records WHERE id = ?", (record_id,))
+    conn.commit()
+
+
+def fetch_competitor_records(conn: sqlite3.Connection, search: str = None):
+    query = "SELECT * FROM competitor_records WHERE 1=1"
+    params = []
+    if search:
+        query += " AND (competitor LIKE ? OR product LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    query += " ORDER BY purchase_date DESC, id DESC"
+    return conn.execute(query, params).fetchall()
+
+
+def fetch_competitor_record_by_id(conn: sqlite3.Connection, record_id: int):
+    return conn.execute("SELECT * FROM competitor_records WHERE id = ?", (record_id,)).fetchone()
+
+
+def competitor_product_stats(conn: sqlite3.Connection):
+    """
+    По каждому товару: мин./макс./средняя/медианная цена, кол-во наблюдений,
+    изменение средней цены (сравнение первой и второй половины наблюдений
+    в хронологическом порядке по дате закупки).
+    """
+    rows = conn.execute(
+        "SELECT product, unit_price, purchase_date FROM competitor_records "
+        "WHERE product IS NOT NULL AND product <> '' AND unit_price IS NOT NULL"
+    ).fetchall()
+    by_product = {}
+    for r in rows:
+        by_product.setdefault(r["product"], []).append(
+            (r["purchase_date"] or "", r["unit_price"])
+        )
+
+    result = []
+    for product, entries in sorted(by_product.items()):
+        prices = [p for _, p in entries]
+        entries_sorted = sorted(entries, key=lambda e: e[0])  # по дате (пустые даты — в начале)
+        ordered_prices = [p for _, p in entries_sorted]
+
+        change_pct = None
+        if len(ordered_prices) >= 2:
+            mid = len(ordered_prices) // 2
+            first_half = ordered_prices[:mid] if mid > 0 else ordered_prices[:1]
+            second_half = ordered_prices[mid:] if mid > 0 else ordered_prices[1:]
+            avg_first = sum(first_half) / len(first_half)
+            avg_second = sum(second_half) / len(second_half)
+            if avg_first:
+                change_pct = (avg_second - avg_first) / avg_first
+
+        result.append({
+            "product": product,
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "avg_price": sum(prices) / len(prices),
+            "median_price": statistics.median(prices),
+            "count": len(prices),
+            "change_pct": change_pct,
+        })
+    return result
+
+
+def competitor_stats(conn: sqlite3.Connection):
+    """
+    По каждому фактическому конкуренту: количество побед (записей),
+    средняя/мин/макс цена и отклонение от общей средней.
+
+    Варианты написания одной компании объединяются без учета регистра,
+    пробелов, кавычек, дефисов/тире и другой пунктуации. Например:
+    «ООО Альфа», «ооо альфа», «ООО-Альфа» и «ООО «Альфа»» — одна компания.
+    """
+    rows = conn.execute(
+        "SELECT id, competitor, unit_price FROM competitor_records "
+        "WHERE competitor IS NOT NULL AND competitor <> '' AND unit_price IS NOT NULL "
+        "ORDER BY id"
+    ).fetchall()
+    if not rows:
+        return []
+    overall_avg = sum(r["unit_price"] for r in rows) / len(rows)
+
+    grouped = {}
+    for r in rows:
+        key = normalize_competitor_name(r["competitor"])
+        if not key:
+            continue
+        group = grouped.setdefault(key, {"prices": [], "labels": {}, "first": r["competitor"]})
+        group["prices"].append(r["unit_price"])
+        label = re.sub(r"\s+", " ", r["competitor"].strip())
+        group["labels"][label] = group["labels"].get(label, 0) + 1
+
+    result = []
+    for group in grouped.values():
+        prices = group["prices"]
+        # Для отображения берём самое часто встречающееся написание; при равенстве
+        # сохраняем первое встретившееся, чтобы интерфейс не менялся случайно.
+        max_count = max(group["labels"].values())
+        competitor = next(
+            (label for label, count in group["labels"].items() if count == max_count),
+            group["first"],
+        )
+        avg_price = sum(prices) / len(prices)
+        relative_pct = (avg_price - overall_avg) / overall_avg if overall_avg else None
+        result.append({
+            "competitor": competitor,
+            "wins": len(prices),
+            "avg_price": avg_price,
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "relative_pct": relative_pct,
+        })
+    return sorted(result, key=lambda item: normalize_competitor_name(item["competitor"]))
+
+
+# ---------------------------------------------------------------- Калькулятор цены
+def insert_calculator_row(conn: sqlite3.Connection, data: dict) -> int:
+    cols = ", ".join(CALCULATOR_FIELDS)
+    placeholders = ", ".join(["?"] * len(CALCULATOR_FIELDS))
+    values = [data.get(f) for f in CALCULATOR_FIELDS]
+    cur = conn.execute(f"INSERT INTO calculator_rows ({cols}) VALUES ({placeholders})", values)
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_calculator_row(conn: sqlite3.Connection, row_id: int, data: dict):
+    set_clause = ", ".join(f"{f} = ?" for f in CALCULATOR_FIELDS)
+    values = [data.get(f) for f in CALCULATOR_FIELDS] + [row_id]
+    conn.execute(f"UPDATE calculator_rows SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+
+
+def delete_calculator_row(conn: sqlite3.Connection, row_id: int):
+    conn.execute("DELETE FROM calculator_rows WHERE id = ?", (row_id,))
+    conn.commit()
+
+
+def clear_calculator_rows(conn: sqlite3.Connection):
+    conn.execute("DELETE FROM calculator_rows")
+    conn.commit()
+
+
+def fetch_calculator_rows(conn: sqlite3.Connection):
+    return conn.execute("SELECT * FROM calculator_rows ORDER BY id").fetchall()
+
+
+def fetch_calculator_row_by_id(conn: sqlite3.Connection, row_id: int):
+    row = conn.execute("SELECT * FROM calculator_rows WHERE id = ?", (row_id,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+# ---------------------------------------------------------------- Корзина контрактов
+def delete_purchase(conn: sqlite3.Connection, purchase_id: int):
+    """
+    Перемещает контракт в «корзину» (мягкое удаление): сам контракт, его позиции и
+    вложения НЕ стираются физически — просто перестают показываться в обычных списках.
+    Через TRASH_KEEP_DAYS дней автоматически удалится навсегда (см. purge_old_trash),
+    либо раньше — вручную из корзины (см. purge_purchase).
+    """
+    conn.execute("UPDATE purchases SET deleted_at = ? WHERE id = ?",
+                 (datetime.now().isoformat(timespec="seconds"), purchase_id))
+    conn.commit()
+
+
+def restore_purchase(conn: sqlite3.Connection, purchase_id: int):
+    """Возвращает контракт из корзины обратно в обычные списки."""
+    conn.execute("UPDATE purchases SET deleted_at = NULL WHERE id = ?", (purchase_id,))
+    conn.commit()
+
+
+def purge_purchase(conn: sqlite3.Connection, purchase_id: int):
+    """Настоящее, безвозвратное удаление: контракт, его позиции, вложения и файлы с диска."""
+    for att in fetch_attachments(conn, purchase_id):
+        try:
+            path = resolve_attachment_path(att["stored_path"], att["purchase_id"], att["filename"])
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+    conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
+    conn.execute("DELETE FROM attachments WHERE purchase_id = ?", (purchase_id,))
+    conn.execute("DELETE FROM purchases WHERE id = ?", (purchase_id,))
+    conn.commit()
+
+
+def fetch_deleted_purchases(conn: sqlite3.Connection):
+    """Список контрактов в корзине (с кратким составом товаров), новые сначала."""
+    rows = conn.execute(
+        "SELECT * FROM purchases WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+    ).fetchall()
+    result = []
+    for h in rows:
+        items = fetch_items(conn, h["id"])
+        row = dict(h)
+        row["items"] = items
+        row["product"] = _products_summary(items)
+        row["qty"] = _qty_total(items)
+        result.append(row)
+    return result
+
+
+def purge_old_trash(conn: sqlite3.Connection, days: int = TRASH_KEEP_DAYS) -> int:
+    """Безвозвратно удаляет контракты, пролежавшие в корзине дольше `days` дней.
+    Возвращает количество удалённых контрактов."""
+    cutoff = datetime.now() - timedelta(days=days)
+    rows = conn.execute(
+        "SELECT id, deleted_at FROM purchases WHERE deleted_at IS NOT NULL"
+    ).fetchall()
+    purged = 0
+    for r in rows:
+        try:
+            deleted_at = datetime.fromisoformat(r["deleted_at"])
+        except (ValueError, TypeError):
+            continue
+        if deleted_at < cutoff:
+            purge_purchase(conn, r["id"])
+            purged += 1
+    return purged
+
+
+# ---------------------------------------------------------------- Ручной резерв склада
+def insert_manual_reservation(conn: sqlite3.Connection, data: dict) -> int:
+    cols = ", ".join(RESERVATION_FIELDS)
+    placeholders = ", ".join(["?"] * len(RESERVATION_FIELDS))
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    values = [data.get(f) for f in RESERVATION_FIELDS]
+    cur = conn.execute(f"INSERT INTO manual_reservations ({cols}) VALUES ({placeholders})", values)
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_manual_reservation(conn: sqlite3.Connection, reservation_id: int, data: dict):
+    set_clause = ", ".join(f"{f} = ?" for f in RESERVATION_FIELDS)
+    data = dict(data)
+    if data.get("product"):
+        data["product"] = ensure_product(conn, data["product"])
+    values = [data.get(f) for f in RESERVATION_FIELDS] + [reservation_id]
+    conn.execute(f"UPDATE manual_reservations SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+
+
+def delete_manual_reservation(conn: sqlite3.Connection, reservation_id: int):
+    conn.execute("DELETE FROM manual_reservations WHERE id = ?", (reservation_id,))
+    conn.commit()
+
+
+def fetch_manual_reservations(conn: sqlite3.Connection, search: str = None):
+    query = "SELECT * FROM manual_reservations WHERE 1=1"
+    params = []
+    if search:
+        query += " AND (product LIKE ? OR organization LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    query += " ORDER BY reserved_date DESC, id DESC"
+    return conn.execute(query, params).fetchall()
+
+
+def fetch_manual_reservation_by_id(conn: sqlite3.Connection, reservation_id: int):
+    row = conn.execute(
+        "SELECT * FROM manual_reservations WHERE id = ?", (reservation_id,)
+    ).fetchone()
+    return dict(row) if row is not None else None
