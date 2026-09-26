@@ -4732,6 +4732,10 @@ class App(tk.Tk):
         product = item.get("product")
         if product:
             self.nb.select(self.tab_stock)
+            try:
+                self.stock_notebook.select(self.stock_balances_tab)
+            except Exception:
+                pass
             for row_id in self.stock_summary_tree.get_children():
                 vals = self.stock_summary_tree.item(row_id, "values")
                 if vals and vals[0] == product:
