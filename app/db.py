@@ -1163,57 +1163,41 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
               contract_status: str = None, payment_status: str = None, exec_status: str = None,
               order_by_today: bool = True, operational_period: bool = False):
     """
-    Возвращает шапки контрактов и позиции. Фильтрация выполняется в SQL, а все
-    товарные позиции загружаются одним пакетным проходом вместо отдельного SELECT
-    на каждый контракт. Это критично для баз с тысячами контрактов.
+    Возвращает контракты и позиции. Год/месяц относятся к месяцу фактического
+    добавления записи (created_at). Сам created_at остаётся техническим полем и
+    в пользовательском интерфейсе не показывается.
+
+    operational_period оставлен в сигнатуре для обратной совместимости со старым
+    кодом, но больше не переносит активные контракты между месяцами.
     """
     query = "SELECT p.* FROM purchases p WHERE p.deleted_at IS NULL"
     params = []
-    # Нормализованное SQL-представление исторической даты. Оно поддерживает и
-    # штатный ISO YYYY-MM-DD, и старые DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY.
+
+    # created_at у новых записей хранится как YYYY-MM-DD HH:MM:SS. Для старых
+    # баз поддерживаем DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY и, как последнюю
+    # страховку, contract_date, если created_at отсутствует.
     historical_date = (
         "(CASE "
-        "WHEN substr(COALESCE(p.contract_date,''),5,1)='-' THEN p.contract_date "
+        "WHEN substr(COALESCE(p.contract_date,''),5,1)='-' THEN substr(p.contract_date,1,10) "
         "WHEN substr(COALESCE(p.contract_date,''),3,1) IN ('.','/','-') "
         "THEN substr(p.contract_date,7,4)||'-'||substr(p.contract_date,4,2)||'-'||substr(p.contract_date,1,2) "
-        "ELSE p.contract_date END)"
+        "ELSE substr(COALESCE(p.contract_date,''),1,10) END)"
     )
-    if operational_period and (year or month):
-        # Главная страница использует «рабочий месяц» вместо простого месяца
-        # заключения контракта. Пока по контракту остаётся хотя бы одно открытое
-        # обязательство (исполнение ИЛИ оплата), его виртуальная дата относится к
-        # текущему месяцу. После статусов «Исполнено» И «Оплачено» контракт снова
-        # относится к своему историческому периоду по contract_date.
-        #
-        # Благодаря CASE один и тот же принцип работает и для фильтра «весь год»:
-        # активный старый контракт виден в текущем году, но не дублируется в том
-        # историческом году, где был заключён.
-        today_iso = date.today().isoformat()
-        active_expr = ("(COALESCE(p.exec_status,'') <> 'Исполнено' "
-                       "OR COALESCE(p.payment_status,'') <> 'Оплачено')")
-        # Если в старой/ошибочной записи год даты контракта выпал за рабочий
-        # диапазон, не прячем её в несуществующем историческом периоде. Такая
-        # запись остаётся в текущем рабочем месяце, пока пользователь не исправит
-        # дату в карточке. Новые сохранения дополнительно валидируются в UI.
-        valid_date_expr = f"(CAST(substr({historical_date},1,4) AS INTEGER) BETWEEN 2000 AND 2100)"
-        virtual_date = f"(CASE WHEN {active_expr} OR NOT {valid_date_expr} THEN ? ELSE {historical_date} END)"
-        if year:
-            query += f" AND (substr({virtual_date},1,4)=? OR strftime('%Y', {virtual_date})=?)"
-            # virtual_date повторяется дважды в выражении, поэтому today_iso
-            # также передаётся дважды — в порядке SQL placeholder'ов.
-            params.extend([today_iso, str(year), today_iso, str(year)])
-        if month:
-            mm = f"{month:02d}"
-            query += f" AND (substr({virtual_date},6,2)=? OR strftime('%m', {virtual_date})=?)"
-            params.extend([today_iso, mm, today_iso, mm])
-    else:
-        if year:
-            query += f" AND substr({historical_date},1,4)=?"
-            params.append(str(year))
-        if month:
-            mm = f"{month:02d}"
-            query += f" AND substr({historical_date},6,2)=?"
-            params.append(mm)
+    created_period = (
+        "(CASE "
+        "WHEN substr(COALESCE(p.created_at,''),5,1)='-' THEN substr(p.created_at,1,10) "
+        "WHEN substr(COALESCE(p.created_at,''),3,1) IN ('.','/','-') "
+        "THEN substr(p.created_at,7,4)||'-'||substr(p.created_at,4,2)||'-'||substr(p.created_at,1,2) "
+        f"WHEN COALESCE(p.created_at,'')='' THEN {historical_date} "
+        "ELSE substr(COALESCE(p.created_at,''),1,10) END)"
+    )
+
+    if year:
+        query += f" AND substr({created_period},1,4)=?"
+        params.append(str(year))
+    if month:
+        query += f" AND substr({created_period},6,2)=?"
+        params.append(f"{month:02d}")
     if contract_status:
         query += " AND p.contract_status = ?"
         params.append(contract_status)
@@ -1231,17 +1215,8 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
                   "OR EXISTS (SELECT 1 FROM purchase_items si "
                   "WHERE si.purchase_id=p.id AND COALESCE(si.product,'') LIKE ? COLLATE NOCASE))")
         params.extend([like, like, like, like])
-    # Главная таблица первым столбцом показывает «Дата» (= created_at), поэтому
-    # сортируем именно по ней, а не по дате заключения контракта. Поддерживаем
-    # штатный ISO YYYY-MM-DD[ HH:MM:SS] и старые DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY.
-    created_sort = (
-        "(CASE "
-        "WHEN substr(COALESCE(p.created_at,''),5,1)='-' THEN substr(p.created_at,1,10) "
-        "WHEN substr(COALESCE(p.created_at,''),3,1) IN ('.','/','-') "
-        "THEN substr(p.created_at,7,4)||'-'||substr(p.created_at,4,2)||'-'||substr(p.created_at,1,2) "
-        "ELSE COALESCE(p.created_at,'') END)"
-    )
-    query += f" ORDER BY {created_sort} DESC, p.id DESC"
+
+    query += f" ORDER BY {created_period} DESC, p.id DESC"
     header_rows = conn.execute(query, params).fetchall()
 
     items_map = _fetch_items_for_purchase_ids(conn, [h["id"] for h in header_rows])
@@ -1254,7 +1229,6 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
         row["qty"] = _qty_total(items)
         result.append(row)
     return result
-
 
 def dashboard_kpis(conn: sqlite3.Connection):
     """KPI главного экрана одним агрегатным запросом + агрегат склада."""
@@ -1312,22 +1286,27 @@ def fetch_by_id(conn: sqlite3.Connection, purchase_id: int):
 
 
 def distinct_years(conn: sqlite3.Connection):
-    """Годы контрактов для фильтров. Ошибочные годы (например 0920) не показываем."""
+    """Годы для фильтров по месяцу добавления контракта."""
     rows = conn.execute(
-        "SELECT contract_date FROM purchases "
-        "WHERE contract_date IS NOT NULL AND contract_date <> '' AND deleted_at IS NULL"
+        "SELECT created_at, contract_date FROM purchases WHERE deleted_at IS NULL"
     ).fetchall()
     years = set()
-    for r in rows:
-        text = str(r["contract_date"] or "").strip()
-        parsed = None
-        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+
+    def _parse_period(value):
+        if not value:
+            return None
+        text = str(value).strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
             try:
                 parsed = datetime.strptime(text, fmt).date()
-                break
+                return parsed if 2000 <= parsed.year <= 2100 else None
             except ValueError:
                 continue
-        if parsed is not None and 2000 <= parsed.year <= 2100:
+        return None
+
+    for r in rows:
+        parsed = _parse_period(r["created_at"]) or _parse_period(r["contract_date"])
+        if parsed is not None:
             years.add(parsed.year)
     return sorted(years)
 
@@ -1337,12 +1316,12 @@ def distinct_products(conn: sqlite3.Connection):
 
 def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
     """
-    Финансовые итоги группируются по ДАТЕ КОНТРАКТА (contract_date), а не по дате вручения.
-    Поэтому контракт от июня всегда относится к июню, даже если товар передан позже.
+    Финансовые итоги группируются по месяцу фактического добавления контракта
+    (created_at), а не по дате заключения или вручения. Пользователь не вводит
+    created_at вручную: поле проставляется автоматически при создании записи.
 
-    Количество «реализовано/оплачено» учитывается только после фактической передачи товара
-    (handover_date заполнена), но также относится к месяцу самого контракта.
-    Поддерживаются старые записи с датами YYYY-MM-DD и ДД.ММ.ГГГГ.
+    Количество реализованного товара учитывается только после фактической передачи
+    (handover_date заполнена), но относится к месяцу добавления контракта.
     """
     from calculations import calc_tax, calc_profit, calc_margin_pct
 
@@ -1350,7 +1329,7 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
         if not value:
             return None
         text = str(value).strip()
-        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
             try:
                 parsed = datetime.strptime(text, fmt).date()
                 if 2000 <= parsed.year <= 2100:
@@ -1366,15 +1345,15 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
 
     grouped = {}
     for r in rows:
-        contract_date = _parse_db_date(r["contract_date"])
-        if contract_date is None:
+        period_date = _parse_db_date(r["created_at"]) or _parse_db_date(r["contract_date"])
+        if period_date is None:
             continue
-        if year is not None and contract_date.year != int(year):
+        if year is not None and period_date.year != int(year):
             continue
-        if month is not None and contract_date.month != int(month):
+        if month is not None and period_date.month != int(month):
             continue
 
-        key = (contract_date.year, contract_date.month)
+        key = (period_date.year, period_date.month)
         g = grouped.setdefault(key, {
             "contract_sum": 0.0,
             "purchase_cost": 0.0,
@@ -1427,7 +1406,6 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             "qty_unpaid": g["qty_unpaid"],
         })
     return result
-
 
 def top_customers(conn: sqlite3.Connection, limit: int = 5):
     rows = conn.execute(
