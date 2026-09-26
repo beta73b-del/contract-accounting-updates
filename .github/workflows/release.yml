@@ -1,0 +1,76 @@
+name: Build and publish Windows release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if (-not $version) { throw "VERSION is empty" }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+
+      - name: Verify application version
+        shell: pwsh
+        run: |
+          $text = Get-Content app/app_version.py -Raw
+          $escaped = [regex]::Escape($env:VERSION)
+          if ($text -notmatch "__version__\s*=\s*['\"]$escaped['\"]") {
+            throw "app/app_version.py does not match VERSION=$env:VERSION"
+          }
+
+      - name: Build Windows EXE
+        shell: pwsh
+        run: |
+          Set-Location app
+          python -m PyInstaller --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. main.py
+          Set-Location ..
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item app/dist/UchetZakupok.exe release/UchetZakupok.exe -Force
+          $hash = (Get-FileHash release/UchetZakupok.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  UchetZakupok.exe" | Set-Content release/UchetZakupok.exe.sha256 -Encoding ascii
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG release/UchetZakupok.exe release/UchetZakupok.exe.sha256 --clobber --repo $env:GITHUB_REPOSITORY
+            gh release edit $env:TAG --title $env:TAG --notes-file RELEASE_NOTES.md --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $env:TAG release/UchetZakupok.exe release/UchetZakupok.exe.sha256 --title $env:TAG --notes-file RELEASE_NOTES.md --target main --repo $env:GITHUB_REPOSITORY
+          }
