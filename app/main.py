@@ -1120,18 +1120,32 @@ class PurchaseDialog(tk.Toplevel):
         )
         self.next_action_button.pack(fill="x")
 
-        # Дополнительные расходы и служебные сведения не мешают быстрому заведению.
-        self.additional_visible = existing is not None
+        # Сворачиваемый блок «Дополнительно» закреплён в отдельном контейнере
+        # ПЕРЕД сотрудниками. Поэтому раскрытие физически раздвигает раскладку:
+        # сотрудники уходят ниже, а при сворачивании сразу поднимаются обратно.
+        self.additional_visible = False
+        self.additional_section = ttk.Frame(left_col)
+        self.additional_section.pack(fill="x", pady=(0, 8))
+
         self.additional_toggle_var = tk.StringVar()
-        additional_toggle = ttk.Button(left_col, textvariable=self.additional_toggle_var,
-                                       command=self._toggle_additional_fields)
-        additional_toggle.pack(fill="x", pady=(0, 4))
-        self.additional_frame = ttk.LabelFrame(left_col, text="Дополнительно", padding=8)
+        self.additional_toggle = ttk.Button(
+            self.additional_section,
+            textvariable=self.additional_toggle_var,
+            command=self._toggle_additional_fields,
+        )
+        self.additional_toggle.pack(fill="x")
+
+        self.additional_frame = ttk.LabelFrame(
+            self.additional_section,
+            text="Дополнительные сведения",
+            padding=8,
+        )
         add_half = (len(additional_specs) + 1) // 2
         self._build_header_column(self.additional_frame, additional_specs[:add_half], col_offset=0)
         self._build_header_column(self.additional_frame, additional_specs[add_half:], col_offset=2)
         self._update_additional_visibility()
 
+        # Ответственные сотрудники всегда идут следом за контейнером «Дополнительно».
         self._build_responsible_section(left_col)
 
         if existing is not None:
@@ -1356,11 +1370,11 @@ class PurchaseDialog(tk.Toplevel):
             return
         if self.additional_visible:
             if not self.additional_frame.winfo_manager():
-                self.additional_frame.pack(fill="x", pady=(0, 8))
-            self.additional_toggle_var.set("Дополнительно ▲")
+                self.additional_frame.pack(fill="x", pady=(6, 0))
+            self.additional_toggle_var.set("Дополнительно ▲   Скрыть дополнительные поля")
         else:
             self.additional_frame.pack_forget()
-            self.additional_toggle_var.set("Дополнительно ▼")
+            self.additional_toggle_var.set("Дополнительно ▼   Расходы, примечание и служебные сведения")
 
     def _toggle_additional_fields(self):
         self.additional_visible = not bool(self.additional_visible)
@@ -1425,7 +1439,7 @@ class PurchaseDialog(tk.Toplevel):
     # ---- ответственные лица (два блока размещены РЯДОМ по горизонтали) ----
     def _build_responsible_section(self, parent):
         row = ttk.Frame(parent)
-        row.pack(fill="x")
+        row.pack(fill="x", pady=(0, 8))
 
         RESP_FIELDS = [
             ("resp_purchase_name", "ФИО"), ("resp_purchase_phone", "Телефон"),
