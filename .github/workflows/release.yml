@@ -75,6 +75,16 @@ jobs:
           $hash = (Get-FileHash release/UchetZakupok.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  UchetZakupok.exe" | Set-Content release/UchetZakupok.exe.sha256 -Encoding ascii
 
+      - name: Runtime EXE smoke test
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\UchetZakupokSmoke"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $p = Start-Process -FilePath "release\UchetZakupok.exe" -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "UchetZakupok.exe exited during startup smoke test with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
