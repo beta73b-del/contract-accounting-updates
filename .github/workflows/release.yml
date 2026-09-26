@@ -85,6 +85,16 @@ jobs:
           if ($p.HasExited) { throw "UchetZakupok.exe exited during startup smoke test with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
 
+      - name: Upload validated recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UchetZakupok-${{ env.TAG }}
+          path: |
+            release/UchetZakupok.exe
+            release/UchetZakupok.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
