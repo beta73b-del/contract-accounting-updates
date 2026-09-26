@@ -69,6 +69,41 @@ jobs:
         run: |
           python -c "import os,sys,tempfile; sys.path.insert(0,'app'); import db,main; p=os.path.join(tempfile.mkdtemp(),'logic.db'); conn=db.get_connection(p); pid=db.insert_purchase(conn, {'customer':'Тест','contract_no':'T-1','contract_date':'2024-01-15','contract_sum':1000,'payment_status':'Не оплачено','exec_status':'В процессе','contract_status':'Формирование'}, []); conn.execute('UPDATE purchases SET created_at=? WHERE id=?',('2026-05-15 12:00:00',pid)); conn.commit(); assert len(db.fetch_all(conn,year=2026,month=5))==1; assert len(db.fetch_all(conn,year=2026,month=1))==0; s=db.monthly_summary(conn,year=2026,month=5); assert len(s)==1 and s[0]['month']==5 and s[0]['contract_sum']==1000; assert all(x[0] != 'created_at' for x in main.PurchaseDialog.HEADER_LABELS); assert all(x[0] != 'created_at' for x in main.App.PURCHASE_COLS); conn.close()"
 
+      - name: Verify UX v2.16.8 structure
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          main = Path("app/main.py").read_text(encoding="utf-8")
+          theme = Path("app/theme.py").read_text(encoding="utf-8")
+
+          assert 'nb.add(self.tab_deadlines' not in main
+          assert 'self._build_deadlines_tab()' not in main
+          assert 'self.refresh_deadlines()' not in main
+
+          assert 'ttk.LabelFrame(left_col, text="Контракт"' in main
+          assert 'ttk.LabelFrame(left_col, text="Сроки"' in main
+          assert 'ttk.LabelFrame(left_col, text="Состояние"' in main
+
+          assert 'self.next_action_button = ttk.Button' in main
+          assert 'next_action_label' not in main
+          assert 'NextAction.TButton' in theme
+
+          assert 'self.doc_expanded = False' in main
+          assert main.index('self._refresh_items_tree()') < main.index('self._build_documents_section(body)')
+
+          assert 'GitHub repository:' not in main
+          assert 'update_github_repo' not in main
+          assert 'repo = DEFAULT_UPDATE_REPO' in main
+
+          assert '● Данные сохранены' in main
+          assert 'self.health_status_var, style="CardMuted.TLabel"' not in main
+
+          assert 'self.stock_notebook.add(self.stock_balances_tab, text="Остатки")' in main
+          assert 'self.stock_notebook.add(self.stock_receipts_tab, text="Приходы")' in main
+          assert 'self.stock_notebook.add(self.stock_reservations_tab, text="Резервы")' in main
+          '@ | python -
+
       - name: Build Windows EXE
         shell: pwsh
         run: |
