@@ -76,6 +76,30 @@ def apply(root):
                     lightcolor="#58708C", darkcolor="#58708C", padding=(10, 6), font=(FONT, 9, "bold"))
     style.map("Header.TButton", background=[("active", "#294562")])
 
+    # Главное действие карточки
+    style.configure("NextAction.TButton", background=ACCENT, foreground=WHITE, bordercolor=ACCENT,
+                    lightcolor=ACCENT, darkcolor=ACCENT, padding=(14, 10),
+                    font=(FONT, 11, "bold"))
+    style.map("NextAction.TButton", background=[("active", ACCENT_HOVER), ("pressed", "#2147AE")],
+              foreground=[("!disabled", WHITE)])
+    style.configure("NextActionWarning.TButton", background=SOFT_YELLOW, foreground=AMBER,
+                    bordercolor="#E8C96A", lightcolor="#E8C96A", darkcolor="#E8C96A",
+                    padding=(14, 10), font=(FONT, 11, "bold"))
+    style.configure("NextActionDanger.TButton", background=SOFT_RED, foreground=RED,
+                    bordercolor="#F0B8B3", lightcolor="#F0B8B3", darkcolor="#F0B8B3",
+                    padding=(14, 10), font=(FONT, 11, "bold"))
+    style.configure("NextActionDone.TButton", background=SOFT_GREEN, foreground=GREEN,
+                    bordercolor="#B7DDC6", lightcolor="#B7DDC6", darkcolor="#B7DDC6",
+                    padding=(14, 10), font=(FONT, 11, "bold"))
+
+    # Компактная строка состояния
+    style.configure("StatusOk.TLabel", background=WHITE, foreground=GREEN,
+                    font=(FONT, FONT_SIZE, "bold"))
+    style.configure("StatusBusy.TLabel", background=WHITE, foreground=MUTED,
+                    font=(FONT, FONT_SIZE))
+    style.configure("StatusError.TLabel", background=WHITE, foreground=RED,
+                    font=(FONT, FONT_SIZE, "bold"))
+
     # Notebook tabs
     style.configure("TNotebook", background=APP_BG, borderwidth=0, tabmargins=(8, 8, 8, 0))
     style.configure("TNotebook.Tab", background=APP_BG, foreground=MUTED, borderwidth=0,
