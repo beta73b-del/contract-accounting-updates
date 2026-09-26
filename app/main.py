@@ -430,7 +430,13 @@ def _wrap_cell_to_width(tree, column, value):
     out = []
     for original_line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         out.extend(_wrap_line_pixels(original_line, max_px, font))
-    out = _center_multiline_lines(out or [""], font)
+    out = out or [""]
+    try:
+        anchor = str(tree.column(column, "anchor") or "center")
+    except Exception:
+        anchor = "center"
+    if anchor == "center":
+        out = _center_multiline_lines(out, font)
     return "\n".join(out), max(1, len(out))
 
 
@@ -1062,6 +1068,15 @@ class PurchaseDialog(tk.Toplevel):
         # Вся рабочая часть карточки находится в одной прокручиваемой области.
         body = self._build_vscroll_area(self)
 
+        quick_card_nav = ttk.Frame(body)
+        quick_card_nav.pack(fill="x", pady=(0, 6))
+        self.quick_docs_var = tk.StringVar(value="Документы: 0 файлов")
+        ttk.Button(
+            quick_card_nav,
+            textvariable=self.quick_docs_var,
+            command=self._scroll_to_documents,
+        ).pack(side="right")
+
         content_row = ttk.Frame(body)
         content_row.pack(fill="both", expand=True)
 
@@ -1108,13 +1123,22 @@ class PurchaseDialog(tk.Toplevel):
         self._build_header_column(state_frame, state_specs[:state_half], col_offset=0)
         self._build_header_column(state_frame, state_specs[state_half:], col_offset=2)
 
-        # Главное действие карточки — настоящий крупный button, а не кликабельная надпись.
+        # Информация о сроке и само действие разделены: срок можно быстро
+        # прочитать, а на кнопке остаётся только однозначная команда.
         next_action_frame = ttk.LabelFrame(left_col, text="Следующее действие", padding=8)
         next_action_frame.pack(fill="x", pady=(0, 8))
-        self.next_action_var = tk.StringVar(value="—")
+        self.next_action_info_var = tk.StringVar(value="—")
+        ttk.Label(
+            next_action_frame,
+            textvariable=self.next_action_info_var,
+            justify="left",
+            wraplength=760,
+            font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
+        ).pack(fill="x", pady=(0, 6))
+        self.next_action_button_var = tk.StringVar(value="Действий не требуется")
         self.next_action_button = ttk.Button(
             next_action_frame,
-            textvariable=self.next_action_var,
+            textvariable=self.next_action_button_var,
             command=self._perform_next_action,
             style="NextAction.TButton",
         )
@@ -1314,6 +1338,7 @@ class PurchaseDialog(tk.Toplevel):
 
         inner = ttk.Frame(canvas)
         window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        self._card_inner = inner
         self._card_canvas = canvas
         self._card_canvas_window = window_id
 
@@ -1469,7 +1494,7 @@ class PurchaseDialog(tk.Toplevel):
 
     # ---- документы: компактно для новой карточки, раскрыто для существующей ----
     def _build_documents_section(self, parent):
-        self.doc_frame = ttk.LabelFrame(parent, text="📎 Документы", padding=8)
+        self.doc_frame = ttk.LabelFrame(parent, text="Документы", padding=8)
         self.doc_frame.pack(fill="x", pady=(0, 8))
         self.doc_expanded = False
         self.doc_count_var = tk.StringVar(value="Документы — 0 файлов")
@@ -1534,6 +1559,24 @@ class PurchaseDialog(tk.Toplevel):
     def _toggle_documents(self):
         self.doc_expanded = not bool(self.doc_expanded)
         self._update_documents_visibility()
+
+    def _scroll_to_documents(self):
+        """Раскрывает документы и прокручивает карточку прямо к ним."""
+        if not hasattr(self, "doc_frame"):
+            return
+        self.doc_expanded = True
+        self._update_documents_visibility()
+        try:
+            self.update_idletasks()
+            inner = getattr(self, "_card_inner", None)
+            canvas = getattr(self, "_card_canvas", None)
+            if inner is None or canvas is None:
+                return
+            total_h = max(1, inner.winfo_reqheight())
+            y = max(0, self.doc_frame.winfo_y() - 8)
+            canvas.yview_moveto(min(1.0, y / total_h))
+        except tk.TclError:
+            pass
 
     @staticmethod
     def _guess_document_category(path):
@@ -1705,11 +1748,13 @@ class PurchaseDialog(tk.Toplevel):
                 attachments = list(db.fetch_attachments(self.conn, purchase_id))
                 for a in attachments:
                     tree_insert_wrapped(self.doc_tree, "", "end", iid=str(a["id"]),
-                                          values=(a["category"] or "Прочее", f"📎 {a['filename']}", fmt_date(a["added_date"])))
+                                          values=(a["category"] or "Прочее", a["filename"], fmt_date(a["added_date"])))
+        n = len(attachments)
+        word = "файл" if n == 1 else ("файла" if 2 <= n <= 4 else "файлов")
         if hasattr(self, "doc_count_var"):
-            n = len(attachments)
-            word = "файл" if n == 1 else ("файла" if 2 <= n <= 4 else "файлов")
             self.doc_count_var.set(f"Документы — {n} {word}")
+        if hasattr(self, "quick_docs_var"):
+            self.quick_docs_var.set(f"Документы: {n} {word}")
         self._refresh_document_advice()
 
     def _ensure_draft_saved(self):
@@ -1929,11 +1974,13 @@ class PurchaseDialog(tk.Toplevel):
                 pass
 
     def _refresh_next_action(self):
-        if not hasattr(self, "next_action_var"):
+        if not hasattr(self, "next_action_info_var"):
             return
+
         def get(key):
             w = self.widgets.get(key)
             return (w.get().strip() if w is not None else "")
+
         def parse_ui(key):
             raw = get(key)
             if not raw:
@@ -1942,52 +1989,55 @@ class PurchaseDialog(tk.Toplevel):
                 return parse_date_iso_to_date(parse_date_ru(normalize_date_text(raw)))
             except Exception:
                 return None
-        def deadline_text(prefix, d):
+
+        def deadline_info(prefix, d):
             days = (d - date.today()).days
             shown = d.strftime(DATE_FMT)
             if days < 0:
-                return f"{prefix}: срок {shown} ПРОПУЩЕН на {abs(days)} дн.", "overdue"
+                return f"{prefix} {shown} · ПРОСРОЧЕНО на {abs(days)} дн.", "overdue"
             if days == 0:
-                return f"{prefix}: СЕГОДНЯ ({shown})", "today"
+                return f"{prefix} {shown} · сегодня", "today"
             if days == 1:
-                return f"{prefix}: завтра ({shown})", "soon"
-            return f"{prefix}: {shown} — осталось {days} дн.", ("soon" if days <= 3 else "normal")
+                return f"{prefix} {shown} · завтра", "soon"
+            return f"{prefix} {shown} · осталось {days} дн.", ("soon" if days <= 3 else "normal")
 
         contract_status = get("contract_status")
         exec_status = get("exec_status")
         payment_status = get("payment_status")
-        text = "Следующее действие: —"
+        info_text = "—"
+        action_text = "Действий не требуется"
         state = "normal"
         self._next_action_target = None
+
         if contract_status != "Заключен":
             d = parse_ui("sign_deadline")
             if d:
-                detail, state = deadline_text("подписать контракт", d)
-                text = "Следующее действие: " + detail
+                info_text, state = deadline_info("Подписать до", d)
             else:
-                text = "Следующее действие: указать «Подписать до» и контролировать заключение"
-                state = "soon"
+                info_text, state = "Срок подписания не указан", "soon"
+            action_text = "Отметить контракт заключённым"
             self._next_action_target = ("contract_status", "Заключен", "contract_date", "Дата заключения")
         elif exec_status != "Исполнено":
             d = parse_ui("deadline")
             if d:
-                detail, state = deadline_text("исполнить контракт", d)
-                text = "Следующее действие: " + detail
+                info_text, state = deadline_info("Исполнить до", d)
             else:
-                text = "Следующее действие: контролировать исполнение контракта"
+                info_text = "Срок исполнения не указан"
+            action_text = "Отметить контракт исполненным"
             self._next_action_target = ("exec_status", "Исполнено", "handover_date", "Дата вручения")
         elif payment_status != "Оплачено":
             d = parse_ui("payment_deadline")
             if d:
-                detail, state = deadline_text("контролировать оплату", d)
-                text = "Следующее действие: " + detail
+                info_text, state = deadline_info("Оплата до", d)
             else:
-                text = "Следующее действие: ожидать оплату заказчика"
+                info_text = "Срок оплаты не указан"
+            action_text = "Отметить контракт оплаченным"
             self._next_action_target = ("payment_status", "Оплачено", None, None)
         else:
-            text = "Следующее действие: контракт завершён — действий не требуется"
+            info_text = "Контракт завершён — действий не требуется"
 
-        self.next_action_var.set(text)
+        self.next_action_info_var.set(info_text)
+        self.next_action_button_var.set(action_text)
         style_by_state = {
             "overdue": "NextActionDanger.TButton",
             "today": "NextActionDanger.TButton",
@@ -4244,9 +4294,15 @@ class App(tk.Tk):
         ttk.Button(row3, text="На основе текущего", command=self._duplicate_purchase).pack(side="left", padx=4)
         ttk.Button(row3, text="Удалить", command=self._delete_purchase, style="Danger.TButton").pack(side="left", padx=4)
         ttk.Separator(row3, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(row3, text="Заключен", command=lambda: self._quick_set_status("contract_status", "Заключен")).pack(side="left", padx=3)
-        ttk.Button(row3, text="Исполнено", command=lambda: self._quick_set_status("exec_status", "Исполнено")).pack(side="left", padx=3)
-        ttk.Button(row3, text="Оплачено", command=lambda: self._quick_set_status("payment_status", "Оплачено")).pack(side="left", padx=3)
+        self.main_next_action_var = tk.StringVar(value="Выберите контракт")
+        self.main_next_action_button = ttk.Button(
+            row3,
+            textvariable=self.main_next_action_var,
+            command=self._perform_main_next_action,
+            style="Primary.TButton",
+            state="disabled",
+        )
+        self.main_next_action_button.pack(side="left", padx=3)
 
 
         cols = [c[0] for c in self.PURCHASE_COLS]
@@ -4264,11 +4320,9 @@ class App(tk.Tk):
         self.tree = ttk.Treeview(self.tab_purchases, columns=cols, show="headings",
                                  selectmode="browse", style="Purchases.Treeview")
         for key, label, width in self.PURCHASE_COLS:
-            # Главная таблица полностью центрирована: и заголовок, и содержимое
-            # каждой ячейки. Это убирает визуальный разнобой между текстовыми и
-            # числовыми столбцами.
             self.tree.heading(key, text=label, anchor="center")
-            self.tree.column(key, width=width, anchor="center")
+            cell_anchor = "w" if key in ("platform", "customer", "product") else "center"
+            self.tree.column(key, width=width, anchor=cell_anchor)
         self.tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         def open_row_on_double_click(event):
@@ -4311,8 +4365,10 @@ class App(tk.Tk):
                 self.tree.selection_set(row)
                 self.tree.focus(row)
                 self.tree.see(row)
+                self._update_main_next_action()
 
         self.tree.bind("<Button-1>", select_row_on_left_click, add="+")
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_main_next_action(), add="+")
 
         row_menu = tk.Menu(self.tree, tearoff=0)
         row_menu.add_command(label="Копировать строку (Ctrl+C)", command=lambda: copy_treeview_rows(self.tree))
@@ -4341,6 +4397,47 @@ class App(tk.Tk):
         if not sel:
             return None
         return int(sel[0])
+
+    @staticmethod
+    def _main_next_action_spec(existing):
+        if existing is None:
+            return None
+        if (existing["contract_status"] or "") != "Заключен":
+            return ("contract_status", "Заключен", "Следующее действие: заключить")
+        if (existing["exec_status"] or "") != "Исполнено":
+            return ("exec_status", "Исполнено", "Следующее действие: исполнить")
+        if (existing["payment_status"] or "") != "Оплачено":
+            return ("payment_status", "Оплачено", "Следующее действие: отметить оплаченным")
+        return None
+
+    def _update_main_next_action(self):
+        if not hasattr(self, "main_next_action_button"):
+            return
+        pid = self._selected_id()
+        if pid is None:
+            self.main_next_action_var.set("Выберите контракт")
+            self.main_next_action_button.configure(state="disabled")
+            return
+        existing = db.fetch_by_id(self.conn, pid)
+        spec = self._main_next_action_spec(existing)
+        if spec is None:
+            self.main_next_action_var.set("Контракт завершён")
+            self.main_next_action_button.configure(state="disabled")
+            return
+        self.main_next_action_var.set(spec[2])
+        self.main_next_action_button.configure(state="normal")
+
+    def _perform_main_next_action(self):
+        pid = self._selected_id()
+        if pid is None:
+            self._update_main_next_action()
+            return
+        existing = db.fetch_by_id(self.conn, pid)
+        spec = self._main_next_action_spec(existing)
+        if spec is None:
+            self._update_main_next_action()
+            return
+        self._quick_set_status(spec[0], spec[1])
 
     def _current_filters(self):
         def none_if_all(v):
@@ -4396,6 +4493,7 @@ class App(tk.Tk):
         self.kpi_payment_var.set(f"Ожидают оплаты — {fmt_money(kpi['awaiting'])}")
         counts = reminder_worker.attention_counts(reminder_worker.attention_items(self.conn))
         self._set_attention_tab_state(counts)
+        self._update_main_next_action()
 
     def _add_purchase(self):
         _log("Клик «Добавить» в таблице контрактов -> открываю PurchaseDialog")
@@ -4539,18 +4637,19 @@ class App(tk.Tk):
         ttk.Button(top, text="Обновить", command=self.refresh_attention).pack(side="right", padx=4)
         ttk.Label(
             self.tab_attention,
-            text=("Единый рабочий список: подписание (3/2/1 день, сегодня и просрочка), "
-                  "исполнение (до 14 дней), оплата (до 7 дней) и склад менее 50 шт. "
-                  "Двойной щелчок открывает контракт или соответствующий товар на складе."),
+            text=("Единый рабочий список: подписание, исполнение, оплата и критические остатки. "
+                  "Срок уже содержит информацию о срочности; двойной щелчок открывает нужный объект."),
             padding=(8, 0, 8, 8), wraplength=1300, justify="left", foreground=app_theme.MUTED
         ).pack(fill="x")
-        cols = ("priority", "type", "customer", "object", "contract_no", "date", "days", "action")
-        labels = ("Приоритет", "Тип", "Заказчик", "Товар / объект", "№ контракта", "Дата", "Дней", "Что сделать")
-        widths = (135, 150, 250, 250, 130, 120, 90, 190)
+
+        cols = ("event", "customer", "object", "contract_no", "deadline", "action")
+        labels = ("Событие", "Заказчик", "Товар / объект", "№ контракта", "Срок", "Действие")
+        widths = (150, 300, 300, 140, 230, 180)
         self.attention_tree = ttk.Treeview(self.tab_attention, columns=cols, show="headings")
         for key, label, width in zip(cols, labels, widths):
             self.attention_tree.heading(key, text=label, anchor="center")
-            self.attention_tree.column(key, width=width, anchor="center")
+            anchor = "w" if key in ("customer", "object", "action") else "center"
+            self.attention_tree.column(key, width=width, anchor=anchor)
         self.attention_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.attention_tree.tag_configure("overdue", background=app_theme.SOFT_RED, foreground=app_theme.RED)
         self.attention_tree.tag_configure("critical", background=app_theme.SOFT_RED, foreground=app_theme.RED)
@@ -4560,6 +4659,8 @@ class App(tk.Tk):
     def refresh_attention(self):
         for row in self.attention_tree.get_children():
             self.attention_tree.delete(row)
+        self.attention_tree._attention_items = {}
+
         items = reminder_worker.attention_items(self.conn)
         counts = reminder_worker.attention_counts(items)
         self.attention_total_var.set(f"Всего — {counts['total']}")
@@ -4569,24 +4670,40 @@ class App(tk.Tk):
         )
         self.attention_stock_var.set(f"Склад — {counts['stock']}")
         self._set_attention_tab_state(counts)
+
         for idx, item in enumerate(items):
-            severity_label = {"overdue": "ПРОСРОЧЕНО", "critical": "Срочно", "warning": "Внимание"}.get(item["severity"], "")
-            deadline = item["date"].strftime(DATE_FMT) if item.get("date") else "—"
             days = item.get("days")
-            if days is None:
-                days_text = "—"
-            elif days < 0:
-                days_text = f"-{abs(days)}"
+            if item.get("purchase_id") is None:
+                deadline_text = f"Доступно {fmt_qty(item.get('available', 0))} шт."
+                action_text = "Открыть склад"
             else:
-                days_text = str(days)
+                deadline = item["date"].strftime(DATE_FMT) if item.get("date") else "Срок не указан"
+                if days is None:
+                    deadline_text = deadline
+                elif days < 0:
+                    deadline_text = f"{deadline} · просрочено {abs(days)} дн."
+                elif days == 0:
+                    deadline_text = f"{deadline} · сегодня"
+                elif days == 1:
+                    deadline_text = f"{deadline} · завтра"
+                else:
+                    deadline_text = f"{deadline} · осталось {days} дн."
+                action_text = "Открыть контракт"
+
             iid = (f"contract_{item['purchase_id']}_{item['kind']}_{idx}"
                    if item.get("purchase_id") is not None else f"stock_{idx}")
-            values = [severity_label, item["type"], item.get("customer") or "—",
-                      item.get("product") or "—", item.get("contract_no") or "—",
-                      deadline, days_text, item.get("action") or "—"]
-            tree_insert_wrapped(self.attention_tree, "", "end", iid=iid, values=values,
-                                tags=(item["severity"],))
-            self.attention_tree._attention_items = getattr(self.attention_tree, "_attention_items", {})
+            values = [
+                item["type"],
+                item.get("customer") or "—",
+                item.get("product") or "—",
+                item.get("contract_no") or "—",
+                deadline_text,
+                action_text,
+            ]
+            tree_insert_wrapped(
+                self.attention_tree, "", "end", iid=iid, values=values,
+                tags=(item["severity"],),
+            )
             self.attention_tree._attention_items[iid] = item
 
     def _open_attention_item(self):
@@ -4863,6 +4980,13 @@ class App(tk.Tk):
             text="Остатки по товарам",
             font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
         ).pack(side="left")
+        self.stock_movement_button = ttk.Button(
+            balances_header,
+            text="Движение товара",
+            command=self._show_stock_movement,
+            state="disabled",
+        )
+        self.stock_movement_button.pack(side="left", padx=(12, 0))
         self.stock_total_var = tk.StringVar(value="Итого по складу: 0 ₽")
         ttk.Label(
             balances_header,
@@ -4897,6 +5021,7 @@ class App(tk.Tk):
             )
         self.stock_summary_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.stock_summary_tree.bind("<Double-1>", lambda e: self._show_stock_movement())
+        self.stock_summary_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_stock_movement_button())
         self.stock_summary_tree.tag_configure("negative", background=app_theme.SOFT_RED, foreground=app_theme.RED)
         self.stock_summary_tree.tag_configure("positive", background=app_theme.SOFT_GREEN, foreground=app_theme.GREEN)
         self.stock_summary_tree.tag_configure("zero", background=app_theme.WASH, foreground=app_theme.MUTED)
@@ -4983,6 +5108,7 @@ class App(tk.Tk):
             tree_insert_wrapped(self.stock_log_tree, "", "end", iid=str(r["id"]), values=values)
 
         self.stock_total_var.set(f"Итого по складу: {fmt_money(db.stock_total_value(self.conn))}")
+        self._update_stock_movement_button()
 
         for item in self.reservation_tree.get_children():
             self.reservation_tree.delete(item)
@@ -4990,6 +5116,12 @@ class App(tk.Tk):
             values = [fmt_date(r["reserved_date"]), r["product"] or "—", fmt_qty(r["qty"]),
                       r["organization"] or "—", r["note"] or "—"]
             tree_insert_wrapped(self.reservation_tree, "", "end", iid=str(r["id"]), values=values)
+
+    def _update_stock_movement_button(self):
+        if not hasattr(self, "stock_movement_button"):
+            return
+        state = "normal" if self.stock_summary_tree.selection() else "disabled"
+        self.stock_movement_button.configure(state=state)
 
     def _stock_product_value(self, product):
         # Стоимость текущего физического остатка по средневзвешенной себестоимости.
