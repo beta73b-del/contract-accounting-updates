@@ -45,11 +45,7 @@ jobs:
       - name: Verify application version
         shell: pwsh
         run: |
-          $text = Get-Content app/app_version.py -Raw
-          $escaped = [regex]::Escape($env:VERSION)
-          if ($text -notmatch "__version__\s*=\s*['\"]$escaped['\"]") {
-            throw "app/app_version.py does not match VERSION=$env:VERSION"
-          }
+          python -c "import sys; sys.path.insert(0, 'app'); import app_version; v=open('VERSION', encoding='utf-8').read().strip(); assert app_version.__version__ == v, f'app_version={app_version.__version__}, VERSION={v}'"
 
       - name: Build Windows EXE
         shell: pwsh
