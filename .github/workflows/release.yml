@@ -109,6 +109,32 @@ jobs:
           assert main.index('self.additional_section = ttk.Frame(left_col)') < main.index('self._build_responsible_section(left_col)')
           assert 'Дополнительно ▼   Расходы, примечание и служебные сведения' in main
           assert 'Дополнительно ▲   Скрыть дополнительные поля' in main
+          assert 'self.next_action_info_var = tk.StringVar' in main
+          assert 'self.next_action_button_var = tk.StringVar' in main
+          assert 'Отметить контракт заключённым' in main
+          assert 'Отметить контракт исполненным' in main
+          assert 'Отметить контракт оплаченным' in main
+
+          assert 'self.main_next_action_button = ttk.Button' in main
+          assert 'def _main_next_action_spec' in main
+          assert 'def _perform_main_next_action' in main
+
+          assert 'cell_anchor = "w" if key in ("platform", "customer", "product")' in main
+          assert 'if anchor == "center":' in main
+
+          assert 'self.quick_docs_var = tk.StringVar' in main
+          assert 'def _scroll_to_documents' in main
+          assert 'text="Документы"' in main
+          assert '📎' not in main
+
+          assert 'cols = ("event", "customer", "object", "contract_no", "deadline", "action")' in main
+          assert 'Приоритет", "Тип"' not in main
+          assert 'Открыть контракт' in main
+          assert 'Открыть склад' in main
+
+          assert 'self.stock_movement_button = ttk.Button' in main
+          assert 'text="Движение товара"' in main
+          assert 'def _update_stock_movement_button' in main
           '@ | python -
 
       - name: Build Windows EXE
