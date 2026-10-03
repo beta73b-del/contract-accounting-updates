@@ -44,3 +44,26 @@ jobs:
           pid=db.insert_purchase(c,{'exec_status':'В процессе','payment_status':'Не оплачено'},[{'product':'Товар','qty':100,'supply_mode':'Отложенная закупка','stock_qty':40,'procurement_reminder_days':30}])
           st=db.stock_summary(c); assert len(st)==1; assert st[0]['reserved']==40; assert st[0]['future_demand']==60
           '@ | python -
+      - name: v2.17 lifecycle attention
+        shell: pwsh
+        run: |
+          @'
+          import os,sys,tempfile
+          from datetime import date,timedelta
+          sys.path.insert(0,'app'); import db,reminder_worker
+          c=db.get_connection(os.path.join(tempfile.mkdtemp(),'x.db'))
+          h={'customer':'Тест','contract_no':'217','contract_status':'Заключен','exec_status':'В процессе','payment_status':'Не оплачено','deadline':(date.today()+timedelta(days=60)).isoformat(),'payment_deadline':(date.today()+timedelta(days=72)).isoformat()}
+          pid=db.insert_purchase(c,h,[{'product':'Товар','qty':100,'supply_mode':'Отложенная закупка','stock_qty':40,'procurement_reminder_days':30}])
+          assert not any(x['kind']=='procurement' for x in reminder_worker.attention_items(c))
+          h2=dict(c.execute('select * from purchases where id=?',(pid,)).fetchone()); h2['exec_status']='Отправлено'; db.update_purchase(c,pid,h2,[dict(db.fetch_items(c,pid)[0])])
+          assert c.execute('select stock_written_off from purchases where id=?',(pid,)).fetchone()[0]==1
+          h3=dict(c.execute('select * from purchases where id=?',(pid,)).fetchone()); h3['exec_status']='Вручен'; h3['handover_date']=date.today().isoformat(); db.update_purchase(c,pid,h3,[dict(db.fetch_items(c,pid)[0])])
+          assert db.stock_summary(c)[0]['on_hand']==-40
+          assert not any(x['kind']=='execution' for x in reminder_worker.attention_items(c))
+          h4=dict(c.execute('select * from purchases where id=?',(pid,)).fetchone()); h4['payment_deadline']=(date.today()+timedelta(days=3)).isoformat(); db.update_purchase(c,pid,h4,[dict(db.fetch_items(c,pid)[0])])
+          assert any(x['kind']=='payment' for x in reminder_worker.attention_items(c))
+          h5=dict(c.execute('select * from purchases where id=?',(pid,)).fetchone()); h5['exec_status']='В процессе'; db.update_purchase(c,pid,h5,[dict(db.fetch_items(c,pid)[0])])
+          assert c.execute('select stock_written_off from purchases where id=?',(pid,)).fetchone()[0]==1
+          assert db.stock_summary(c)[0]['on_hand']==-40
+          c.close()
+          '@ | python -
