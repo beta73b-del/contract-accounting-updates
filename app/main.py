@@ -1228,6 +1228,19 @@ class PurchaseDialog(tk.Toplevel):
         self.new_product_var.trace_add("write", lambda *_: self._update_product_stock_hint())
         self.new_qty_var.trace_add("write", lambda *_: self._update_product_stock_hint())
 
+        supply_row = ttk.Frame(items_frame)
+        supply_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(supply_row, text="Обеспечение:").pack(side="left")
+        self.new_supply_mode_var = tk.StringVar(value="Со склада")
+        ttk.Combobox(supply_row, textvariable=self.new_supply_mode_var,
+                     values=db.SUPPLY_MODE_OPTIONS, state="readonly", width=20).pack(side="left", padx=(4, 10))
+        ttk.Label(supply_row, text="Со склада, шт.:").pack(side="left")
+        self.new_stock_qty_var = tk.StringVar()
+        ttk.Entry(supply_row, textvariable=self.new_stock_qty_var, width=8).pack(side="left", padx=(4, 10))
+        ttk.Label(supply_row, text="Напомнить за, дн.:").pack(side="left")
+        self.new_procurement_days_var = tk.StringVar(value="30")
+        ttk.Entry(supply_row, textvariable=self.new_procurement_days_var, width=6).pack(side="left", padx=(4, 0))
+
         add_row2 = ttk.Frame(items_frame)
         add_row2.pack(fill="x", pady=(0, 6))
         ttk.Button(add_row2, text="Добавить позицию", command=self._add_item).pack(fill="x")
@@ -1237,12 +1250,16 @@ class PurchaseDialog(tk.Toplevel):
                                      "в одном контракте одновременно).",
                   wraplength=380, justify="left", foreground=app_theme.MUTED).pack(fill="x", pady=(0, 6))
 
-        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty"),
+        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty", "supply", "stock", "future"),
                                         show="headings", height=10)
-        self.items_tree.heading("product", text="Наименование", anchor="center")
-        self.items_tree.heading("qty", text="Кол-во", anchor="center")
-        self.items_tree.column("product", width=260, anchor="center")
-        self.items_tree.column("qty", width=80, anchor="center")
+        for key, label in (("product","Наименование"),("qty","Кол-во"),("supply","Обеспечение"),
+                           ("stock","Со склада"),("future","Будущая потребность")):
+            self.items_tree.heading(key, text=label, anchor="center")
+        self.items_tree.column("product", width=220, anchor="center")
+        self.items_tree.column("qty", width=70, anchor="center")
+        self.items_tree.column("supply", width=150, anchor="center")
+        self.items_tree.column("stock", width=85, anchor="center")
+        self.items_tree.column("future", width=120, anchor="center")
         self.items_tree.pack(fill="both", expand=True)
         self.items_tree.bind("<<TreeviewSelect>>", lambda e: self._show_full_product_name())
 
@@ -1956,8 +1973,13 @@ class PurchaseDialog(tk.Toplevel):
         for iid in self.items_tree.get_children():
             self.items_tree.delete(iid)
         for i, item in enumerate(self.items):
+            qty = float(item.get("qty") or 0)
+            mode = item.get("supply_mode") or "Со склада"
+            stock_qty = float(item.get("stock_qty") if item.get("stock_qty") is not None else (qty if mode == "Со склада" else 0))
+            future_qty = max(0.0, qty - stock_qty)
             tree_insert_wrapped(self.items_tree, "", "end", iid=str(i),
-                                    values=(item["product"] or "—", fmt_qty(item["qty"])))
+                                values=(item.get("product") or "—", fmt_qty(qty), mode,
+                                        fmt_qty(stock_qty), fmt_qty(future_qty)))
 
     def _bind_next_action_updates(self):
         keys = ("contract_status", "sign_deadline", "deadline", "exec_status",
@@ -2017,14 +2039,18 @@ class PurchaseDialog(tk.Toplevel):
                 info_text, state = "Срок подписания не указан", "soon"
             action_text = "Отметить контракт заключённым"
             self._next_action_target = ("contract_status", "Заключен", "contract_date", "Дата заключения")
-        elif exec_status != "Исполнено":
+        elif exec_status not in ("Вручен", "Исполнено"):
             d = parse_ui("deadline")
             if d:
                 info_text, state = deadline_info("Исполнить до", d)
             else:
                 info_text = "Срок исполнения не указан"
-            action_text = "Отметить контракт исполненным"
-            self._next_action_target = ("exec_status", "Исполнено", "handover_date", "Дата вручения")
+            if exec_status == "Отправлено":
+                action_text = "Отметить товар врученным"
+                self._next_action_target = ("exec_status", "Вручен", "handover_date", "Дата вручения")
+            else:
+                action_text = "Отметить товар отправленным"
+                self._next_action_target = ("exec_status", "Отправлено", None, None)
         elif payment_status != "Оплачено":
             d = parse_ui("payment_deadline")
             if d:
@@ -2194,9 +2220,22 @@ class PurchaseDialog(tk.Toplevel):
             messagebox.showerror("Ошибка ввода", "Количество товара должно быть больше нуля.", parent=self)
             return
         product = self._canonical_product_input(product)
-        self.items.append({"product": product, "qty": qty})
+        mode = self.new_supply_mode_var.get() or "Со склада"
+        try:
+            stock_qty = parse_money(self.new_stock_qty_var.get()) if self.new_stock_qty_var.get().strip() else (qty if mode == "Со склада" else 0.0)
+            reminder_days = int(self.new_procurement_days_var.get() or 30)
+        except ValueError:
+            messagebox.showerror("Ошибка ввода", "Проверьте количество со склада и срок напоминания.", parent=self)
+            return
+        if stock_qty < 0 or stock_qty > qty:
+            messagebox.showerror("Ошибка ввода", "Количество со склада должно быть от 0 до общего количества.", parent=self)
+            return
+        self.items.append({"product": product, "qty": qty, "supply_mode": mode,
+                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days)})
         self.new_product_var.set("")
         self.new_qty_var.set("")
+        self.new_stock_qty_var.set("")
+        self.new_supply_mode_var.set("Со склада")
         self._refresh_items_tree()
 
     def _auto_commit_pending_item(self):
@@ -2234,9 +2273,20 @@ class PurchaseDialog(tk.Toplevel):
             self._update_product_stock_hint()
             return True, None
         product = self._canonical_product_input(product)
-        self.items.append({"product": product, "qty": qty})
+        mode = self.new_supply_mode_var.get() or "Со склада"
+        try:
+            stock_qty = parse_money(self.new_stock_qty_var.get()) if self.new_stock_qty_var.get().strip() else (qty if mode == "Со склада" else 0.0)
+            reminder_days = int(self.new_procurement_days_var.get() or 30)
+        except ValueError:
+            return False, "Проверьте количество со склада и срок напоминания о закупке."
+        if stock_qty < 0 or stock_qty > qty:
+            return False, "Количество со склада должно быть от 0 до общего количества."
+        self.items.append({"product": product, "qty": qty, "supply_mode": mode,
+                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days)})
         self.new_product_var.set("")
         self.new_qty_var.set("")
+        self.new_stock_qty_var.set("")
+        self.new_supply_mode_var.set("Со склада")
         self._refresh_items_tree()
         return True, None
 
@@ -4629,10 +4679,14 @@ class App(tk.Tk):
         self.attention_total_var = tk.StringVar(value="Всего — 0")
         self.attention_overdue_var = tk.StringVar(value="Просрочено — 0")
         self.attention_contracts_var = tk.StringVar(value="Сроки — 0")
+        self.attention_procurement_var = tk.StringVar(value="Пора закупать — 0")
+        self.attention_payment_var = tk.StringVar(value="Ожидают оплаты — 0")
         self.attention_stock_var = tk.StringVar(value="Склад — 0")
         ttk.Label(top, textvariable=self.attention_total_var, style="AttentionKPI.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(top, textvariable=self.attention_overdue_var, style="OverdueKPI.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(top, textvariable=self.attention_contracts_var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(top, textvariable=self.attention_procurement_var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(top, textvariable=self.attention_payment_var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(top, textvariable=self.attention_stock_var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
         ttk.Button(top, text="Обновить", command=self.refresh_attention).pack(side="right", padx=4)
         ttk.Label(
@@ -4666,8 +4720,10 @@ class App(tk.Tk):
         self.attention_total_var.set(f"Всего — {counts['total']}")
         self.attention_overdue_var.set(f"Просрочено — {counts['overdue']}")
         self.attention_contracts_var.set(
-            f"Сроки — {counts['signing'] + counts['execution'] + counts['payment']}"
+            f"Сроки — {counts['signing'] + counts['execution']}"
         )
+        self.attention_procurement_var.set(f"Пора закупать — {counts.get('procurement', 0)}")
+        self.attention_payment_var.set(f"Ожидают оплаты — {counts['payment']}")
         self.attention_stock_var.set(f"Склад — {counts['stock']}")
         self._set_attention_tab_state(counts)
 
