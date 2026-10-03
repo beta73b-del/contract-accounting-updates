@@ -38,7 +38,7 @@ HEADER_FIELDS = [
     "payment_status", "payment_deadline", "exec_status",
     "resp_purchase_name", "resp_purchase_phone", "resp_purchase_email",
     "resp_receiving_name", "resp_receiving_phone", "resp_receiving_email",
-    "note", "created_at",
+    "note", "created_at", "stock_written_off",
 ]
 ITEM_FIELDS = ["product", "qty"]
 RECEIPT_FIELDS = ["product", "qty", "unit_cost", "receipt_date", "supplier", "note"]
@@ -75,14 +75,18 @@ CREATE TABLE IF NOT EXISTS purchases (
     resp_receiving_email TEXT,
     note TEXT,
     created_at TEXT,
-    deleted_at TEXT
+    deleted_at TEXT,
+    stock_written_off INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS purchase_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     purchase_id INTEGER NOT NULL,
     product TEXT,
-    qty REAL
+    qty REAL,
+    supply_mode TEXT NOT NULL DEFAULT 'Со склада',
+    stock_qty REAL NOT NULL DEFAULT 0,
+    procurement_reminder_days INTEGER NOT NULL DEFAULT 30
 );
 
 CREATE TABLE IF NOT EXISTS stock_receipts (
@@ -198,8 +202,8 @@ LAW_OPTIONS = ["44-ФЗ", "223-ФЗ", "Коммерческая закупка"]
 CONTRACT_STATUS_OPTIONS = ["Формирование", "На подписи у Заказчика", "Заключен"]
 PAYMENT_STATUS_OPTIONS = ["Не оплачено", "Оплачено"]
 # По ТЗ: "Просрочено" больше не ручной статус — вычисляется автоматически по датам
-EXEC_STATUS_OPTIONS = ["В процессе", "Отправлено", "Приемка Заказчиком",
-                        "Подписан в ЕИС", "Исполнено"]
+EXEC_STATUS_OPTIONS = ["В процессе", "Отправлено", "Вручен", "Исполнено"]
+SUPPLY_MODE_OPTIONS = ["Со склада", "Требуется закупка", "Отложенная закупка"]
 
 BACKUP_KEEP = 20
 
@@ -762,6 +766,7 @@ _PURCHASES_COLUMN_TYPES = {
     "resp_purchase_name": "TEXT", "resp_purchase_phone": "TEXT", "resp_purchase_email": "TEXT",
     "resp_receiving_name": "TEXT", "resp_receiving_phone": "TEXT", "resp_receiving_email": "TEXT",
     "note": "TEXT", "created_at": "TEXT", "deleted_at": "TEXT",
+    "stock_written_off": "INTEGER NOT NULL DEFAULT 0",
 }
 _STOCK_RECEIPTS_COLUMN_TYPES = {
     "product": "TEXT", "qty": "REAL", "unit_cost": "REAL", "receipt_date": "TEXT",
@@ -775,7 +780,12 @@ _COMPETITOR_COLUMN_TYPES = {
     "competitor": "TEXT", "product": "TEXT", "trade_type": "TEXT",
     "qty": "REAL", "unit_price": "REAL", "purchase_date": "TEXT",
 }
-_PURCHASE_ITEMS_COLUMN_TYPES = {"purchase_id": "INTEGER", "product": "TEXT", "qty": "REAL"}
+_PURCHASE_ITEMS_COLUMN_TYPES = {
+    "purchase_id": "INTEGER", "product": "TEXT", "qty": "REAL",
+    "supply_mode": "TEXT NOT NULL DEFAULT 'Со склада'",
+    "stock_qty": "REAL NOT NULL DEFAULT 0",
+    "procurement_reminder_days": "INTEGER NOT NULL DEFAULT 30",
+}
 
 
 def _migrate_schema(conn: sqlite3.Connection):
@@ -818,6 +828,17 @@ def _migrate_schema(conn: sqlite3.Connection):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_purchases_registry_record ON purchases(registry_record)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_purchases_sign_deadline ON purchases(deleted_at, sign_deadline)")
         conn.execute("UPDATE purchases SET payment_status='Не оплачено' WHERE payment_status='Частично оплачено'")
+        # v2.17: отдельной приемки больше нет. Старые этапы приводим к новой цепочке.
+        conn.execute("UPDATE purchases SET exec_status='Вручен' WHERE exec_status='Приемка Заказчиком'")
+        conn.execute("UPDATE purchases SET exec_status='Исполнено' WHERE exec_status='Подписан в ЕИС'")
+        # Фиксируем факт складского списания отдельно от текущего статуса:
+        # после «Вручен»/«Исполнено» товар не должен возвращаться на склад.
+        conn.execute("""UPDATE purchases SET stock_written_off=1
+                        WHERE exec_status IN ('Отправлено','Вручен','Исполнено')
+                           OR (handover_date IS NOT NULL AND handover_date<>'')""")
+        # Старые позиции до v2.17 считались полностью обеспеченными складом.
+        conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
+        conn.execute("UPDATE purchase_items SET stock_qty=qty WHERE supply_mode='Со склада' AND COALESCE(stock_qty,0)=0")
         _sync_product_catalog(conn)
     except sqlite3.OperationalError:
         pass
@@ -1072,6 +1093,7 @@ def _audit_changes(old_row, old_items, header, items):
 def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
     header = dict(header)
     header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header["stock_written_off"] = int(header.get("stock_written_off") or 0)
     cols = ", ".join(HEADER_FIELDS)
     placeholders = ", ".join(["?"] * len(HEADER_FIELDS))
     values = [header.get(f) for f in HEADER_FIELDS]
@@ -1096,9 +1118,15 @@ def _insert_items(conn: sqlite3.Connection, purchase_id: int, items: list):
         if not product:
             continue
         product = ensure_product(conn, product, commit=False)
+        mode = (item["supply_mode"] if _has_key(item, "supply_mode") else "Со склада") or "Со склада"
+        stock_qty = item["stock_qty"] if _has_key(item, "stock_qty") else (qty if mode == "Со склада" else 0)
+        reminder_days = item["procurement_reminder_days"] if _has_key(item, "procurement_reminder_days") else 30
+        stock_qty = max(0.0, min(float(stock_qty or 0), float(qty or 0)))
         conn.execute(
-            "INSERT INTO purchase_items (purchase_id, product, qty) VALUES (?, ?, ?)",
-            (purchase_id, product, qty),
+            """INSERT INTO purchase_items
+               (purchase_id, product, qty, supply_mode, stock_qty, procurement_reminder_days)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (purchase_id, product, qty, mode, stock_qty, int(reminder_days or 30)),
         )
 
 
@@ -1109,6 +1137,12 @@ def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, it
     header["created_at"] = (header.get("created_at")
                              or (old["created_at"] if old else None)
                              or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # Списание идемпотентно: впервые фиксируется на «Отправлено» и больше не сбрасывается.
+    old_written_off = int(old["stock_written_off"] or 0) if old and "stock_written_off" in old.keys() else 0
+    if (header.get("exec_status") or "") == "Отправлено":
+        header["stock_written_off"] = 1
+    else:
+        header["stock_written_off"] = max(old_written_off, int(header.get("stock_written_off") or 0))
     changes = _audit_changes(old, old_items, header, items)
     set_clause = ", ".join(f"{f} = ?" for f in HEADER_FIELDS)
     values = [header.get(f) for f in HEADER_FIELDS] + [purchase_id]
@@ -1258,10 +1292,11 @@ def deadline_rows(conn: sqlite3.Connection):
            WHERE p.deleted_at IS NULL AND (
              (COALESCE(p.contract_status,'') <> 'Заключен' AND p.sign_deadline IS NOT NULL AND p.sign_deadline <> '')
              OR
-             (COALESCE(p.exec_status,'') <> 'Исполнено' AND p.deadline IS NOT NULL AND p.deadline <> ''
-              AND (p.handover_date IS NULL OR p.handover_date=''))
+             (COALESCE(p.exec_status,'') NOT IN ('Вручен','Исполнено') AND p.deadline IS NOT NULL AND p.deadline <> '')
              OR
-             (COALESCE(p.payment_status,'') <> 'Оплачено' AND p.payment_deadline IS NOT NULL AND p.payment_deadline <> '')
+             (COALESCE(p.payment_status,'') <> 'Оплачено'
+              AND p.handover_date IS NOT NULL AND p.handover_date <> ''
+              AND p.payment_deadline IS NOT NULL AND p.payment_deadline <> '')
            )
            ORDER BY p.id"""
     ).fetchall()
@@ -1473,19 +1508,19 @@ def available_for_contract(conn: sqlite3.Connection, product: str, purchase_id=N
     row = next((r for r in stock_summary(conn) if r["product"] == product), None)
     available = float(row["available"] or 0.0) if row else 0.0
     if purchase_id is not None:
-        p = conn.execute("SELECT handover_date, exec_status FROM purchases WHERE id=?", (purchase_id,)).fetchone()
-        if p and not p["handover_date"] and (p["exec_status"] or "") != "Отправлено":
-            own = conn.execute("SELECT COALESCE(SUM(qty),0) AS q FROM purchase_items WHERE purchase_id=? AND product=?", (purchase_id, product)).fetchone()["q"]
+        p = conn.execute("SELECT stock_written_off FROM purchases WHERE id=?", (purchase_id,)).fetchone()
+        if p and not int(p["stock_written_off"] or 0):
+            own = conn.execute("SELECT COALESCE(SUM(stock_qty),0) AS q FROM purchase_items WHERE purchase_id=? AND product=?", (purchase_id, product)).fetchone()["q"]
             available += float(own or 0.0)
     return available
 
 def stock_summary(conn: sqlite3.Connection):
     """Сводка склада.
 
-    Физический остаток = приход − товары по контрактам, которые уже отправлены
-    (exec_status = "Отправлено") ИЛИ имеют дату вручения.
-    Автоматический резерв = товары всех неудалённых контрактов, которые ещё не
-    отправлены и не вручены. Ручной резерв добавляется отдельно.
+    Физический остаток = приход − товары по контрактам, переведённым в «Отправлено».
+    Дата вручения сама по себе склад не списывает.
+    Автоматический резерв = только та часть позиции, которая назначена «со склада»
+    и ещё не отправлена. Будущая потребность учитывается отдельно.
     Доступно = физический остаток − общий резерв.
     """
     received_rows = conn.execute(
@@ -1493,18 +1528,17 @@ def stock_summary(conn: sqlite3.Connection):
         "WHERE product IS NOT NULL AND product <> '' GROUP BY product"
     ).fetchall()
     shipped_rows = conn.execute(
-        "SELECT i.product AS product, SUM(i.qty) AS q FROM purchase_items i "
+        "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS q FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND ((p.handover_date IS NOT NULL AND p.handover_date <> '') "
-        "OR p.exec_status = 'Отправлено') GROUP BY i.product"
+        "AND COALESCE(p.stock_written_off,0)=1 GROUP BY i.product"
     ).fetchall()
     reserved_rows = conn.execute(
-        "SELECT i.product AS product, SUM(i.qty) AS q FROM purchase_items i "
+        "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS q FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND (p.handover_date IS NULL OR p.handover_date = '') "
-        "AND COALESCE(p.exec_status, '') <> 'Отправлено' GROUP BY i.product"
+        "AND COALESCE(p.stock_written_off,0)=0 "
+        "GROUP BY i.product"
     ).fetchall()
     manual_reserved_rows = conn.execute(
         "SELECT product, SUM(qty) AS q FROM manual_reservations "
@@ -1514,7 +1548,16 @@ def stock_summary(conn: sqlite3.Connection):
     shipped = {r["product"]: (r["q"] or 0.0) for r in shipped_rows}
     reserved = {r["product"]: (r["q"] or 0.0) for r in reserved_rows}
     manual_reserved = {r["product"]: (r["q"] or 0.0) for r in manual_reserved_rows}
-    products = sorted(set(received) | set(shipped) | set(reserved) | set(manual_reserved))
+    future_rows = conn.execute(
+        """SELECT i.product AS product,
+                  SUM(CASE WHEN COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
+                           THEN COALESCE(i.qty,0)-COALESCE(i.stock_qty,0) ELSE 0 END) AS q
+           FROM purchase_items i JOIN purchases p ON p.id=i.purchase_id
+           WHERE p.deleted_at IS NULL AND COALESCE(p.stock_written_off,0)=0
+           GROUP BY i.product"""
+    ).fetchall()
+    future = {r["product"]: (r["q"] or 0.0) for r in future_rows}
+    products = sorted(set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future))
     result = []
     for product in products:
         on_hand = received.get(product, 0.0) - shipped.get(product, 0.0)
@@ -1528,6 +1571,7 @@ def stock_summary(conn: sqlite3.Connection):
             "auto_reserved": auto_res,
             "manual_reserved": manual_res,
             "available": on_hand - total_res,
+            "future_demand": future.get(product, 0.0),
         })
     return result
 
@@ -1540,10 +1584,10 @@ def stock_total_value(conn: sqlite3.Connection):
         "FROM stock_receipts WHERE product IS NOT NULL AND product <> '' GROUP BY product"
     ).fetchall()
     shipped = conn.execute(
-        "SELECT i.product AS product, SUM(i.qty) AS qty FROM purchase_items i "
+        "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS qty FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND ((p.handover_date IS NOT NULL AND p.handover_date <> '') OR p.exec_status = 'Отправлено') "
+        "AND COALESCE(p.stock_written_off,0)=1 "
         "GROUP BY i.product"
     ).fetchall()
     shipped_map = {r['product']: (r['qty'] or 0.0) for r in shipped}
@@ -1570,19 +1614,20 @@ def stock_product_movement(conn: sqlite3.Connection, product: str):
 
     rows = conn.execute(
         "SELECT p.contract_date AS contract_date, p.handover_date AS handover_date, "
-        "p.exec_status, i.qty, p.contract_no, p.customer FROM purchase_items i "
+        "p.exec_status, p.stock_written_off, i.qty, i.stock_qty, i.supply_mode, p.contract_no, p.customer FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product = ? AND p.deleted_at IS NULL ORDER BY p.id", (product,)).fetchall()
     for r in rows:
-        shipped = bool((r["handover_date"] or "").strip()) or r["exec_status"] == "Отправлено"
-        if shipped:
-            dt = r["handover_date"] or r["contract_date"] or ""
-            events.append({"date": dt, "type": "Реализация", "qty": -(r["qty"] or 0.0),
+        shipped = bool(r["stock_written_off"])
+        stock_qty = float(r["stock_qty"] or 0)
+        if shipped and stock_qty > 0:
+            dt = r["contract_date"] or ""
+            events.append({"date": dt, "type": "Реализация", "qty": -stock_qty,
                            "unit_cost": None, "counterparty": r["customer"] or "",
                            "details": f"Контракт {r['contract_no'] or '—'}"})
-        else:
+        elif stock_qty > 0:
             events.append({"date": r["contract_date"] or "", "type": "Резерв контракта",
-                           "qty": r["qty"] or 0.0, "unit_cost": None,
+                           "qty": stock_qty, "unit_cost": None,
                            "counterparty": r["customer"] or "",
                            "details": f"Контракт {r['contract_no'] or '—'}"})
 

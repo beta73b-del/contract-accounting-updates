@@ -8,7 +8,7 @@ import socket
 import sqlite3
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 import db
@@ -144,7 +144,7 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
             })
 
         exec_date = _parse_date(r["deadline"])
-        if (r["exec_status"] or "") != "Исполнено":
+        if (r["exec_status"] or "") not in ("Вручен", "Исполнено"):
             exec_state, exec_days = reminder_state(exec_date, r["handover_date"], today=today)
             if exec_state in ("red", "yellow"):
                 severity = "overdue" if exec_days is not None and exec_days < 0 else ("critical" if exec_state == "red" else "warning")
@@ -157,8 +157,9 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
                 })
 
         pay_date = _parse_date(r["payment_deadline"])
+        # Единый срок оплаты начинает контролироваться только после фактического вручения.
         pay_state, pay_days = payment_reminder_state(pay_date, r["payment_status"], today=today)
-        if pay_state in ("overdue", "red", "yellow"):
+        if r["handover_date"] and pay_state in ("overdue", "red", "yellow"):
             result.append({
                 "kind": "payment", "type": "Оплата",
                 "severity": "overdue" if pay_state == "overdue" else ("critical" if pay_state == "red" else "warning"),
@@ -167,6 +168,34 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
                 "date": pay_date, "days": pay_days,
                 "action": "Контроль оплаты",
             })
+
+    # Закупка контролируется по товарным позициям, а не по статусу контракта.
+    # «Требуется закупка» показывается сразу; «Отложенная закупка» — только с контрольной даты.
+    procurement_rows = conn.execute(
+        """SELECT i.*, p.customer, p.contract_no, p.deadline, p.deleted_at, p.exec_status
+           FROM purchase_items i JOIN purchases p ON p.id=i.purchase_id
+           WHERE p.deleted_at IS NULL
+             AND COALESCE(p.stock_written_off,0)=0
+             AND COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
+             AND COALESCE(i.supply_mode,'Со склада') IN ('Требуется закупка','Отложенная закупка')"""
+    ).fetchall()
+    for row in procurement_rows:
+        deadline = _parse_date(row["deadline"])
+        mode = row["supply_mode"] or "Требуется закупка"
+        reminder_days = int(row["procurement_reminder_days"] or 30)
+        control_date = (deadline - timedelta(days=reminder_days)) if deadline else today
+        if mode == "Отложенная закупка" and today < control_date:
+            continue
+        days = (control_date - today).days
+        need = max(0.0, float(row["qty"] or 0) - float(row["stock_qty"] or 0))
+        result.append({
+            "kind": "procurement", "type": "Закупка",
+            "severity": "overdue" if days < 0 else ("critical" if days <= 3 else "warning"),
+            "purchase_id": int(row["purchase_id"]), "customer": row["customer"] or "Без заказчика",
+            "contract_no": row["contract_no"] or "—", "product": row["product"] or "—",
+            "date": control_date, "days": days, "need_qty": need,
+            "action": f"Закупить {need:g} шт.",
+        })
 
     for stock in db.stock_summary(conn):
         available = float(stock["available"] or 0.0)
@@ -181,7 +210,7 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
             })
 
     severity_order = {"overdue": 0, "critical": 1, "warning": 2}
-    type_order = {"Подписание": 0, "Исполнение": 1, "Оплата": 2, "Склад": 3}
+    type_order = {"Подписание": 0, "Исполнение": 1, "Закупка": 2, "Оплата": 3, "Склад": 4}
     result.sort(key=lambda x: (
         severity_order.get(x["severity"], 9),
         x["date"] is None,
@@ -194,7 +223,7 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
 
 
 def attention_counts(items):
-    counts = {"total": len(items), "overdue": 0, "signing": 0, "execution": 0, "payment": 0, "stock": 0}
+    counts = {"total": len(items), "overdue": 0, "signing": 0, "execution": 0, "procurement": 0, "payment": 0, "stock": 0}
     for item in items:
         if item.get("severity") == "overdue":
             counts["overdue"] += 1
@@ -220,9 +249,9 @@ def build_attention_email(items, today: date | None = None) -> tuple[str, str]:
         "",
         (f"Всего задач: {counts['total']} | Просрочено: {counts['overdue']} | "
          f"Подписание: {counts['signing']} | Исполнение: {counts['execution']} | "
-         f"Оплата: {counts['payment']} | Склад: {counts['stock']}"),
+         f"Закупка: {counts['procurement']} | Оплата: {counts['payment']} | Склад: {counts['stock']}"),
     ]
-    groups = [("Подписание", "Подписание"), ("Исполнение", "Исполнение"), ("Оплата", "Оплата"), ("Склад", "Склад")]
+    groups = [("Подписание", "Подписание"), ("Исполнение", "Исполнение"), ("Закупка", "Пора закупать"), ("Оплата", "Ожидают оплаты"), ("Склад", "Склад")]
     for type_name, heading in groups:
         group = [x for x in items if x["type"] == type_name]
         if not group:
