@@ -5065,8 +5065,8 @@ class App(tk.Tk):
             foreground=app_theme.MUTED,
         ).pack(fill="x")
 
-        sum_cols = ["product", "on_hand", "reserved", "available", "warning", "value"]
-        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Внимание", "Стоимость остатка"]
+        sum_cols = ["product", "on_hand", "reserved", "available", "future", "warning", "value"]
+        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Будущая потребность", "Внимание", "Стоимость остатка"]
         self.stock_summary_tree = ttk.Treeview(
             self.stock_balances_tab,
             columns=sum_cols,
@@ -5154,7 +5154,7 @@ class App(tk.Tk):
             else:
                 tag, warning = "positive", "—"
             values = [row["product"] or "—", fmt_qty(row["on_hand"]), fmt_qty(row["reserved"]), fmt_qty(available),
-                      warning, fmt_money(self._stock_product_value(row["product"]))]
+                      fmt_qty(row.get("future_demand", 0)), warning, fmt_money(self._stock_product_value(row["product"]))]
             tree_insert_wrapped(self.stock_summary_tree, "", "end", values=values, tags=(tag,))
 
         for item in self.stock_log_tree.get_children():
@@ -5190,10 +5190,10 @@ class App(tk.Tk):
         value = sum((r["qty"] or 0.0) * (r["unit_cost"] or 0.0) for r in rows)
         shipped = 0.0
         for r in db.fetch_all(self.conn):
-            if r["handover_date"]:
+            if int(r.get("stock_written_off") or 0):
                 for it in r["items"]:
                     if it["product"] == product:
-                        shipped += it["qty"] or 0.0
+                        shipped += float(it.get("stock_qty") or 0.0)
         remaining = max(0.0, qty - shipped)
         return remaining * (value / qty) if qty else 0.0
 
