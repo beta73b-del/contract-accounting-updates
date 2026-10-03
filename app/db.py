@@ -765,6 +765,7 @@ _PURCHASES_COLUMN_TYPES = {
     "resp_purchase_name": "TEXT", "resp_purchase_phone": "TEXT", "resp_purchase_email": "TEXT",
     "resp_receiving_name": "TEXT", "resp_receiving_phone": "TEXT", "resp_receiving_email": "TEXT",
     "note": "TEXT", "created_at": "TEXT", "deleted_at": "TEXT",
+    "stock_written_off": "INTEGER NOT NULL DEFAULT 0",
 }
 _STOCK_RECEIPTS_COLUMN_TYPES = {
     "product": "TEXT", "qty": "REAL", "unit_cost": "REAL", "receipt_date": "TEXT",
@@ -829,6 +830,11 @@ def _migrate_schema(conn: sqlite3.Connection):
         # v2.17: отдельной приемки больше нет. Старые этапы приводим к новой цепочке.
         conn.execute("UPDATE purchases SET exec_status='Вручен' WHERE exec_status='Приемка Заказчиком'")
         conn.execute("UPDATE purchases SET exec_status='Исполнено' WHERE exec_status='Подписан в ЕИС'")
+        # Фиксируем факт складского списания отдельно от текущего статуса:
+        # после «Вручен»/«Исполнено» товар не должен возвращаться на склад.
+        conn.execute("""UPDATE purchases SET stock_written_off=1
+                        WHERE exec_status IN ('Отправлено','Вручен','Исполнено')
+                           OR (handover_date IS NOT NULL AND handover_date<>'')""")
         # Старые позиции до v2.17 считались полностью обеспеченными складом.
         conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
         conn.execute("UPDATE purchase_items SET stock_qty=qty WHERE supply_mode='Со склада' AND COALESCE(stock_qty,0)=0")
@@ -1129,6 +1135,12 @@ def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, it
     header["created_at"] = (header.get("created_at")
                              or (old["created_at"] if old else None)
                              or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # Списание идемпотентно: впервые фиксируется на «Отправлено» и больше не сбрасывается.
+    old_written_off = int(old["stock_written_off"] or 0) if old and "stock_written_off" in old.keys() else 0
+    if (header.get("exec_status") or "") == "Отправлено":
+        header["stock_written_off"] = 1
+    else:
+        header["stock_written_off"] = max(old_written_off, int(header.get("stock_written_off") or 0))
     changes = _audit_changes(old, old_items, header, items)
     set_clause = ", ".join(f"{f} = ?" for f in HEADER_FIELDS)
     values = [header.get(f) for f in HEADER_FIELDS] + [purchase_id]
@@ -1494,8 +1506,8 @@ def available_for_contract(conn: sqlite3.Connection, product: str, purchase_id=N
     row = next((r for r in stock_summary(conn) if r["product"] == product), None)
     available = float(row["available"] or 0.0) if row else 0.0
     if purchase_id is not None:
-        p = conn.execute("SELECT exec_status FROM purchases WHERE id=?", (purchase_id,)).fetchone()
-        if p and (p["exec_status"] or "") != "Отправлено":
+        p = conn.execute("SELECT stock_written_off FROM purchases WHERE id=?", (purchase_id,)).fetchone()
+        if p and not int(p["stock_written_off"] or 0):
             own = conn.execute("SELECT COALESCE(SUM(stock_qty),0) AS q FROM purchase_items WHERE purchase_id=? AND product=?", (purchase_id, product)).fetchone()["q"]
             available += float(own or 0.0)
     return available
@@ -1517,13 +1529,13 @@ def stock_summary(conn: sqlite3.Connection):
         "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS q FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND p.exec_status = 'Отправлено' GROUP BY i.product"
+        "AND COALESCE(p.stock_written_off,0)=1 GROUP BY i.product"
     ).fetchall()
     reserved_rows = conn.execute(
         "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS q FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND COALESCE(p.exec_status, '') <> 'Отправлено' "
+        "AND COALESCE(p.stock_written_off,0)=0 "
         "GROUP BY i.product"
     ).fetchall()
     manual_reserved_rows = conn.execute(
@@ -1539,7 +1551,7 @@ def stock_summary(conn: sqlite3.Connection):
                   SUM(CASE WHEN COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
                            THEN COALESCE(i.qty,0)-COALESCE(i.stock_qty,0) ELSE 0 END) AS q
            FROM purchase_items i JOIN purchases p ON p.id=i.purchase_id
-           WHERE p.deleted_at IS NULL AND COALESCE(p.exec_status,'') <> 'Отправлено'
+           WHERE p.deleted_at IS NULL AND COALESCE(p.stock_written_off,0)=0
            GROUP BY i.product"""
     ).fetchall()
     future = {r["product"]: (r["q"] or 0.0) for r in future_rows}
