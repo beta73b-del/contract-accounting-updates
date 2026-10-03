@@ -5193,7 +5193,7 @@ class App(tk.Tk):
             if int(r.get("stock_written_off") or 0):
                 for it in r["items"]:
                     if it["product"] == product:
-                        shipped += float(it.get("stock_qty") or 0.0)
+                        shipped += float(it["stock_qty"] or 0.0)
         remaining = max(0.0, qty - shipped)
         return remaining * (value / qty) if qty else 0.0
 
