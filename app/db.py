@@ -1583,10 +1583,10 @@ def stock_total_value(conn: sqlite3.Connection):
         "FROM stock_receipts WHERE product IS NOT NULL AND product <> '' GROUP BY product"
     ).fetchall()
     shipped = conn.execute(
-        "SELECT i.product AS product, SUM(i.qty) AS qty FROM purchase_items i "
+        "SELECT i.product AS product, SUM(COALESCE(i.stock_qty,0)) AS qty FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product IS NOT NULL AND i.product <> '' AND p.deleted_at IS NULL "
-        "AND ((p.handover_date IS NOT NULL AND p.handover_date <> '') OR p.exec_status = 'Отправлено') "
+        "AND COALESCE(p.stock_written_off,0)=1 "
         "GROUP BY i.product"
     ).fetchall()
     shipped_map = {r['product']: (r['qty'] or 0.0) for r in shipped}
@@ -1613,19 +1613,20 @@ def stock_product_movement(conn: sqlite3.Connection, product: str):
 
     rows = conn.execute(
         "SELECT p.contract_date AS contract_date, p.handover_date AS handover_date, "
-        "p.exec_status, i.qty, p.contract_no, p.customer FROM purchase_items i "
+        "p.exec_status, p.stock_written_off, i.qty, i.stock_qty, i.supply_mode, p.contract_no, p.customer FROM purchase_items i "
         "JOIN purchases p ON p.id = i.purchase_id "
         "WHERE i.product = ? AND p.deleted_at IS NULL ORDER BY p.id", (product,)).fetchall()
     for r in rows:
-        shipped = bool((r["handover_date"] or "").strip()) or r["exec_status"] == "Отправлено"
-        if shipped:
-            dt = r["handover_date"] or r["contract_date"] or ""
-            events.append({"date": dt, "type": "Реализация", "qty": -(r["qty"] or 0.0),
+        shipped = bool(r["stock_written_off"])
+        stock_qty = float(r["stock_qty"] or 0)
+        if shipped and stock_qty > 0:
+            dt = r["contract_date"] or ""
+            events.append({"date": dt, "type": "Реализация", "qty": -stock_qty,
                            "unit_cost": None, "counterparty": r["customer"] or "",
                            "details": f"Контракт {r['contract_no'] or '—'}"})
-        else:
+        elif stock_qty > 0:
             events.append({"date": r["contract_date"] or "", "type": "Резерв контракта",
-                           "qty": r["qty"] or 0.0, "unit_cost": None,
+                           "qty": stock_qty, "unit_cost": None,
                            "counterparty": r["customer"] or "",
                            "details": f"Контракт {r['contract_no'] or '—'}"})
 
