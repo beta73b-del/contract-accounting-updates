@@ -38,7 +38,7 @@ HEADER_FIELDS = [
     "payment_status", "payment_deadline", "exec_status",
     "resp_purchase_name", "resp_purchase_phone", "resp_purchase_email",
     "resp_receiving_name", "resp_receiving_phone", "resp_receiving_email",
-    "note", "created_at",
+    "note", "created_at", "stock_written_off",
 ]
 ITEM_FIELDS = ["product", "qty"]
 RECEIPT_FIELDS = ["product", "qty", "unit_cost", "receipt_date", "supplier", "note"]
@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS purchases (
     resp_receiving_email TEXT,
     note TEXT,
     created_at TEXT,
-    deleted_at TEXT
+    deleted_at TEXT,
+    stock_written_off INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS purchase_items (
