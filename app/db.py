@@ -551,25 +551,25 @@ def prepare_working_storage():
             # Предыдущий запуск, вероятно, завершился аварийно до выгрузки в облако.
             return {"status": "ready", "action": "local_unsynced", "recovery": recovery}
 
-        # Изменились обе копии: сохраняем локальную в recovery и выбираем облачную.
-        rec = _save_local_recovery_copy(local, "conflict")
-        _atomic_copy(cloud, local)
-        _write_json_atomic(_local_state_path(), {
-            "protocol": SYNC_PROTOCOL_VERSION, "db_sha256": cloud_hash,
-            "local_sha256": _file_sha256(local),
-            "synced_at": datetime.now().isoformat(timespec="seconds"), "cloud_path": cloud,
-        })
-        return {"status": "ready", "action": "conflict_cloud_wins", "recovery": rec or recovery}
+        # Изменились обе копии. Никогда не заменяем локальную рабочую БД автоматически:
+        # именно она могла содержать последние введённые контракты. Обе копии сохраняем
+        # в recovery, а приложение продолжает работать с локальной и требует ручного разбора.
+        rec_local = _save_local_recovery_copy(local, "conflict_local")
+        rec_cloud = _save_local_recovery_copy(cloud, "conflict_cloud")
+        return {
+            "status": "ready", "action": "conflict_local_preserved",
+            "recovery": rec_local or recovery, "cloud_recovery": rec_cloud,
+        }
 
-    # Первый запуск новой схемы: облачная база рядом с программой считается основной.
-    rec = _save_local_recovery_copy(local, "pre_migration")
-    _atomic_copy(cloud, local)
-    _write_json_atomic(_local_state_path(), {
-        "protocol": SYNC_PROTOCOL_VERSION, "db_sha256": cloud_hash,
-        "local_sha256": _file_sha256(local),
-        "synced_at": datetime.now().isoformat(timespec="seconds"), "cloud_path": cloud,
-    })
-    return {"status": "ready", "action": "first_cloud_import", "recovery": rec or recovery}
+    # Первый запуск схемы синхронизации при наличии двух разных исправных БД.
+    # Без истории синхронизации невозможно безопасно решить, какая новее:
+    # сохраняем обе и НЕ перезаписываем локальную.
+    rec_local = _save_local_recovery_copy(local, "pre_migration_local")
+    rec_cloud = _save_local_recovery_copy(cloud, "pre_migration_cloud")
+    return {
+        "status": "ready", "action": "first_local_preserved",
+        "recovery": rec_local or recovery, "cloud_recovery": rec_cloud,
+    }
 
 
 def sync_working_to_cloud(conn=None):
