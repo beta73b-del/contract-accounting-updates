@@ -1093,6 +1093,7 @@ def _audit_changes(old_row, old_items, header, items):
 def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
     header = dict(header)
     header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header["stock_written_off"] = int(header.get("stock_written_off") or 0)
     cols = ", ".join(HEADER_FIELDS)
     placeholders = ", ".join(["?"] * len(HEADER_FIELDS))
     values = [header.get(f) for f in HEADER_FIELDS]
