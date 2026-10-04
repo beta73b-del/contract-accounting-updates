@@ -28,8 +28,9 @@ def test_regular_contract_stays_in_creation_month():
     c=newdb()
     pid=db.insert_purchase(c, header(contract_no="REG"), [item()])
     h=db.fetch_by_id(c,pid)
-    h["exec_status"]="Исполнено"
+    h["exec_status"]="Вручен"
     h["handover_date"]="2026-10-10"
+    h["payment_status"]="Оплачено"
     db.update_purchase(c,pid,h,[dict(x) for x in h["items"]])
     sep=db.monthly_summary(c,year=2026,month=9)
     octo=db.monthly_summary(c,year=2026,month=10)
@@ -105,7 +106,7 @@ def test_year_filter_includes_expense_and_handover_years():
     c=newdb()
     pid=db.insert_purchase(c, header(contract_no="Y",created_at="2026-12-01 10:00:00"), [item(mode="Отложенная закупка",stock=0)])
     h=db.fetch_by_id(c,pid)
-    h["exec_status"]="Исполнено"; h["handover_date"]="2027-01-10"
+    h["exec_status"]="Вручен"; h["handover_date"]="2027-01-10"; h["payment_status"]="Оплачено"
     db.update_purchase(c,pid,h,[dict(x) for x in h["items"]])
     db.insert_monthly_expense(c,{"expense_date":"2028-02-01","category":"Прочее","amount":1})
     years=db.distinct_years(c)
