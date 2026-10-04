@@ -2304,7 +2304,7 @@ def delete_attachment(conn: sqlite3.Connection, attachment_id: int, remove_file:
             except OSError:
                 pass
     if row:
-        add_audit(conn, row["purchase_id"], "Удалён документ", f"{row["category"] or 'Прочее'}: {row["filename"]}")
+        add_audit(conn, row["purchase_id"], "Удалён документ", f"{row['category'] or 'Прочее'}: {row['filename']}")
     conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
     conn.commit()
 

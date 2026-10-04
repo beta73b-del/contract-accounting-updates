@@ -45,7 +45,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Install dependencies
         shell: pwsh
@@ -143,12 +143,36 @@ jobs:
         shell: pwsh
         run: |
           Set-Location app
-          python -m PyInstaller --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. main.py
+          $pythonExe = (Get-Command python).Source
+          $pythonDir = Split-Path -Parent $pythonExe
+          $extra = @()
+          foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll")) {
+            $candidate = Join-Path $pythonDir $dll
+            if (-not (Test-Path $candidate)) {
+              $candidate = Join-Path $env:SystemRoot "System32\$dll"
+            }
+            if (Test-Path $candidate) {
+              Write-Host "Bundling runtime: $candidate"
+              $extra += "--add-binary"
+              $extra += "$candidate;."
+            } else {
+              Write-Host "Runtime not found on runner: $dll"
+            }
+          }
+          python -m PyInstaller --clean --noconfirm --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. @extra main.py
           Set-Location ..
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item app/dist/UchetZakupok.exe release/UchetZakupok.exe -Force
           $hash = (Get-FileHash release/UchetZakupok.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  UchetZakupok.exe" | Set-Content release/UchetZakupok.exe.sha256 -Encoding ascii
+
+      - name: Verify embedded Python runtime
+        shell: pwsh
+        run: |
+          $listing = pyi-archive_viewer release\UchetZakupok.exe -l 2>&1 | Out-String
+          $listing | Set-Content release\archive_contents.txt
+          if ($listing -notmatch 'python311\.dll') { throw "python311.dll is not embedded in EXE" }
+          if ($listing -notmatch 'vcruntime140\.dll') { throw "vcruntime140.dll is not embedded in EXE" }
 
       - name: Runtime EXE smoke test
         shell: pwsh
