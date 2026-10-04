@@ -1649,21 +1649,45 @@ def insert_receipt(conn: sqlite3.Connection, data: dict) -> int:
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RECEIPT_FIELDS]
     cur = conn.execute(f"INSERT INTO stock_receipts ({cols}) VALUES ({placeholders})", values)
+    add_stock_audit(
+        conn, data.get("product"), "Приход товара", float(data.get("qty") or 0),
+        counterparty=data.get("supplier") or "",
+        details=f"Приход №{cur.lastrowid}; дата {data.get('receipt_date') or '—'}"
+    )
     conn.commit()
     return cur.lastrowid
 
 
 def update_receipt(conn: sqlite3.Connection, receipt_id: int, data: dict):
+    old = fetch_receipt_by_id(conn, receipt_id)
     set_clause = ", ".join(f"{f} = ?" for f in RECEIPT_FIELDS)
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RECEIPT_FIELDS] + [receipt_id]
     conn.execute(f"UPDATE stock_receipts SET {set_clause} WHERE id = ?", values)
+    old_product = old["product"] if old is not None else data.get("product")
+    details = (
+        f"Приход №{receipt_id}: "
+        f"{float(old['qty'] or 0) if old is not None else 0:g} → {float(data.get('qty') or 0):g} шт.; "
+        f"товар {old_product or '—'} → {data.get('product') or '—'}"
+    )
+    add_stock_audit(conn, old_product or data.get("product"), "Изменён приход", None,
+                    counterparty=data.get("supplier") or "", details=details)
+    if data.get("product") and data.get("product") != old_product:
+        add_stock_audit(conn, data.get("product"), "Изменён приход", None,
+                        counterparty=data.get("supplier") or "", details=details)
     conn.commit()
 
 
 def delete_receipt(conn: sqlite3.Connection, receipt_id: int):
+    old = fetch_receipt_by_id(conn, receipt_id)
+    if old is not None:
+        add_stock_audit(
+            conn, old["product"], "Удалён приход", -float(old["qty"] or 0),
+            counterparty=old["supplier"] or "",
+            details=f"Удалён приход №{receipt_id}; ранее было {float(old['qty'] or 0):g} шт."
+        )
     conn.execute("DELETE FROM stock_receipts WHERE id = ?", (receipt_id,))
     conn.commit()
 
