@@ -68,7 +68,9 @@ jobs:
       - name: Regression 2.23.11
         run: python tests/test_v22311_ota_paths.py
       - name: Regression 2.23.12
-        run: python tests/test_v22313_stock_competitors.py
+        run: python tests/test_v22312_stock_competitors.py
+      - name: Regression 2.23.13
+        run: python tests/test_v22313_runtime_build.py
       - name: Verify paid button date binding
         shell: pwsh
         run: |
