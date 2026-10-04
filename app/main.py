@@ -2332,12 +2332,19 @@ class PurchaseDialog(tk.Toplevel):
         return db.ensure_product(self.conn, product)
 
     def _apply_auto_status_suggestions(self, header):
-        # v2.17.3: дата вручения сама переводит исполнение в «Вручен».
-        # Отдельного подтверждения не требуется: факт вручения уже введён пользователем.
-        # Статус «Исполнено» остаётся отдельным последующим этапом.
+        # Дата вручения означает только «Вручен», но не «Исполнено».
         if header.get("handover_date") and (header.get("exec_status") or "") not in ("Вручен", "Исполнено"):
             header["exec_status"] = "Вручен"
             self.widgets["exec_status"].set("Вручен")
+
+        # v2.23: исполнение завершается только после оплаты заказчиком.
+        delivered = bool(header.get("handover_date")) or (header.get("exec_status") or "") in ("Вручен", "Исполнено")
+        if (header.get("payment_status") or "") == "Оплачено" and delivered:
+            header["exec_status"] = "Исполнено"
+            self.widgets["exec_status"].set("Исполнено")
+        elif (header.get("exec_status") or "") == "Исполнено" and (header.get("payment_status") or "") != "Оплачено":
+            header["exec_status"] = "Вручен" if delivered else "В процессе"
+            self.widgets["exec_status"].set(header["exec_status"])
         return header
 
     def _smart_warnings(self, header):
@@ -2360,8 +2367,8 @@ class PurchaseDialog(tk.Toplevel):
         total_cost=sum(float(header.get(k) or 0) for k in ("purchase_cost","logistics","commission","other_costs","guarantee"))
         if header.get("contract_sum") is not None and total_cost > float(header.get("contract_sum") or 0):
             warnings.append(f"Расходы ({fmt_money(total_cost)}) больше суммы контракта ({fmt_money(header.get('contract_sum'))}).")
-        if (header.get("exec_status") or "") == "Исполнено" and not header.get("handover_date"):
-            warnings.append("Исполнение отмечено как «Исполнено», но дата вручения не заполнена.")
+        if (header.get("payment_status") or "") == "Оплачено" and not header.get("handover_date"):
+            warnings.append("Контракт отмечен как оплаченный, но дата вручения не заполнена. Статус «Исполнено» будет установлен только после вручения.")
         # Проверка остатка по каждой позиции с исключением собственного текущего резерва.
         for item in self.items:
             product=item.get("product") or ""; qty=float(item.get("qty") or 0)
