@@ -161,6 +161,15 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS monthly_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    expense_date TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Прочее',
+    amount REAL NOT NULL DEFAULT 0,
+    description TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_monthly_expenses_date ON monthly_expenses(expense_date);
+
 CREATE INDEX IF NOT EXISTS idx_purchases_active_date ON purchases(deleted_at, contract_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_active_exec ON purchases(deleted_at, exec_status);
 CREATE INDEX IF NOT EXISTS idx_purchases_active_payment ON purchases(deleted_at, payment_status);
@@ -1349,64 +1358,130 @@ def distinct_products(conn: sqlite3.Connection):
     return catalog_products(conn)
 
 
-def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
-    """
-    Финансовые итоги группируются по месяцу фактического добавления контракта
-    (created_at), а не по дате заключения или вручения. Пользователь не вводит
-    created_at вручную: поле проставляется автоматически при создании записи.
+def _parse_summary_date(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            parsed = datetime.strptime(text, fmt).date()
+            return parsed if 2000 <= parsed.year <= 2100 else None
+        except ValueError:
+            continue
+    return None
 
-    Количество реализованного товара учитывается только после фактической передачи
-    (handover_date заполнена), но относится к месяцу добавления контракта.
+
+def _is_deferred_purchase_contract(conn: sqlite3.Connection, purchase_id: int) -> bool:
+    """В рабочей модели смешанных контрактов нет: наличие отложенной закупки
+    делает весь контракт отложенным для финансовых итогов."""
+    row = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN supply_mode='Отложенная закупка' THEN 1 ELSE 0 END) AS deferred
+           FROM purchase_items WHERE purchase_id=?""",
+        (purchase_id,),
+    ).fetchone()
+    return bool(row and int(row["total"] or 0) > 0 and int(row["deferred"] or 0) > 0)
+
+
+def _summary_period_for_purchase(conn: sqlite3.Connection, purchase) -> date | None:
+    """Период финансовых итогов.
+    Обычный контракт -> месяц заведения.
+    Отложенная закупка -> только после статуса «Исполнено», месяц даты вручения.
+    """
+    if _is_deferred_purchase_contract(conn, int(purchase["id"])):
+        if (purchase["exec_status"] or "") != "Исполнено":
+            return None
+        return _parse_summary_date(purchase["handover_date"])
+    return _parse_summary_date(purchase["created_at"]) or _parse_summary_date(purchase["contract_date"])
+
+
+def summary_contracts(conn: sqlite3.Connection, year: int, month: int):
+    """Контракты, реально вошедшие в финансовые итоги указанного месяца."""
+    rows = conn.execute("SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id").fetchall()
+    matched = []
+    for r in rows:
+        period = _summary_period_for_purchase(conn, r)
+        if period and period.year == int(year) and period.month == int(month):
+            d = dict(r)
+            d["items"] = [dict(x) for x in fetch_items(conn, int(r["id"]))]
+            d["product"] = _products_summary(d["items"])
+            d["qty"] = _qty_total(d["items"])
+            d["summary_period"] = period.isoformat()
+            d["deferred_purchase"] = _is_deferred_purchase_contract(conn, int(r["id"]))
+            matched.append(d)
+    return matched
+
+
+def insert_monthly_expense(conn: sqlite3.Connection, data: dict) -> int:
+    expense_date = str(data.get("expense_date") or "").strip()
+    if not _parse_summary_date(expense_date):
+        raise ValueError("Некорректная дата расхода")
+    amount = float(data.get("amount") or 0)
+    if amount < 0:
+        raise ValueError("Сумма расхода не может быть отрицательной")
+    cur = conn.execute(
+        "INSERT INTO monthly_expenses(expense_date, category, amount, description) VALUES(?,?,?,?)",
+        (expense_date, (data.get("category") or "Прочее").strip(), amount,
+         (data.get("description") or "").strip() or None),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def fetch_monthly_expenses(conn: sqlite3.Connection, year: int = None, month: int = None):
+    query = "SELECT * FROM monthly_expenses WHERE 1=1"
+    params = []
+    if year is not None:
+        query += " AND substr(expense_date,1,4)=?"
+        params.append(str(int(year)))
+    if month is not None:
+        query += " AND substr(expense_date,6,2)=?"
+        params.append(f"{int(month):02d}")
+    query += " ORDER BY expense_date, id"
+    return conn.execute(query, params).fetchall()
+
+
+def delete_monthly_expense(conn: sqlite3.Connection, expense_id: int):
+    conn.execute("DELETE FROM monthly_expenses WHERE id=?", (int(expense_id),))
+    conn.commit()
+
+
+def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
+    """Финансовые итоги 2.18.
+
+    Обычные контракты учитываются по месяцу заведения. Контракты с отложенной
+    закупкой до исполнения из итогов исключены; после «Исполнено» учитываются
+    целиком в месяце даты вручения.
+
+    Прочие месячные расходы из monthly_expenses уменьшают чистую прибыль месяца.
     """
     from calculations import calc_tax, calc_profit, calc_margin_pct
 
-    def _parse_db_date(value):
-        if not value:
-            return None
-        text = str(value).strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
-            try:
-                parsed = datetime.strptime(text, fmt).date()
-                if 2000 <= parsed.year <= 2100:
-                    return parsed
-                return None
-            except ValueError:
-                continue
-        return None
-
-    rows = conn.execute(
-        "SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id"
-    ).fetchall()
-
+    rows = conn.execute("SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id").fetchall()
     grouped = {}
     for r in rows:
-        period_date = _parse_db_date(r["created_at"]) or _parse_db_date(r["contract_date"])
+        period_date = _summary_period_for_purchase(conn, r)
         if period_date is None:
             continue
         if year is not None and period_date.year != int(year):
             continue
         if month is not None and period_date.month != int(month):
             continue
-
         key = (period_date.year, period_date.month)
         g = grouped.setdefault(key, {
-            "contract_sum": 0.0,
-            "purchase_cost": 0.0,
-            "logistics": 0.0,
-            "commission": 0.0,
-            "other_costs": 0.0,
-            "guarantee": 0.0,
-            "qty_total": 0.0,
-            "qty_paid": 0.0,
-            "qty_unpaid": 0.0,
+            "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
+            "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
+            "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
+            "qty_unpaid": 0.0, "contracts_count": 0,
         })
-        for field in ("contract_sum", "purchase_cost", "logistics", "commission", "other_costs", "guarantee"):
+        g["contracts_count"] += 1
+        for field in ("contract_sum","purchase_cost","logistics","commission","other_costs","guarantee"):
             g[field] += float(r[field] or 0.0)
 
-        # Реализация считается только после фактического вручения.
-        if _parse_db_date(r["handover_date"]) is not None:
+        # В итогах реализованное количество — только фактически вручённое.
+        if _parse_summary_date(r["handover_date"]) is not None:
             qty_row = conn.execute(
-                "SELECT COALESCE(SUM(qty), 0) AS qty FROM purchase_items WHERE purchase_id = ?",
+                "SELECT COALESCE(SUM(qty),0) AS qty FROM purchase_items WHERE purchase_id=?",
                 (r["id"],),
             ).fetchone()
             qty = float(qty_row["qty"] or 0.0)
@@ -1416,31 +1491,42 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             else:
                 g["qty_unpaid"] += qty
 
+    # Месяц может содержать только вне-контрактные расходы — он всё равно должен
+    # отображаться в итогах.
+    for e in fetch_monthly_expenses(conn, year=year, month=month):
+        d = _parse_summary_date(e["expense_date"])
+        if not d:
+            continue
+        key = (d.year, d.month)
+        g = grouped.setdefault(key, {
+            "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
+            "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
+            "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
+            "qty_unpaid": 0.0, "contracts_count": 0,
+        })
+        g["monthly_expenses"] += float(e["amount"] or 0.0)
+
     result = []
-    for (y, m), g in sorted(grouped.items()):
-        contract_sum = g["contract_sum"]
-        purchase_cost = g["purchase_cost"]
-        logistics = g["logistics"]
-        commission = g["commission"]
-        other_costs = g["other_costs"]
-        guarantee = g["guarantee"]
-        tax = calc_tax(contract_sum)
-        profit = calc_profit(contract_sum, purchase_cost, logistics, commission,
-                             other_costs, guarantee, tax)
+    for (y,m),g in sorted(grouped.items()):
+        contract_sum=g["contract_sum"]; purchase_cost=g["purchase_cost"]
+        logistics=g["logistics"]; commission=g["commission"]
+        other_costs=g["other_costs"]; guarantee=g["guarantee"]
+        monthly_expenses=g["monthly_expenses"]
+        tax=calc_tax(contract_sum)
+        contract_profit=calc_profit(contract_sum,purchase_cost,logistics,commission,other_costs,guarantee,tax)
+        profit=round(contract_profit-monthly_expenses,2)
+        total_expenses=round(purchase_cost+logistics+commission+other_costs+guarantee+tax+monthly_expenses,2)
         result.append({
-            "year": y,
-            "month": m,
-            "contract_sum": contract_sum,
-            "purchase_cost": purchase_cost,
-            "expenses": logistics + commission + other_costs + guarantee,
-            "tax": tax,
-            "profit": profit,
-            "margin_pct": calc_margin_pct(profit, contract_sum),
-            "qty_total": g["qty_total"],
-            "qty_paid": g["qty_paid"],
-            "qty_unpaid": g["qty_unpaid"],
+            "year":y,"month":m,"contracts_count":g["contracts_count"],
+            "contract_sum":contract_sum,"purchase_cost":purchase_cost,
+            "logistics":logistics,"commission":commission,"other_costs":other_costs,
+            "guarantee":guarantee,"tax":tax,"monthly_expenses":monthly_expenses,
+            "total_expenses":total_expenses,"profit":profit,
+            "margin_pct":calc_margin_pct(profit,contract_sum),
+            "qty_total":g["qty_total"],"qty_paid":g["qty_paid"],"qty_unpaid":g["qty_unpaid"],
         })
     return result
+
 
 def top_customers(conn: sqlite3.Connection, limit: int = 5):
     rows = conn.execute(
