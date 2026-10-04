@@ -79,7 +79,8 @@ def test_old_status_migration():
     c=db.get_connection(p)
     ra=db.fetch_by_id(c,a); rb=db.fetch_by_id(c,b)
     assert ra["exec_status"]=="Вручен" and ra["stock_written_off"]==1
-    assert rb["exec_status"]=="Исполнено" and rb["stock_written_off"]==1
+    # v2.23: без оплаты исторический финальный статус больше не считается исполнением.
+    assert rb["exec_status"]=="Отправлено" and rb["stock_written_off"]==1
     c.close()
 
 def test_deadline_rows_delivered_unpaid():
