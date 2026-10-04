@@ -184,6 +184,14 @@ jobs:
           if ($p.HasExited) { throw "UchetZakupok.exe exited during startup smoke test with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
 
+      - name: Verify OTA restart and rollback with inherited onefile environment
+        shell: pwsh
+        run: |
+          python tests/test_v22311_ota_paths.py
+          if ($LASTEXITCODE -ne 0) { throw "Windows updater path checks failed" }
+          python tests/test_v22315_ota_restart.py --exe release/UchetZakupok.exe
+          if ($LASTEXITCODE -ne 0) { throw "OTA restart or rollback failed" }
+
       - name: Upload validated recovery artifact
         uses: actions/upload-artifact@v4
         with:

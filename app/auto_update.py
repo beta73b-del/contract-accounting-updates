@@ -182,6 +182,12 @@ $target = {_psq(current_exe)}
 $source = {_psq(new_exe)}
 $backup = {_psq(backup_exe)}
 $log = {_psq(log_path)}
+# The updater outlives the onefile process. Never reuse its deleted _MEI folder,
+# including when restarting the previous EXE after rollback.
+Get-ChildItem Env: | Where-Object {{ $_.Name -like '_PYI_*' -or $_.Name -eq '_MEIPASS2' }} | ForEach-Object {{
+    Remove-Item -LiteralPath ("Env:" + $_.Name) -ErrorAction SilentlyContinue
+}}
+$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
 try {{
     try {{ Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue }} catch {{}}
     Start-Sleep -Milliseconds 700
@@ -198,7 +204,7 @@ try {{
     }}
 
     Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue
-    Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Обновление установлено успешно")
+    Add-Content -LiteralPath $log -Encoding UTF8 -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Обновление установлено успешно")
 }} catch {{
     $updateError = $_.Exception.Message
     try {{
@@ -208,7 +214,7 @@ try {{
         }}
     }} catch {{}}
     try {{
-        Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Ошибка обновления, выполнен откат: " + $updateError)
+        Add-Content -LiteralPath $log -Encoding UTF8 -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Ошибка обновления, выполнен откат: " + $updateError)
     }} catch {{}}
 }}
 '''
@@ -232,6 +238,14 @@ def _find_powershell_executable() -> str:
         "Не найден Windows PowerShell. Проверены System32\\WindowsPowerShell\\v1.0 "
         "и системный PATH."
     )
+
+
+def _independent_process_env():
+    """Новое приложение должно распаковаться независимо от текущего onefile EXE."""
+    env = {key: value for key, value in os.environ.items()
+           if not key.upper().startswith("_PYI_") and key.upper() != "_MEIPASS2"}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 def launch_windows_installer(new_exe: str, update_root: str, log_path: str):
@@ -294,6 +308,7 @@ def launch_windows_installer(new_exe: str, update_root: str, log_path: str):
             close_fds=True,
             creationflags=creationflags,
             cwd=update_root,
+            env=_independent_process_env(),
         )
     except OSError as exc:
         raise UpdateError(
@@ -305,4 +320,3 @@ def launch_windows_installer(new_exe: str, update_root: str, log_path: str):
             f"Ошибка Windows: {exc}"
         ) from exc
     return script_path
-
