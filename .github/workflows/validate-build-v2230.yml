@@ -1,0 +1,66 @@
+name: Validate and build v2.23.0 manual
+on:
+  push:
+    branches: [v2.23.0]
+    paths: [VERSION, "app/**", "tests/**", ".github/workflows/validate-build-v2230.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+      - name: Compile
+        run: python -m compileall -q app
+      - name: Regression 2.17.2
+        run: python tests/test_v2172_regression.py
+      - name: Regression 2.17.3
+        run: python tests/test_v2173_changes.py
+      - name: Regression 2.18.0
+        run: python tests/test_v2180_finance.py
+      - name: Regression 2.19.0
+        run: python tests/test_v2190_tax.py
+      - name: Regression 2.20.0
+        run: python tests/test_v2200_competitors.py
+      - name: Regression 2.21.0
+        run: python tests/test_v2210_procurement.py
+      - name: Regression 2.22.0
+        run: python tests/test_v2220_history.py
+      - name: Regression 2.22.1
+        run: python tests/test_v2221_expenses.py
+      - name: Regression 2.22.2
+        run: python tests/test_v2222_realized_qty.py
+      - name: Regression 2.22.3
+        run: python tests/test_v2223_stock_need.py
+      - name: Integration 2.23.0
+        run: python tests/test_v2230_integrity.py
+      - name: Build
+        shell: pwsh
+        run: |
+          Set-Location app
+          python -m PyInstaller --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. main.py
+          Set-Location ..
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item app/dist/UchetZakupok.exe release/UchetZakupok.exe -Force
+      - name: Smoke
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA="$env:RUNNER_TEMP\Smoke"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $p=Start-Process -FilePath "release\UchetZakupok.exe" -PassThru
+          Start-Sleep 5
+          if ($p.HasExited) { throw "EXE exited $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UchetZakupok-v2.23.0-manual
+          path: release/UchetZakupok.exe
+          retention-days: 7
