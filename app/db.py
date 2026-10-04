@@ -1894,6 +1894,17 @@ def stock_summary(conn: sqlite3.Connection):
         auto_res = reserved.get(product, 0.0)
         manual_res = manual_reserved.get(product, 0.0)
         total_res = auto_res + manual_res
+        future_demand = float(future.get(product, 0.0) or 0.0)
+
+        # v2.22.3: сколько реально нужно закупить под действующие контракты.
+        # 1) future_demand — часть контрактов, которая изначально помечена как
+        #    «Требуется закупка» / «Отложенная закупка» и не обеспечена складом;
+        # 2) если складского резерва по контрактам физически больше, чем on_hand,
+        #    добавляем этот дефицит.
+        # Ручной резерв под потенциальных клиентов сюда намеренно не включается.
+        contract_stock_shortage = max(0.0, auto_res - on_hand)
+        need_to_buy = future_demand + contract_stock_shortage
+
         result.append({
             "product": product,
             "on_hand": on_hand,
@@ -1901,7 +1912,8 @@ def stock_summary(conn: sqlite3.Connection):
             "auto_reserved": auto_res,
             "manual_reserved": manual_res,
             "available": on_hand - total_res,
-            "future_demand": future.get(product, 0.0),
+            "future_demand": future_demand,
+            "need_to_buy": need_to_buy,
         })
     return result
 
