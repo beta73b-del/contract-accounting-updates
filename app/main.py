@@ -5069,6 +5069,12 @@ class App(tk.Tk):
         return False
 
     def _add_monthly_expense(self):
+        """Добавляет прочий расход в выделенный месяц через стандартный диалог.
+
+        Используем simpledialog вместо отдельного Toplevel: на части Windows/DPI
+        пользователь видел только верхнюю строку собственного окна и не мог
+        добраться до кнопки сохранения.
+        """
         period = self._selected_summary_period(require_selection=True)
         if period is None:
             messagebox.showinfo(
@@ -5079,81 +5085,37 @@ class App(tk.Tk):
             return
 
         year, month = period
-        win = tk.Toplevel(self)
-        win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
-        win.transient(self)
-        win.geometry("520x210")
-        win.minsize(520, 210)
-        win.resizable(False, False)
-
-        body = ttk.Frame(win, padding=18)
-        body.pack(fill="both", expand=True)
-        body.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            body,
-            text=f"Прочий расход за {MONTHS_RU[month]} {year}",
-            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
-
-        ttk.Label(body, text="Сумма, руб.:").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
-        amount_var = tk.StringVar()
-        amount_entry = ttk.Entry(body, textvariable=amount_var, width=30)
-        amount_entry.grid(row=1, column=1, sticky="ew", pady=6)
-        self._bind_context_menu(amount_entry)
-
-        ttk.Label(
-            body,
-            text="Расход будет отнесён к выделенному месяцу. Дата не требуется.",
-            foreground=app_theme.MUTED,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
-
-        buttons = ttk.Frame(body)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
-
-        def save():
-            try:
-                data = prepare_selected_month_expense(amount_var.get(), year, month)
-                db.insert_monthly_expense(self.conn, data)
-            except ValueError as exc:
-                messagebox.showerror("Ошибка ввода", str(exc), parent=win)
-                amount_entry.focus_set()
-                return
-            except Exception as exc:
-                _log(f"Итоги: не удалось сохранить прочий расход: {exc}")
-                messagebox.showerror(
-                    "Ошибка сохранения",
-                    f"Не удалось добавить прочий расход:\n{exc}",
-                    parent=win,
-                )
-                return
-
-            win.destroy()
-            self.refresh_summary()
-            self._select_summary_period(year, month)
-            messagebox.showinfo(
-                "Прочий расход",
-                f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.\n"
-                "Чистая прибыль пересчитана.",
-                parent=self,
-            )
-
-        ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
-        ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+        raw_amount = simpledialog.askstring(
+            f"Прочий расход — {MONTHS_RU[month]} {year}",
+            f"Введите сумму прочего расхода за {MONTHS_RU[month]} {year}, руб.:",
+            parent=self,
+        )
+        if raw_amount is None:
+            return
 
         try:
-            win.update_idletasks()
-            screen_w, screen_h = win.winfo_screenwidth(), win.winfo_screenheight()
-            width, height = 520, 210
-            x = max(0, (screen_w - width) // 2)
-            y = max(0, (screen_h - height) // 2)
-            win.geometry(f"{width}x{height}+{x}+{y}")
-            win.lift()
-            win.focus_force()
-            win.grab_set()
-        except tk.TclError:
-            pass
-        amount_entry.focus_set()
+            data = prepare_selected_month_expense(raw_amount, year, month)
+            db.insert_monthly_expense(self.conn, data)
+        except ValueError as exc:
+            messagebox.showerror("Ошибка ввода", str(exc), parent=self)
+            return
+        except Exception as exc:
+            _log(f"Итоги: не удалось сохранить прочий расход: {exc}")
+            messagebox.showerror(
+                "Ошибка сохранения",
+                f"Не удалось добавить прочий расход:\n{exc}",
+                parent=self,
+            )
+            return
+
+        self.refresh_summary()
+        self._select_summary_period(year, month)
+        messagebox.showinfo(
+            "Прочий расход",
+            f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.\n"
+            "Чистая прибыль пересчитана.",
+            parent=self,
+        )
 
 
     def _edit_tax_profile(self):
