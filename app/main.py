@@ -143,6 +143,29 @@ def prepare_monthly_expense_input(date_text, amount_text, category="", descripti
 
 
 
+def prepare_selected_month_expense(amount_text, year, month):
+    """Готовит прочий расход для уже выбранного месяца итогов.
+
+    Пользователь вводит только сумму. Техническая дата ставится первым числом
+    выбранного месяца и не участвует в выборе периода.
+    """
+    amount = parse_money(amount_text)
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля.")
+    year = int(year)
+    month = int(month)
+    if month < 1 or month > 12:
+        raise ValueError("Некорректный месяц.")
+    return {
+        "expense_date": f"{year:04d}-{month:02d}-01",
+        "period_year": year,
+        "period_month": month,
+        "category": "Прочее",
+        "amount": amount,
+        "description": "",
+    }
+
+
 def bind_date_autodots(entry, var):
     """Надёжный ввод даты ДД.ММ.ГГГГ без перестановки цифр.
 
@@ -5012,71 +5035,42 @@ class App(tk.Tk):
         win = tk.Toplevel(self)
         win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
         win.transient(self)
-        # Сразу задаём безопасную геометрию. На части Windows/Tk transient-окно
-        # до первого update_idletasks ошибочно получает высоту одной строки.
-        win.geometry("720x430")
-        win.minsize(720, 430)
+        win.geometry("520x210")
+        win.minsize(520, 210)
         win.resizable(False, False)
-        body = ttk.Frame(win, padding=14)
+
+        body = ttk.Frame(win, padding=18)
         body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
 
         ttk.Label(
             body,
-            text=f"Период расхода: {MONTHS_RU[month]} {year} (определяется выбранной строкой)",
+            text=f"Прочий расход за {MONTHS_RU[month]} {year}",
             font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
 
-        date_var = tk.StringVar(value=f"01.{month:02d}.{year}")
-        category_var = tk.StringVar(value="Прочее")
+        ttk.Label(body, text="Сумма, руб.:").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
         amount_var = tk.StringVar()
-        description_var = tk.StringVar()
-
-        fields = [
-            ("Дата расхода:", date_var),
-            ("Категория:", category_var),
-            ("Сумма, руб.:", amount_var),
-            ("Описание:", description_var),
-        ]
-        amount_entry = None
-        for offset, (label, var) in enumerate(fields, start=1):
-            ttk.Label(body, text=label).grid(row=offset, column=0, sticky="w", padx=(0, 10), pady=5)
-            if label == "Категория:":
-                w = ttk.Combobox(
-                    body, textvariable=var,
-                    values=["Проценты по кредиту", "Банк", "Бухгалтерия", "Связь", "Транспорт", "Прочее"],
-                    width=36,
-                )
-            else:
-                w = ttk.Entry(body, textvariable=var, width=39)
-            w.grid(row=offset, column=1, sticky="ew", pady=5)
-            self._bind_context_menu(w)
-            if label == "Дата расхода:":
-                bind_date_autodots(w, var)
-            elif label == "Сумма, руб.:":
-                amount_entry = w
+        amount_entry = ttk.Entry(body, textvariable=amount_var, width=30)
+        amount_entry.grid(row=1, column=1, sticky="ew", pady=6)
+        self._bind_context_menu(amount_entry)
 
         ttk.Label(
             body,
-            text="Дата расхода сохраняется для справки и не влияет на выбранный месяц итогов.",
+            text="Расход будет отнесён к выделенному месяцу. Дата не требуется.",
             foreground=app_theme.MUTED,
-            wraplength=520,
-        ).grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(4, 2))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
 
         def save():
             try:
-                data, saved_date = prepare_monthly_expense_input(
-                    date_var.get(),
-                    amount_var.get(),
-                    category_var.get(),
-                    description_var.get(),
-                    expected_period=(year, month),
-                )
+                data = prepare_selected_month_expense(amount_var.get(), year, month)
                 db.insert_monthly_expense(self.conn, data)
             except ValueError as exc:
                 messagebox.showerror("Ошибка ввода", str(exc), parent=win)
+                amount_entry.focus_set()
                 return
             except Exception as exc:
                 _log(f"Итоги: не удалось сохранить прочий расход: {exc}")
@@ -5092,37 +5086,27 @@ class App(tk.Tk):
             self._select_summary_period(year, month)
             messagebox.showinfo(
                 "Прочий расход",
-                f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.",
+                f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.\n"
+                "Чистая прибыль пересчитана.",
                 parent=self,
             )
 
         ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
 
-        # Windows/Tk иногда фиксирует transient-Toplevel на высоте первой строки,
-        # если resizable(False, False) был установлен до расчёта требуемой геометрии.
-        # Поэтому размер задаём только после построения ВСЕХ полей.
         try:
             win.update_idletasks()
-            width, height, x, y = fit_dialog_size(
-                win.winfo_reqwidth(), win.winfo_reqheight(),
-                win.winfo_screenwidth(), win.winfo_screenheight(),
-                min_w=720, min_h=430,
-            )
-            win.minsize(720, 430)
+            screen_w, screen_h = win.winfo_screenwidth(), win.winfo_screenheight()
+            width, height = 520, 210
+            x = max(0, (screen_w - width) // 2)
+            y = max(0, (screen_h - height) // 2)
             win.geometry(f"{width}x{height}+{x}+{y}")
-            win.resizable(False, False)
             win.lift()
             win.focus_force()
             win.grab_set()
         except tk.TclError:
-            # Даже если система не дала координаты экрана, окно должно остаться
-            # достаточно большим для всех полей.
-            win.geometry("720x430")
-            win.minsize(680, 380)
-
-        if amount_entry is not None:
-            amount_entry.focus_set()
+            pass
+        amount_entry.focus_set()
 
 
     def _edit_tax_profile(self):
