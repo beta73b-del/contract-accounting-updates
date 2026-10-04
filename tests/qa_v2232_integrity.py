@@ -59,10 +59,13 @@ def test_deferred_execution_month_after_payment():
     c.close()
 
 if __name__=="__main__":
+    failed=[]
     for name in ["test_direct_handover_must_not_leave_goods_reserved","test_deferred_execution_month_after_payment"]:
         try:
             globals()[name]()
             print("PASS",name)
         except Exception as e:
-            print("FAIL",name,repr(e))
-            raise
+            print("FAIL",name,type(e).__name__)
+            failed.append(name)
+    if failed:
+        raise SystemExit("FAILED: "+",".join(failed))
