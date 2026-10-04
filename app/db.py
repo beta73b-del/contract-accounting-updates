@@ -1690,8 +1690,14 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
         for field in ("contract_sum","purchase_cost","logistics","commission","other_costs","guarantee"):
             g[field] += float(r[field] or 0.0)
 
-        # В итогах реализованное количество — только фактически вручённое.
-        if _parse_summary_date(r["handover_date"]) is not None:
+        # v2.22.2: «Реализовано, шт.» определяется по фактическому этапу
+        # движения товара, а не только по наличию даты вручения.
+        # Отправлено -> товар уже покинул склад; Вручен/Исполнено -> тем более реализован.
+        # stock_written_off сохраняется идемпотентно после первой отправки и позволяет
+        # корректно считать старые записи, даже если статус позже изменён.
+        exec_status = (r["exec_status"] or "").strip()
+        realized = bool(int(r["stock_written_off"] or 0)) or exec_status in ("Отправлено", "Вручен", "Исполнено")
+        if realized:
             qty_row = conn.execute(
                 "SELECT COALESCE(SUM(qty),0) AS qty FROM purchase_items WHERE purchase_id=?",
                 (r["id"],),
