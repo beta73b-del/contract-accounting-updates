@@ -43,7 +43,7 @@ HEADER_FIELDS = [
 ITEM_FIELDS = ["product", "qty"]
 RECEIPT_FIELDS = ["product", "qty", "unit_cost", "receipt_date", "supplier", "note"]
 ATTACHMENT_FIELDS = ["filename", "stored_path", "added_date", "category", "note"]
-COMPETITOR_FIELDS = ["competitor", "product", "trade_type", "qty", "unit_price", "purchase_date"]
+COMPETITOR_FIELDS = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS purchases (
@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE TABLE IF NOT EXISTS competitor_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     competitor TEXT,
+    competitor_inn TEXT,
     product TEXT,
     trade_type TEXT,
     qty REAL,
@@ -794,7 +795,7 @@ _ATTACHMENTS_COLUMN_TYPES = {
     "added_date": "TEXT", "category": "TEXT", "note": "TEXT",
 }
 _COMPETITOR_COLUMN_TYPES = {
-    "competitor": "TEXT", "product": "TEXT", "trade_type": "TEXT",
+    "competitor": "TEXT", "competitor_inn": "TEXT", "product": "TEXT", "trade_type": "TEXT",
     "qty": "REAL", "unit_price": "REAL", "purchase_date": "TEXT",
 }
 _PURCHASE_ITEMS_COLUMN_TYPES = {
@@ -1851,9 +1852,24 @@ def normalize_competitor_name(name: str) -> str:
     return "".join(ch for ch in value if ch.isalnum())
 
 
-def canonical_competitor_name(conn: sqlite3.Connection, name: str, exclude_id: int = None) -> str:
-    """Возвращает уже используемое написание той же компании, если оно есть."""
+def normalize_inn(value: str) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def canonical_competitor_name(conn: sqlite3.Connection, name: str, competitor_inn: str = None, exclude_id: int = None) -> str:
+    """ИНН имеет приоритет над написанием названия компании."""
     clean = re.sub(r"\s+", " ", str(name or "").strip())
+    inn = normalize_inn(competitor_inn)
+    if inn:
+        query = "SELECT id, competitor FROM competitor_records WHERE competitor_inn=? AND competitor IS NOT NULL AND trim(competitor)<>''"
+        params = [inn]
+        if exclude_id is not None:
+            query += " AND id<>?"
+            params.append(int(exclude_id))
+        query += " ORDER BY id LIMIT 1"
+        row = conn.execute(query, params).fetchone()
+        if row:
+            return row["competitor"]
     key = normalize_competitor_name(clean)
     if not key:
         return clean
@@ -1874,8 +1890,9 @@ def insert_competitor_record(conn: sqlite3.Connection, data: dict) -> int:
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
+    data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
     if data.get("competitor"):
-        data["competitor"] = canonical_competitor_name(conn, data["competitor"])
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"))
     values = [data.get(f) for f in COMPETITOR_FIELDS]
     cur = conn.execute(f"INSERT INTO competitor_records ({cols}) VALUES ({placeholders})", values)
     conn.commit()
@@ -1887,8 +1904,9 @@ def update_competitor_record(conn: sqlite3.Connection, record_id: int, data: dic
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
+    data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
     if data.get("competitor"):
-        data["competitor"] = canonical_competitor_name(conn, data["competitor"], exclude_id=record_id)
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"), exclude_id=record_id)
     values = [data.get(f) for f in COMPETITOR_FIELDS] + [record_id]
     conn.execute(f"UPDATE competitor_records SET {set_clause} WHERE id = ?", values)
     conn.commit()
@@ -1903,8 +1921,8 @@ def fetch_competitor_records(conn: sqlite3.Connection, search: str = None):
     query = "SELECT * FROM competitor_records WHERE 1=1"
     params = []
     if search:
-        query += " AND (competitor LIKE ? OR product LIKE ?)"
-        params.extend([f"%{search}%", f"%{search}%"])
+        query += " AND (competitor LIKE ? OR competitor_inn LIKE ? OR product LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
     query += " ORDER BY purchase_date DESC, id DESC"
     return conn.execute(query, params).fetchall()
 
@@ -1958,54 +1976,43 @@ def competitor_product_stats(conn: sqlite3.Connection):
 
 
 def competitor_stats(conn: sqlite3.Connection):
-    """
-    По каждому фактическому конкуренту: количество побед (записей),
-    средняя/мин/макс цена и отклонение от общей средней.
-
-    Варианты написания одной компании объединяются без учета регистра,
-    пробелов, кавычек, дефисов/тире и другой пунктуации. Например:
-    «ООО Альфа», «ооо альфа», «ООО-Альфа» и «ООО «Альфа»» — одна компания.
+    """Статистика по конкурентам. При наличии ИНН записи объединяются по ИНН,
+    даже если название компании введено по-разному. Для старых записей без ИНН
+    сохраняется объединение по нормализованному названию.
     """
     rows = conn.execute(
-        "SELECT id, competitor, unit_price FROM competitor_records "
-        "WHERE competitor IS NOT NULL AND competitor <> '' AND unit_price IS NOT NULL "
-        "ORDER BY id"
+        "SELECT id, competitor, competitor_inn, unit_price FROM competitor_records "
+        "WHERE competitor IS NOT NULL AND competitor <> '' AND unit_price IS NOT NULL ORDER BY id"
     ).fetchall()
     if not rows:
         return []
     overall_avg = sum(r["unit_price"] for r in rows) / len(rows)
-
     grouped = {}
     for r in rows:
-        key = normalize_competitor_name(r["competitor"])
-        if not key:
+        inn = normalize_inn(r["competitor_inn"])
+        key = ("inn", inn) if inn else ("name", normalize_competitor_name(r["competitor"]))
+        if not key[1]:
             continue
-        group = grouped.setdefault(key, {"prices": [], "labels": {}, "first": r["competitor"]})
+        group = grouped.setdefault(key, {"prices": [], "labels": {}, "first": r["competitor"], "inn": inn or None})
         group["prices"].append(r["unit_price"])
         label = re.sub(r"\s+", " ", r["competitor"].strip())
         group["labels"][label] = group["labels"].get(label, 0) + 1
-
     result = []
     for group in grouped.values():
         prices = group["prices"]
-        # Для отображения берём самое часто встречающееся написание; при равенстве
-        # сохраняем первое встретившееся, чтобы интерфейс не менялся случайно.
         max_count = max(group["labels"].values())
-        competitor = next(
-            (label for label, count in group["labels"].items() if count == max_count),
-            group["first"],
-        )
-        avg_price = sum(prices) / len(prices)
-        relative_pct = (avg_price - overall_avg) / overall_avg if overall_avg else None
+        competitor = next((label for label,count in group["labels"].items() if count==max_count), group["first"])
+        avg_price = sum(prices)/len(prices)
         result.append({
             "competitor": competitor,
+            "competitor_inn": group["inn"],
             "wins": len(prices),
             "avg_price": avg_price,
             "min_price": min(prices),
             "max_price": max(prices),
-            "relative_pct": relative_pct,
+            "relative_pct": (avg_price-overall_avg)/overall_avg if overall_avg else None,
         })
-    return sorted(result, key=lambda item: normalize_competitor_name(item["competitor"]))
+    return sorted(result, key=lambda item: (item.get("competitor_inn") or "", normalize_competitor_name(item["competitor"])))
 
 
 # ---------------------------------------------------------------- Калькулятор цены
