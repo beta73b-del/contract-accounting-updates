@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -213,6 +214,26 @@ try {{
 '''
 
 
+def _find_powershell_executable() -> str:
+    """Возвращает существующий powershell.exe без зависимости от PATH."""
+    candidates = []
+    system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR")
+    if system_root:
+        candidates.append(os.path.join(
+            system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
+        ))
+    which = shutil.which("powershell.exe") or shutil.which("powershell")
+    if which:
+        candidates.append(which)
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return os.path.abspath(path)
+    raise UpdateError(
+        "Не найден Windows PowerShell. Проверены System32\\WindowsPowerShell\\v1.0 "
+        "и системный PATH."
+    )
+
+
 def launch_windows_installer(new_exe: str, update_root: str, log_path: str):
     if not sys.platform.startswith("win"):
         raise UpdateError("Автоматическая замена EXE поддерживается только в Windows.")
@@ -220,29 +241,68 @@ def launch_windows_installer(new_exe: str, update_root: str, log_path: str):
         raise UpdateError("Автообновление устанавливается только для собранного UchetZakupok.exe.")
 
     current_exe = os.path.abspath(sys.executable)
+    current_dir = os.path.dirname(current_exe)
+    update_root = os.path.abspath(update_root)
+    new_exe = os.path.abspath(new_exe)
+    log_path = os.path.abspath(log_path)
+
+    if not os.path.isfile(current_exe):
+        raise UpdateError(f"Не найден текущий EXE: {current_exe}")
     if not os.path.isfile(new_exe):
-        raise UpdateError("Скачанный файл обновления не найден.")
-    if not os.access(os.path.dirname(current_exe), os.W_OK):
+        raise UpdateError(f"Не найден скачанный EXE: {new_exe}")
+
+    os.makedirs(update_root, exist_ok=True)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    if not os.path.isdir(current_dir):
+        raise UpdateError(f"Не найдена папка программы: {current_dir}")
+    if not os.access(current_dir, os.W_OK):
         raise UpdateError(
-            "Папка программы защищена от записи. Переместите приложение в обычную папку пользователя "
-            "(например, Документы\\UchetZakupok), чтобы автообновление могло заменять EXE."
+            f"Нет прав на запись в папку программы: {current_dir}\n"
+            "Переместите UchetZakupok.exe в обычную папку пользователя "
+            "(например, Документы\\UchetZakupok)."
         )
 
     previous_dir = os.path.join(update_root, "previous")
     os.makedirs(previous_dir, exist_ok=True)
     backup_exe = os.path.join(previous_dir, f"UchetZakupok-v{__version__}.exe")
-    fd, script_path = tempfile.mkstemp(prefix="uchet_update_", suffix=".ps1", dir=update_root, text=True)
+
+    powershell = _find_powershell_executable()
+
+    try:
+        fd, script_path = tempfile.mkstemp(
+            prefix="uchet_update_", suffix=".ps1", dir=update_root, text=True
+        )
+    except OSError as exc:
+        raise UpdateError(
+            f"Не удалось создать файл обновлятора в папке: {update_root}\n{exc}"
+        ) from exc
     os.close(fd)
-    script = build_windows_update_script(os.getpid(), current_exe, new_exe, backup_exe, log_path)
+
+    script = build_windows_update_script(
+        os.getpid(), current_exe, new_exe, backup_exe, log_path
+    )
     Path(script_path).write_text(script, encoding="utf-8-sig")
 
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen(
-        [
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-WindowStyle", "Hidden", "-File", script_path,
-        ],
-        close_fds=True,
-        creationflags=creationflags,
-    )
+    try:
+        subprocess.Popen(
+            [
+                powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-WindowStyle", "Hidden", "-File", script_path,
+            ],
+            close_fds=True,
+            creationflags=creationflags,
+            cwd=update_root,
+        )
+    except OSError as exc:
+        raise UpdateError(
+            "Не удалось запустить программу обновления.\n"
+            f"PowerShell: {powershell}\n"
+            f"Скрипт: {script_path}\n"
+            f"Текущий EXE: {current_exe}\n"
+            f"Новый EXE: {new_exe}\n"
+            f"Ошибка Windows: {exc}"
+        ) from exc
     return script_path
+
