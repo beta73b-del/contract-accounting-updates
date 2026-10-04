@@ -1250,21 +1250,26 @@ class PurchaseDialog(tk.Toplevel):
                                      "в одном контракте одновременно).",
                   wraplength=380, justify="left", foreground=app_theme.MUTED).pack(fill="x", pady=(0, 6))
 
-        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty", "supply", "stock", "future"),
+        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty", "supply", "stock", "future", "procurement"),
                                         show="headings", height=10)
         for key, label in (("product","Наименование"),("qty","Кол-во"),("supply","Обеспечение"),
-                           ("stock","Со склада"),("future","Будущая потребность")):
+                           ("stock","Со склада"),("future","Будущая потребность"),("procurement","Закупка")):
             self.items_tree.heading(key, text=label, anchor="center")
         self.items_tree.column("product", width=220, anchor="center")
         self.items_tree.column("qty", width=70, anchor="center")
         self.items_tree.column("supply", width=150, anchor="center")
         self.items_tree.column("stock", width=85, anchor="center")
         self.items_tree.column("future", width=120, anchor="center")
+        self.items_tree.column("procurement", width=190, anchor="center")
         self.items_tree.pack(fill="both", expand=True)
         self.items_tree.bind("<<TreeviewSelect>>", lambda e: self._show_full_product_name())
 
-        ttk.Button(items_frame, text="Удалить выбранную позицию",
-                   command=self._remove_selected_item).pack(pady=(6, 4))
+        item_actions = ttk.Frame(items_frame)
+        item_actions.pack(fill="x", pady=(6, 4))
+        ttk.Button(item_actions, text="Удалить выбранную позицию",
+                   command=self._remove_selected_item).pack(side="left", padx=(0, 6))
+        ttk.Button(item_actions, text="Заказано / вернуть в закупку",
+                   command=self._toggle_selected_procurement_status).pack(side="left")
 
         self.full_name_var = tk.StringVar(value="—")
         ttk.Label(items_frame, textvariable=self.full_name_var, wraplength=380,
@@ -1962,9 +1967,40 @@ class PurchaseDialog(tk.Toplevel):
             mode = item.get("supply_mode") or "Со склада"
             stock_qty = float(item.get("stock_qty") if item.get("stock_qty") is not None else (qty if mode == "Со склада" else 0))
             future_qty = max(0.0, qty - stock_qty)
+            status = item.get("procurement_status") or "Не начата"
+            if mode == "Со склада" or future_qty <= 0:
+                procurement_text = "—"
+            elif status == "Заказано":
+                procurement_text = "Заказано / ожидается поступление"
+            else:
+                procurement_text = "Не начата"
             tree_insert_wrapped(self.items_tree, "", "end", iid=str(i),
                                 values=(item.get("product") or "—", fmt_qty(qty), mode,
-                                        fmt_qty(stock_qty), fmt_qty(future_qty)))
+                                        fmt_qty(stock_qty), fmt_qty(future_qty), procurement_text))
+
+    def _toggle_selected_procurement_status(self):
+        sel = self.items_tree.selection()
+        if not sel:
+            messagebox.showinfo("Закупка", "Сначала выберите товарную позицию.", parent=self)
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.items):
+            return
+        item = self.items[idx]
+        mode = item.get("supply_mode") or "Со склада"
+        qty = float(item.get("qty") or 0)
+        stock_qty = float(item.get("stock_qty") or 0)
+        if mode == "Со склада" or qty <= stock_qty:
+            messagebox.showinfo("Закупка", "Для этой позиции закупка не требуется.", parent=self)
+            return
+        current = item.get("procurement_status") or "Не начата"
+        item["procurement_status"] = "Не начата" if current == "Заказано" else "Заказано"
+        self._refresh_items_tree()
+        try:
+            self.items_tree.selection_set(str(idx))
+            self.items_tree.focus(str(idx))
+        except Exception:
+            pass
 
     def _bind_next_action_updates(self):
         keys = ("contract_status", "sign_deadline", "deadline", "exec_status",
@@ -2216,7 +2252,8 @@ class PurchaseDialog(tk.Toplevel):
             messagebox.showerror("Ошибка ввода", "Количество со склада должно быть от 0 до общего количества.", parent=self)
             return
         self.items.append({"product": product, "qty": qty, "supply_mode": mode,
-                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days)})
+                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days),
+                           "procurement_status": "Не начата"})
         self.new_product_var.set("")
         self.new_qty_var.set("")
         self.new_stock_qty_var.set("")
