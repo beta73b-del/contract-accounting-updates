@@ -5808,40 +5808,70 @@ class App(tk.Tk):
         ttk.Button(top, text="Редактировать", command=self._edit_competitor).pack(side="left", padx=4)
         ttk.Button(top, text="Удалить", command=self._delete_competitor).pack(side="left", padx=4)
 
-        ttk.Label(self.tab_competitors, text="Записи о закупках конкурентов", padding=(8, 8, 8, 0),
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
+        # v2.23.12: три аналитических блока размещены в вертикальном PanedWindow.
+        # Это не даёт нижнему блоку схлопываться до 1–2 строк на экранах с
+        # масштабированием Windows/DPI; границы между блоками можно перетаскивать.
+        panes = ttk.Panedwindow(self.tab_competitors, orient=tk.VERTICAL)
+        panes.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.competitor_panes = panes
+
+        def make_panel(title):
+            panel = ttk.LabelFrame(panes, text=title, padding=(6, 6, 6, 6))
+            inner = ttk.Frame(panel)
+            inner.pack(fill="both", expand=True)
+            return panel, inner
+
+        # 1. Журнал закупок конкурентов.
+        log_panel, log_inner = make_panel("Записи о закупках конкурентов")
         log_cols = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
         log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
-        self.competitor_log_tree = ttk.Treeview(self.tab_competitors, columns=log_cols,
-                                                 show="headings", height=6)
+        self.competitor_log_tree = ttk.Treeview(
+            log_inner, columns=log_cols, show="headings", height=5, selectmode="browse"
+        )
+        log_scroll = ttk.Scrollbar(log_inner, orient="vertical", command=self.competitor_log_tree.yview)
+        self.competitor_log_tree.configure(yscrollcommand=log_scroll.set)
         for key, label in zip(log_cols, log_labels):
             self.competitor_log_tree.heading(key, text=label, anchor="center")
             self.competitor_log_tree.column(key, width=150, anchor="center")
-        self.competitor_log_tree.pack(fill="x", padx=8, pady=(0, 8))
+        self.competitor_log_tree.pack(side="left", fill="both", expand=True)
+        log_scroll.pack(side="right", fill="y")
         self.competitor_log_tree.bind("<Double-1>", lambda e: self._edit_competitor())
+        panes.add(log_panel, weight=3)
 
-        ttk.Label(self.tab_competitors, text="Анализ цен по товару", padding=(8, 8, 8, 0),
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
+        # 2. Анализ цен по товарам.
+        product_panel, product_inner = make_panel("Анализ цен по товару")
         p_cols = ["product", "min_price", "max_price", "avg_price", "median_price", "count", "change_pct"]
         p_labels = ["Товар", "Мин. цена", "Макс. цена", "Средняя цена", "Медиана", "Наблюдений", "Изменение"]
-        self.competitor_product_tree = ttk.Treeview(self.tab_competitors, columns=p_cols,
-                                                      show="headings", height=5)
+        self.competitor_product_tree = ttk.Treeview(
+            product_inner, columns=p_cols, show="headings", height=4
+        )
+        product_scroll = ttk.Scrollbar(product_inner, orient="vertical", command=self.competitor_product_tree.yview)
+        self.competitor_product_tree.configure(yscrollcommand=product_scroll.set)
         for key, label in zip(p_cols, p_labels):
             self.competitor_product_tree.heading(key, text=label, anchor="center")
             self.competitor_product_tree.column(key, width=150, anchor="center")
-        self.competitor_product_tree.pack(fill="x", padx=8, pady=(0, 8))
+        self.competitor_product_tree.pack(side="left", fill="both", expand=True)
+        product_scroll.pack(side="right", fill="y")
+        panes.add(product_panel, weight=2)
 
-        ttk.Label(self.tab_competitors, text="Анализ по конкурентам", padding=(8, 8, 8, 0),
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
+        # 3. Анализ по конкурентам. Нижнему блоку даём такой же приоритет,
+        # как журналу, чтобы он не был обрезан и показывал нормальное число строк.
+        stats_panel, stats_inner = make_panel("Анализ по конкурентам")
         c_cols = ["competitor", "competitor_inn", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
         c_labels = ["Конкурент", "ИНН", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
                     "Цена отн. рынка"]
-        self.competitor_stats_tree = ttk.Treeview(self.tab_competitors, columns=c_cols,
-                                                    show="headings", height=5)
+        self.competitor_stats_tree = ttk.Treeview(
+            stats_inner, columns=c_cols, show="headings", height=6
+        )
+        stats_scroll = ttk.Scrollbar(stats_inner, orient="vertical", command=self.competitor_stats_tree.yview)
+        self.competitor_stats_tree.configure(yscrollcommand=stats_scroll.set)
         for key, label in zip(c_cols, c_labels):
             self.competitor_stats_tree.heading(key, text=label, anchor="center")
             self.competitor_stats_tree.column(key, width=150, anchor="center")
-        self.competitor_stats_tree.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.competitor_stats_tree.pack(side="left", fill="both", expand=True)
+        stats_scroll.pack(side="right", fill="y")
+        panes.add(stats_panel, weight=3)
+
 
     def _selected_competitor_id(self):
         sel = self.competitor_log_tree.selection()

@@ -1112,7 +1112,20 @@ def canonical_product_name(name: str) -> str:
     clean = " ".join(str(name or "").split()).strip()
     if not clean:
         return ""
-    return _fixed_product_aliases().get(normalize_product_key(clean), clean)
+    key = normalize_product_key(clean)
+
+    # Жёсткое бизнес-правило: любые варианты Рутокен ЭЦП 3120
+    # с/без обозначения 3.0 — это один складской товар.
+    if "рутокен" in key and "эцп" in key and "3120" in key:
+        return "Рутокен ЭЦП 3.0 3120"
+    if "rutoken" in key and "эцп" in key and "3120" in key:
+        return "Рутокен ЭЦП 3.0 3120"
+
+    # Аналогично фиксируем линейку Lite 1010.
+    if ("рутокен" in key or "rutoken" in key) and "1010" in key:
+        return "Рутокен Lite 1010"
+
+    return _fixed_product_aliases().get(key, clean)
 
 
 def is_fixed_product(name: str) -> bool:
