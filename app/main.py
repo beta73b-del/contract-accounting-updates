@@ -4364,11 +4364,12 @@ class App(tk.Tk):
 
         kpi = ttk.Frame(top, padding=(0, 0, 0, 8))
         kpi.pack(fill="x")
+        self.kpi_total_var = tk.StringVar(value="Всего контрактов — 0")
         self.kpi_work_var = tk.StringVar(value="Контрактов в работе — 0")
-        self.kpi_sum_var = tk.StringVar(value="Сумма — 0 ₽")
+        self.kpi_sum_var = tk.StringVar(value="Сумма контрактов — 0 ₽")
         self.kpi_reserve_var = tk.StringVar(value="В резерве — 0 шт.")
         self.kpi_payment_var = tk.StringVar(value="Ожидают оплаты — 0 ₽")
-        for var in (self.kpi_work_var, self.kpi_sum_var, self.kpi_reserve_var, self.kpi_payment_var):
+        for var in (self.kpi_total_var, self.kpi_work_var, self.kpi_sum_var, self.kpi_reserve_var, self.kpi_payment_var):
             ttk.Label(kpi, textvariable=var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
         row1 = ttk.Frame(top)
         row1.pack(fill="x")
@@ -4582,10 +4583,11 @@ class App(tk.Tk):
 
         _schedule_tree_rewrap(self.tree, 20)
 
-        # KPI считаются агрегатно в SQL, без повторной загрузки всех контрактов и товаров.
-        kpi = db.dashboard_kpis(self.conn)
+        # KPI используют тот же выбранный год/месяц, что и таблица контрактов.
+        kpi = db.dashboard_kpis(self.conn, year=filters["year"], month=filters["month"])
+        self.kpi_total_var.set(f"Всего контрактов — {kpi['total_count']}")
         self.kpi_work_var.set(f"Контрактов в работе — {kpi['work_count']}")
-        self.kpi_sum_var.set(f"Сумма — {fmt_money(kpi['work_sum'])}")
+        self.kpi_sum_var.set(f"Сумма контрактов — {fmt_money(kpi['total_sum'])}")
         self.kpi_reserve_var.set(f"В резерве — {fmt_qty(kpi['reserve_qty'])} шт.")
         self.kpi_payment_var.set(f"Ожидают оплаты — {fmt_money(kpi['awaiting'])}")
         counts = reminder_worker.attention_counts(reminder_worker.attention_items(self.conn))
