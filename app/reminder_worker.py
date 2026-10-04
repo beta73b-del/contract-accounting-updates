@@ -177,6 +177,7 @@ def attention_items(conn: sqlite3.Connection, today: date | None = None):
            WHERE p.deleted_at IS NULL
              AND COALESCE(p.stock_written_off,0)=0
              AND COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
+             AND COALESCE(i.procurement_status,'Не начата') <> 'Заказано'
              AND COALESCE(i.supply_mode,'Со склада') IN ('Требуется закупка','Отложенная закупка')"""
     ).fetchall()
     for row in procurement_rows:

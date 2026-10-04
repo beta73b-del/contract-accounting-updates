@@ -35,7 +35,7 @@ HEADER_FIELDS = [
     "platform", "customer", "contract_no", "registry_record", "contract_date", "law",
     "contract_sum", "purchase_cost", "logistics", "commission", "other_costs",
     "guarantee", "contract_status", "sign_deadline", "deadline", "handover_date",
-    "payment_status", "payment_deadline", "exec_status",
+    "payment_status", "payment_deadline", "payment_date", "exec_status",
     "resp_purchase_name", "resp_purchase_phone", "resp_purchase_email",
     "resp_receiving_name", "resp_receiving_phone", "resp_receiving_email",
     "note", "created_at", "stock_written_off",
@@ -43,7 +43,7 @@ HEADER_FIELDS = [
 ITEM_FIELDS = ["product", "qty"]
 RECEIPT_FIELDS = ["product", "qty", "unit_cost", "receipt_date", "supplier", "note"]
 ATTACHMENT_FIELDS = ["filename", "stored_path", "added_date", "category", "note"]
-COMPETITOR_FIELDS = ["competitor", "product", "trade_type", "qty", "unit_price", "purchase_date"]
+COMPETITOR_FIELDS = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS purchases (
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     handover_date TEXT,
     payment_status TEXT,
     payment_deadline TEXT,
+    payment_date TEXT,
     exec_status TEXT,
     resp_purchase_name TEXT,
     resp_purchase_phone TEXT,
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS purchase_items (
     qty REAL,
     supply_mode TEXT NOT NULL DEFAULT 'Со склада',
     stock_qty REAL NOT NULL DEFAULT 0,
-    procurement_reminder_days INTEGER NOT NULL DEFAULT 30
+    procurement_reminder_days INTEGER NOT NULL DEFAULT 30,
+    procurement_status TEXT NOT NULL DEFAULT 'Не начата'
 );
 
 CREATE TABLE IF NOT EXISTS stock_receipts (
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE TABLE IF NOT EXISTS competitor_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     competitor TEXT,
+    competitor_inn TEXT,
     product TEXT,
     trade_type TEXT,
     qty REAL,
@@ -156,10 +159,41 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details TEXT
 );
 
+CREATE TABLE IF NOT EXISTS stock_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_at TEXT NOT NULL,
+    product TEXT NOT NULL,
+    action TEXT NOT NULL,
+    qty REAL,
+    purchase_id INTEGER,
+    counterparty TEXT,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_stock_audit_product ON stock_audit(product, event_at);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS monthly_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    expense_date TEXT NOT NULL,
+    period_year INTEGER,
+    period_month INTEGER,
+    category TEXT NOT NULL DEFAULT 'Прочее',
+    amount REAL NOT NULL DEFAULT 0,
+    description TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_monthly_expenses_date ON monthly_expenses(expense_date);
+
+CREATE TABLE IF NOT EXISTS tax_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    effective_from TEXT NOT NULL,
+    regime TEXT NOT NULL DEFAULT 'С доходов',
+    rate REAL NOT NULL DEFAULT 7.0
+);
+CREATE INDEX IF NOT EXISTS idx_tax_profiles_effective ON tax_profiles(effective_from);
 
 CREATE INDEX IF NOT EXISTS idx_purchases_active_date ON purchases(deleted_at, contract_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_active_exec ON purchases(deleted_at, exec_status);
@@ -204,6 +238,12 @@ PAYMENT_STATUS_OPTIONS = ["Не оплачено", "Оплачено"]
 # По ТЗ: "Просрочено" больше не ручной статус — вычисляется автоматически по датам
 EXEC_STATUS_OPTIONS = ["В процессе", "Отправлено", "Вручен", "Исполнено"]
 SUPPLY_MODE_OPTIONS = ["Со склада", "Требуется закупка", "Отложенная закупка"]
+PROCUREMENT_STATUS_OPTIONS = ["Не начата", "Заказано"]
+
+FIXED_PRODUCTS = (
+    "Рутокен Lite 1010",
+    "Рутокен ЭЦП 3.0 3120",
+)
 
 BACKUP_KEEP = 20
 
@@ -551,25 +591,25 @@ def prepare_working_storage():
             # Предыдущий запуск, вероятно, завершился аварийно до выгрузки в облако.
             return {"status": "ready", "action": "local_unsynced", "recovery": recovery}
 
-        # Изменились обе копии: сохраняем локальную в recovery и выбираем облачную.
-        rec = _save_local_recovery_copy(local, "conflict")
-        _atomic_copy(cloud, local)
-        _write_json_atomic(_local_state_path(), {
-            "protocol": SYNC_PROTOCOL_VERSION, "db_sha256": cloud_hash,
-            "local_sha256": _file_sha256(local),
-            "synced_at": datetime.now().isoformat(timespec="seconds"), "cloud_path": cloud,
-        })
-        return {"status": "ready", "action": "conflict_cloud_wins", "recovery": rec or recovery}
+        # Изменились обе копии. Никогда не заменяем локальную рабочую БД автоматически:
+        # именно она могла содержать последние введённые контракты. Обе копии сохраняем
+        # в recovery, а приложение продолжает работать с локальной и требует ручного разбора.
+        rec_local = _save_local_recovery_copy(local, "conflict_local")
+        rec_cloud = _save_local_recovery_copy(cloud, "conflict_cloud")
+        return {
+            "status": "ready", "action": "conflict_local_preserved",
+            "recovery": rec_local or recovery, "cloud_recovery": rec_cloud,
+        }
 
-    # Первый запуск новой схемы: облачная база рядом с программой считается основной.
-    rec = _save_local_recovery_copy(local, "pre_migration")
-    _atomic_copy(cloud, local)
-    _write_json_atomic(_local_state_path(), {
-        "protocol": SYNC_PROTOCOL_VERSION, "db_sha256": cloud_hash,
-        "local_sha256": _file_sha256(local),
-        "synced_at": datetime.now().isoformat(timespec="seconds"), "cloud_path": cloud,
-    })
-    return {"status": "ready", "action": "first_cloud_import", "recovery": rec or recovery}
+    # Первый запуск схемы синхронизации при наличии двух разных исправных БД.
+    # Без истории синхронизации невозможно безопасно решить, какая новее:
+    # сохраняем обе и НЕ перезаписываем локальную.
+    rec_local = _save_local_recovery_copy(local, "pre_migration_local")
+    rec_cloud = _save_local_recovery_copy(cloud, "pre_migration_cloud")
+    return {
+        "status": "ready", "action": "first_local_preserved",
+        "recovery": rec_local or recovery, "cloud_recovery": rec_cloud,
+    }
 
 
 def sync_working_to_cloud(conn=None):
@@ -762,7 +802,7 @@ _PURCHASES_COLUMN_TYPES = {
     "law": "TEXT", "contract_sum": "REAL", "purchase_cost": "REAL", "logistics": "REAL",
     "commission": "REAL", "other_costs": "REAL", "guarantee": "REAL", "contract_status": "TEXT",
     "sign_deadline": "TEXT", "deadline": "TEXT", "handover_date": "TEXT", "payment_status": "TEXT",
-    "payment_deadline": "TEXT", "exec_status": "TEXT",
+    "payment_deadline": "TEXT", "payment_date": "TEXT", "exec_status": "TEXT",
     "resp_purchase_name": "TEXT", "resp_purchase_phone": "TEXT", "resp_purchase_email": "TEXT",
     "resp_receiving_name": "TEXT", "resp_receiving_phone": "TEXT", "resp_receiving_email": "TEXT",
     "note": "TEXT", "created_at": "TEXT", "deleted_at": "TEXT",
@@ -777,7 +817,7 @@ _ATTACHMENTS_COLUMN_TYPES = {
     "added_date": "TEXT", "category": "TEXT", "note": "TEXT",
 }
 _COMPETITOR_COLUMN_TYPES = {
-    "competitor": "TEXT", "product": "TEXT", "trade_type": "TEXT",
+    "competitor": "TEXT", "competitor_inn": "TEXT", "product": "TEXT", "trade_type": "TEXT",
     "qty": "REAL", "unit_price": "REAL", "purchase_date": "TEXT",
 }
 _PURCHASE_ITEMS_COLUMN_TYPES = {
@@ -785,6 +825,15 @@ _PURCHASE_ITEMS_COLUMN_TYPES = {
     "supply_mode": "TEXT NOT NULL DEFAULT 'Со склада'",
     "stock_qty": "REAL NOT NULL DEFAULT 0",
     "procurement_reminder_days": "INTEGER NOT NULL DEFAULT 30",
+    "procurement_status": "TEXT NOT NULL DEFAULT 'Не начата'",
+}
+_MONTHLY_EXPENSES_COLUMN_TYPES = {
+    "expense_date": "TEXT",
+    "period_year": "INTEGER",
+    "period_month": "INTEGER",
+    "category": "TEXT NOT NULL DEFAULT 'Прочее'",
+    "amount": "REAL NOT NULL DEFAULT 0",
+    "description": "TEXT",
 }
 
 
@@ -804,6 +853,7 @@ def _migrate_schema(conn: sqlite3.Connection):
         "attachments": _ATTACHMENTS_COLUMN_TYPES,
         "competitor_records": _COMPETITOR_COLUMN_TYPES,
         "purchase_items": _PURCHASE_ITEMS_COLUMN_TYPES,
+        "monthly_expenses": _MONTHLY_EXPENSES_COLUMN_TYPES,
     }
     for table, columns in tables.items():
         try:
@@ -813,6 +863,23 @@ def _migrate_schema(conn: sqlite3.Connection):
         for col, col_type in columns.items():
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+    # v2.23.5: период прочего расхода хранится отдельно от фактической даты.
+    # Старые записи наследуют период из expense_date.
+    try:
+        conn.execute("""
+            UPDATE monthly_expenses
+               SET period_year = CAST(substr(expense_date,1,4) AS INTEGER)
+             WHERE period_year IS NULL OR period_year=0
+        """)
+        conn.execute("""
+            UPDATE monthly_expenses
+               SET period_month = CAST(substr(expense_date,6,2) AS INTEGER)
+             WHERE period_month IS NULL OR period_month=0
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_monthly_expenses_period ON monthly_expenses(period_year, period_month)")
+    except sqlite3.OperationalError:
+        pass
+
     # Для старых записей без даты заведения используем дату заключения,
     # а если её нет — дату текущей миграции.
     try:
@@ -831,15 +898,44 @@ def _migrate_schema(conn: sqlite3.Connection):
         # v2.17: отдельной приемки больше нет. Старые этапы приводим к новой цепочке.
         conn.execute("UPDATE purchases SET exec_status='Вручен' WHERE exec_status='Приемка Заказчиком'")
         conn.execute("UPDATE purchases SET exec_status='Исполнено' WHERE exec_status='Подписан в ЕИС'")
-        # Фиксируем факт складского списания отдельно от текущего статуса:
-        # после «Вручен»/«Исполнено» товар не должен возвращаться на склад.
+
+        # Сначала сохраняем исторический факт, что товар уже покинул склад.
         conn.execute("""UPDATE purchases SET stock_written_off=1
                         WHERE exec_status IN ('Отправлено','Вручен','Исполнено')
                            OR (handover_date IS NOT NULL AND handover_date<>'')""")
+
+        # v2.23: «Вручен» и «Исполнено» больше не считаются одним этапом.
+        # Исполнено возможно только после оплаты заказчиком.
+        conn.execute("""
+            UPDATE purchases
+               SET exec_status = CASE
+                   WHEN handover_date IS NOT NULL AND handover_date<>'' THEN 'Вручен'
+                   WHEN COALESCE(stock_written_off,0)=1 THEN 'Отправлено'
+                   ELSE 'В процессе'
+               END
+             WHERE exec_status='Исполнено'
+               AND COALESCE(payment_status,'Не оплачено')<>'Оплачено'
+        """)
+        conn.execute("""
+            UPDATE purchases
+               SET exec_status='Исполнено'
+             WHERE COALESCE(payment_status,'')='Оплачено'
+               AND (handover_date IS NOT NULL AND handover_date<>'')
+        """)
+        # Для исторических оплаченных записей точная дата оплаты раньше не хранилась.
+        # Если она отсутствует, используем дату вручения только как совместимый fallback.
+        conn.execute("""
+            UPDATE purchases
+               SET payment_date=handover_date
+             WHERE COALESCE(payment_status,'')='Оплачено'
+               AND (payment_date IS NULL OR payment_date='')
+               AND handover_date IS NOT NULL AND handover_date<>''
+        """)
         # Старые позиции до v2.17 считались полностью обеспеченными складом.
         conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
         conn.execute("UPDATE purchase_items SET stock_qty=qty WHERE supply_mode='Со склада' AND COALESCE(stock_qty,0)=0")
         _sync_product_catalog(conn)
+        _ensure_fixed_products(conn)
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -976,7 +1072,7 @@ _AUDIT_LABELS = {
     "purchase_cost": "Себестоимость", "logistics": "Логистика", "commission": "Комиссия",
     "other_costs": "Другие расходы", "guarantee": "Обеспечение", "contract_status": "Статус контракта",
     "sign_deadline": "Подписать до", "deadline": "Срок исполнения", "handover_date": "Дата вручения",
-    "payment_status": "Оплата", "payment_deadline": "Срок оплаты", "exec_status": "Исполнение",
+    "payment_status": "Оплата", "payment_deadline": "Срок оплаты", "payment_date": "Дата оплаты", "exec_status": "Исполнение",
     "platform": "Площадка", "law": "Закон", "note": "Примечание", "created_at": "Дата",
 }
 
@@ -987,7 +1083,82 @@ def normalize_product_key(name: str) -> str:
     text = re.sub(r"\s*([./,+()])\s*", r"\1", text)
     return text
 
+def _fixed_product_aliases():
+    aliases = {
+        "Рутокен Lite 1010": (
+            "Рутокен Lite 1010",
+            "Рутокен Lite",
+            "Рутокен лайт 1010",
+            "Рутокен 1010",
+            "Rutoken Lite 1010",
+        ),
+        "Рутокен ЭЦП 3.0 3120": (
+            "Рутокен ЭЦП 3.0 3120",
+            "Рутокен ЭЦП 3.0",
+            "Рутокен ЭЦП 3120",
+            "Рутокен 3.0 3120",
+            "Рутокен 3120",
+            "Rutoken ЭЦП 3.0 3120",
+        ),
+    }
+    out = {}
+    for canonical, names in aliases.items():
+        for name in names:
+            out[normalize_product_key(name)] = canonical
+    return out
+
+
+def canonical_product_name(name: str) -> str:
+    clean = " ".join(str(name or "").split()).strip()
+    if not clean:
+        return ""
+    return _fixed_product_aliases().get(normalize_product_key(clean), clean)
+
+
+def is_fixed_product(name: str) -> bool:
+    canonical = canonical_product_name(name)
+    return canonical in FIXED_PRODUCTS
+
+
+def _ensure_fixed_products(conn: sqlite3.Connection):
+    """Закрепляет два базовых товара и аккуратно объединяет известные старые варианты названий."""
+    aliases = _fixed_product_aliases()
+    for table in ("purchase_items", "stock_receipts", "manual_reservations", "competitor_records"):
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT product FROM {table} WHERE product IS NOT NULL AND trim(product)<>''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for row in rows:
+            old = row["product"]
+            canonical = aliases.get(normalize_product_key(old))
+            if canonical and canonical != old:
+                conn.execute(f"UPDATE {table} SET product=? WHERE product=?", (canonical, old))
+
+    # Удаляем только известные алиасы из справочника, затем гарантируем канонические записи.
+    try:
+        rows = conn.execute("SELECT name, normalized_key FROM product_catalog").fetchall()
+        canonical_keys = {normalize_product_key(x) for x in FIXED_PRODUCTS}
+        for row in rows:
+            canonical = aliases.get(row["normalized_key"])
+            if canonical and row["normalized_key"] not in canonical_keys:
+                conn.execute("DELETE FROM product_catalog WHERE normalized_key=?", (row["normalized_key"],))
+        for name in FIXED_PRODUCTS:
+            key = normalize_product_key(name)
+            conn.execute(
+                """INSERT INTO product_catalog(name, normalized_key, active, created_at)
+                   VALUES(?,?,1,?)
+                   ON CONFLICT(normalized_key) DO UPDATE SET name=excluded.name, active=1""",
+                (name, key, datetime.now().isoformat(timespec="seconds")),
+            )
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+
 def _sync_product_catalog(conn: sqlite3.Connection):
+    _ensure_fixed_products(conn)
     sources = [
         "SELECT product AS name FROM purchase_items",
         "SELECT product AS name FROM stock_receipts",
@@ -1005,7 +1176,7 @@ def _sync_product_catalog(conn: sqlite3.Connection):
     conn.commit()
 
 def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) -> str:
-    name = " ".join(str(name or "").split()).strip()
+    name = canonical_product_name(name)
     if not name:
         return ""
     key = normalize_product_key(name)
@@ -1024,11 +1195,24 @@ def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) 
 def catalog_products(conn: sqlite3.Connection):
     _sync_product_catalog(conn)
     rows = conn.execute("SELECT name FROM product_catalog WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()
-    return [r["name"] for r in rows]
+    unique = {}
+    for r in rows:
+        name = canonical_product_name(r["name"])
+        key = normalize_product_key(name)
+        if key and key not in unique:
+            unique[key] = name
+    for fixed in FIXED_PRODUCTS:
+        unique[normalize_product_key(fixed)] = fixed
+    names = list(unique.values())
+    fixed = [name for name in FIXED_PRODUCTS if normalize_product_key(name) in unique]
+    other = sorted([name for name in names if name not in FIXED_PRODUCTS], key=str.casefold)
+    return fixed + other
 
 def rename_product(conn: sqlite3.Connection, old_name: str, new_name: str):
     old_name = str(old_name or "").strip()
     new_name = " ".join(str(new_name or "").split()).strip()
+    if is_fixed_product(old_name):
+        raise ValueError("Закреплённый товар нельзя переименовать.")
     if not old_name or not new_name:
         raise ValueError("Название товара не может быть пустым")
     old_key = normalize_product_key(old_name)
@@ -1051,6 +1235,25 @@ def add_audit(conn: sqlite3.Connection, purchase_id, action: str, details: str =
         "INSERT INTO audit_log(purchase_id, event_at, action, details) VALUES(?,?,?,?)",
         (purchase_id, datetime.now().isoformat(timespec="seconds"), action, details or ""),
     )
+
+def add_stock_audit(conn: sqlite3.Connection, product: str, action: str, qty=None,
+                    purchase_id=None, counterparty: str = "", details: str = ""):
+    product = str(product or "").strip()
+    if not product:
+        return
+    conn.execute(
+        """INSERT INTO stock_audit(event_at, product, action, qty, purchase_id, counterparty, details)
+           VALUES(?,?,?,?,?,?,?)""",
+        (datetime.now().isoformat(timespec="seconds"), product, action, qty, purchase_id,
+         counterparty or "", details or ""),
+    )
+
+
+def fetch_stock_audit(conn: sqlite3.Connection, product: str):
+    return conn.execute(
+        "SELECT * FROM stock_audit WHERE product=? ORDER BY id DESC", (product,)
+    ).fetchall()
+
 
 def fetch_audit(conn: sqlite3.Connection, purchase_id: int):
     return conn.execute(
@@ -1090,10 +1293,40 @@ def _audit_changes(old_row, old_items, header, items):
     return changes
 
 # ---------------------------------------------------------------- Контракты (шапка + позиции)
-def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
+def _normalize_execution_after_payment(header: dict, old=None):
+    """Единое бизнес-правило v2.23.3.
+
+    Вручен != Исполнено. Исполнение наступает только после оплаты заказчиком.
+    Для новой оплаты без даты подставляется текущая дата; при возврате в
+    «Не оплачено» дата оплаты очищается.
+    """
     header = dict(header)
+    exec_status = (header.get("exec_status") or "").strip()
+    payment_status = (header.get("payment_status") or "").strip()
+    handover_date = header.get("handover_date")
+    payment_date = header.get("payment_date")
+
+    if payment_status == "Оплачено":
+        if not payment_date:
+            old_status = (old["payment_status"] or "") if old is not None and "payment_status" in old.keys() else ""
+            old_date = old["payment_date"] if old is not None and "payment_date" in old.keys() else None
+            header["payment_date"] = old_date or date.today().isoformat()
+    else:
+        header["payment_date"] = None
+
+    delivered = bool(handover_date) or exec_status in ("Вручен", "Исполнено")
+    if payment_status == "Оплачено" and delivered:
+        header["exec_status"] = "Исполнено"
+    elif exec_status == "Исполнено" and payment_status != "Оплачено":
+        header["exec_status"] = "Вручен" if delivered else (old["exec_status"] if old is not None else "В процессе")
+    return header
+
+
+def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
+    header = _normalize_execution_after_payment(dict(header))
     header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    header["stock_written_off"] = int(header.get("stock_written_off") or 0)
+    reached_shipping = (header.get("exec_status") or "") in ("Отправлено", "Вручен", "Исполнено") or bool(header.get("handover_date"))
+    header["stock_written_off"] = 1 if reached_shipping else int(header.get("stock_written_off") or 0)
     cols = ", ".join(HEADER_FIELDS)
     placeholders = ", ".join(["?"] * len(HEADER_FIELDS))
     values = [header.get(f) for f in HEADER_FIELDS]
@@ -1101,6 +1334,26 @@ def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
     purchase_id = cur.lastrowid
     _insert_items(conn, purchase_id, items)
     add_audit(conn, purchase_id, "Создан контракт", f"№ {header.get('contract_no') or '—'}")
+    for item in items or []:
+        product = item.get("product") if hasattr(item, "get") else None
+        qty = float(item.get("qty") or 0) if hasattr(item, "get") else 0.0
+        stock_qty = float(item.get("stock_qty") or 0) if hasattr(item, "get") else 0.0
+        if stock_qty > 0 and product:
+            add_audit(conn, purchase_id, "Резерв склада", f"{product}: зарезервировано {stock_qty:g} шт.")
+            add_stock_audit(
+                conn, product, "Резерв под контракт", stock_qty, purchase_id=purchase_id,
+                counterparty=header.get("customer") or "",
+                details=f"Контракт № {header.get('contract_no') or '—'}"
+            )
+        if hasattr(item, "get") and (item.get("procurement_status") or "") == "Заказано":
+            need = max(0.0, qty - stock_qty)
+            add_audit(conn, purchase_id, "Закупка заказана", f"{product or '—'}: ожидается {need:g} шт.")
+            if product and need > 0:
+                add_stock_audit(
+                    conn, product, "Ожидается поступление", need, purchase_id=purchase_id,
+                    counterparty=header.get("customer") or "",
+                    details=f"Контракт № {header.get('contract_no') or '—'}; товар заказан"
+                )
     conn.commit()
     return purchase_id
 
@@ -1121,36 +1374,141 @@ def _insert_items(conn: sqlite3.Connection, purchase_id: int, items: list):
         mode = (item["supply_mode"] if _has_key(item, "supply_mode") else "Со склада") or "Со склада"
         stock_qty = item["stock_qty"] if _has_key(item, "stock_qty") else (qty if mode == "Со склада" else 0)
         reminder_days = item["procurement_reminder_days"] if _has_key(item, "procurement_reminder_days") else 30
+        procurement_status = (item["procurement_status"] if _has_key(item, "procurement_status") else "Не начата") or "Не начата"
+        if mode == "Со склада":
+            procurement_status = "Не начата"
         stock_qty = max(0.0, min(float(stock_qty or 0), float(qty or 0)))
         conn.execute(
             """INSERT INTO purchase_items
-               (purchase_id, product, qty, supply_mode, stock_qty, procurement_reminder_days)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (purchase_id, product, qty, mode, stock_qty, int(reminder_days or 30)),
+               (purchase_id, product, qty, supply_mode, stock_qty, procurement_reminder_days, procurement_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (purchase_id, product, qty, mode, stock_qty, int(reminder_days or 30), procurement_status),
         )
 
 
 def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, items: list):
     header = dict(header)
     old = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    header = _normalize_execution_after_payment(header, old=old)
     old_items = fetch_items(conn, purchase_id)
     header["created_at"] = (header.get("created_at")
                              or (old["created_at"] if old else None)
                              or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    # Списание идемпотентно: впервые фиксируется на «Отправлено» и больше не сбрасывается.
+
     old_written_off = int(old["stock_written_off"] or 0) if old and "stock_written_off" in old.keys() else 0
-    if (header.get("exec_status") or "") == "Отправлено":
+    reached_shipping = (header.get("exec_status") or "") in ("Отправлено", "Вручен", "Исполнено") or bool(header.get("handover_date"))
+    if reached_shipping:
         header["stock_written_off"] = 1
     else:
         header["stock_written_off"] = max(old_written_off, int(header.get("stock_written_off") or 0))
+
+    def item_map(seq):
+        out = {}
+        for x in seq or []:
+            get = x.get if hasattr(x, "get") else (lambda k, default=None: x[k] if k in x.keys() else default)
+            product = str(get("product", "") or "").strip()
+            if not product:
+                continue
+            row = out.setdefault(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+            row["qty"] += float(get("qty", 0) or 0)
+            row["stock_qty"] += float(get("stock_qty", 0) or 0)
+            status = get("procurement_status", "Не начата") or "Не начата"
+            if status == "Заказано":
+                row["procurement_status"] = "Заказано"
+        return out
+
+    before_items = item_map(old_items)
+    after_items = item_map(items)
     changes = _audit_changes(old, old_items, header, items)
+
     set_clause = ", ".join(f"{f} = ?" for f in HEADER_FIELDS)
     values = [header.get(f) for f in HEADER_FIELDS] + [purchase_id]
     conn.execute(f"UPDATE purchases SET {set_clause} WHERE id = ?", values)
     conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
     _insert_items(conn, purchase_id, items)
+
     if changes:
         add_audit(conn, purchase_id, "Изменён контракт", "\n".join(changes))
+
+    contract_no = header.get("contract_no") or (old["contract_no"] if old else None) or "—"
+    customer = header.get("customer") or (old["customer"] if old else None) or ""
+
+    if old is not None:
+        old_contract_status = old["contract_status"] or ""
+        new_contract_status = header.get("contract_status") or ""
+        if old_contract_status != new_contract_status:
+            add_audit(conn, purchase_id, "Статус контракта",
+                      f"{old_contract_status or '—'} → {new_contract_status or '—'}")
+
+        old_exec = old["exec_status"] or ""
+        new_exec = header.get("exec_status") or ""
+        if old_exec != new_exec:
+            action = {
+                "Отправлено": "Товар отправлен",
+                "Вручен": "Товар вручен",
+                "Исполнено": "Контракт исполнен",
+            }.get(new_exec, "Статус исполнения")
+            add_audit(conn, purchase_id, action, f"{old_exec or '—'} → {new_exec or '—'}")
+
+        old_payment = old["payment_status"] or ""
+        new_payment = header.get("payment_status") or ""
+        if old_payment != new_payment:
+            add_audit(
+                conn, purchase_id,
+                "Оплата получена" if new_payment == "Оплачено" else "Статус оплаты",
+                f"{old_payment or '—'} → {new_payment or '—'}"
+            )
+
+    new_written_off = int(header.get("stock_written_off") or 0)
+    if old_written_off == 0 and new_written_off == 1:
+        for product, state in after_items.items():
+            stock_qty = float(state.get("stock_qty") or 0)
+            if stock_qty <= 0:
+                continue
+            add_audit(conn, purchase_id, "Списание со склада",
+                      f"{product}: списано {stock_qty:g} шт. при отправке")
+            add_stock_audit(
+                conn, product, "Списание по контракту", -stock_qty,
+                purchase_id=purchase_id, counterparty=customer,
+                details=f"Контракт № {contract_no}; списание зафиксировано при статусе «Отправлено»"
+            )
+
+    for product in sorted(set(before_items) | set(after_items)):
+        before = before_items.get(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+        after = after_items.get(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+        old_stock = float(before.get("stock_qty") or 0)
+        new_stock = float(after.get("stock_qty") or 0)
+        if old_stock != new_stock and not (old_written_off == 0 and new_written_off == 1):
+            delta = new_stock - old_stock
+            add_audit(conn, purchase_id, "Резерв склада",
+                      f"{product}: {old_stock:g} → {new_stock:g} шт.")
+            add_stock_audit(
+                conn, product, "Резерв контракта изменён", delta,
+                purchase_id=purchase_id, counterparty=customer,
+                details=f"Контракт № {contract_no}; резерв {old_stock:g} → {new_stock:g} шт."
+            )
+
+        old_proc = before.get("procurement_status") or "Не начата"
+        new_proc = after.get("procurement_status") or "Не начата"
+        if old_proc != new_proc:
+            need = max(0.0, float(after.get("qty") or 0) - new_stock)
+            if new_proc == "Заказано":
+                add_audit(conn, purchase_id, "Закупка заказана",
+                          f"{product}: ожидается поступление {need:g} шт.")
+                add_stock_audit(
+                    conn, product, "Ожидается поступление", need,
+                    purchase_id=purchase_id, counterparty=customer,
+                    details=f"Контракт № {contract_no}; закупка отмечена как заказанная"
+                )
+            else:
+                add_audit(conn, purchase_id, "Закупка возвращена в работу",
+                          f"{product}: статус «{old_proc}» → «{new_proc}»")
+                add_stock_audit(
+                    conn, product, "Закупка возвращена в работу", None,
+                    purchase_id=purchase_id, counterparty=customer,
+                    details=f"Контракт № {contract_no}"
+                )
+
     conn.commit()
 
 
@@ -1264,25 +1622,32 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
         result.append(row)
     return result
 
-def dashboard_kpis(conn: sqlite3.Connection):
-    """KPI главного экрана одним агрегатным запросом + агрегат склада."""
-    r = conn.execute(
-        """SELECT
-               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN 1 ELSE 0 END) AS work_count,
-               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS work_sum,
-               SUM(CASE WHEN COALESCE(payment_status,'') <> 'Оплачено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS awaiting
-           FROM purchases WHERE deleted_at IS NULL"""
-    ).fetchone()
-    auto = conn.execute(
-        """SELECT COALESCE(SUM(i.qty),0) AS q FROM purchase_items i
-           JOIN purchases p ON p.id=i.purchase_id
-           WHERE p.deleted_at IS NULL
-             AND (p.handover_date IS NULL OR p.handover_date='')
-             AND COALESCE(p.exec_status,'') <> 'Отправлено'"""
-    ).fetchone()["q"] or 0.0
-    manual = conn.execute("SELECT COALESCE(SUM(qty),0) AS q FROM manual_reservations").fetchone()["q"] or 0.0
-    return {"work_count": int(r["work_count"] or 0), "work_sum": float(r["work_sum"] or 0),
-            "awaiting": float(r["awaiting"] or 0), "reserve_qty": float(auto) + float(manual)}
+def dashboard_kpis(conn: sqlite3.Connection, year: int = None, month: int = None):
+    """KPI главного экрана для выбранного периода.
+
+    Все контрактные показатели считаются по тем же строкам, что и основная
+    таблица контрактов при выбранных годе/месяце. Складской резерв остаётся
+    текущим фактическим резервом и берётся из stock_summary().
+    """
+    rows = fetch_all(conn, year=year, month=month, operational_period=True)
+
+    total_count = len(rows)
+    work_rows = [r for r in rows if (r.get("exec_status") or "") != "Исполнено"]
+    unpaid_rows = [r for r in rows if (r.get("payment_status") or "") != "Оплачено"]
+
+    total_sum = sum(float(r.get("contract_sum") or 0.0) for r in rows)
+    work_sum = sum(float(r.get("contract_sum") or 0.0) for r in work_rows)
+    awaiting = sum(float(r.get("contract_sum") or 0.0) for r in unpaid_rows)
+    reserve_qty = sum(float(x.get("reserved", 0) or 0) for x in stock_summary(conn))
+
+    return {
+        "total_count": int(total_count),
+        "work_count": int(len(work_rows)),
+        "total_sum": float(total_sum),
+        "work_sum": float(work_sum),
+        "awaiting": float(awaiting),
+        "reserve_qty": reserve_qty,
+    }
 
 
 def deadline_rows(conn: sqlite3.Connection):
@@ -1321,9 +1686,9 @@ def fetch_by_id(conn: sqlite3.Connection, purchase_id: int):
 
 
 def distinct_years(conn: sqlite3.Connection):
-    """Годы для фильтров по месяцу добавления контракта."""
+    """Годы, встречающиеся в контрактах и финансовых итогах."""
     rows = conn.execute(
-        "SELECT created_at, contract_date FROM purchases WHERE deleted_at IS NULL"
+        "SELECT created_at, contract_date, handover_date FROM purchases WHERE deleted_at IS NULL"
     ).fetchall()
     years = set()
 
@@ -1340,73 +1705,215 @@ def distinct_years(conn: sqlite3.Connection):
         return None
 
     for r in rows:
-        parsed = _parse_period(r["created_at"]) or _parse_period(r["contract_date"])
-        if parsed is not None:
-            years.add(parsed.year)
+        for value in (r["created_at"], r["contract_date"], r["handover_date"]):
+            parsed = _parse_period(value)
+            if parsed is not None:
+                years.add(parsed.year)
+    try:
+        for r in conn.execute("SELECT expense_date FROM monthly_expenses").fetchall():
+            parsed = _parse_period(r["expense_date"])
+            if parsed is not None:
+                years.add(parsed.year)
+    except sqlite3.OperationalError:
+        pass
     return sorted(years)
 
 def distinct_products(conn: sqlite3.Connection):
     return catalog_products(conn)
 
 
-def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
-    """
-    Финансовые итоги группируются по месяцу фактического добавления контракта
-    (created_at), а не по дате заключения или вручения. Пользователь не вводит
-    created_at вручную: поле проставляется автоматически при создании записи.
-
-    Количество реализованного товара учитывается только после фактической передачи
-    (handover_date заполнена), но относится к месяцу добавления контракта.
-    """
-    from calculations import calc_tax, calc_profit, calc_margin_pct
-
-    def _parse_db_date(value):
-        if not value:
-            return None
-        text = str(value).strip()
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
-            try:
-                parsed = datetime.strptime(text, fmt).date()
-                if 2000 <= parsed.year <= 2100:
-                    return parsed
-                return None
-            except ValueError:
-                continue
+def _parse_summary_date(value):
+    if not value:
         return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            parsed = datetime.strptime(text, fmt).date()
+            return parsed if 2000 <= parsed.year <= 2100 else None
+        except ValueError:
+            continue
+    return None
 
-    rows = conn.execute(
-        "SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id"
-    ).fetchall()
 
+def _is_deferred_purchase_contract(conn: sqlite3.Connection, purchase_id: int) -> bool:
+    """В рабочей модели смешанных контрактов нет: наличие отложенной закупки
+    делает весь контракт отложенным для финансовых итогов."""
+    row = conn.execute(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN supply_mode='Отложенная закупка' THEN 1 ELSE 0 END) AS deferred
+           FROM purchase_items WHERE purchase_id=?""",
+        (purchase_id,),
+    ).fetchone()
+    return bool(row and int(row["total"] or 0) > 0 and int(row["deferred"] or 0) > 0)
+
+
+def _summary_period_for_purchase(conn: sqlite3.Connection, purchase) -> date | None:
+    """Период финансовых итогов.
+    Обычный контракт -> месяц заведения.
+    Отложенная закупка -> только после статуса «Исполнено», месяц даты вручения.
+    """
+    if _is_deferred_purchase_contract(conn, int(purchase["id"])):
+        if (purchase["exec_status"] or "") != "Исполнено":
+            return None
+        payment_date = purchase["payment_date"] if "payment_date" in purchase.keys() else None
+        return _parse_summary_date(payment_date) or _parse_summary_date(purchase["handover_date"])
+    return _parse_summary_date(purchase["created_at"]) or _parse_summary_date(purchase["contract_date"])
+
+
+def summary_contracts(conn: sqlite3.Connection, year: int, month: int):
+    """Контракты, реально вошедшие в финансовые итоги указанного месяца."""
+    rows = conn.execute("SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id").fetchall()
+    matched = []
+    for r in rows:
+        period = _summary_period_for_purchase(conn, r)
+        if period and period.year == int(year) and period.month == int(month):
+            d = dict(r)
+            d["items"] = [dict(x) for x in fetch_items(conn, int(r["id"]))]
+            d["product"] = _products_summary(d["items"])
+            d["qty"] = _qty_total(d["items"])
+            d["summary_period"] = period.isoformat()
+            d["deferred_purchase"] = _is_deferred_purchase_contract(conn, int(r["id"]))
+            matched.append(d)
+    return matched
+
+
+def insert_monthly_expense(conn: sqlite3.Connection, data: dict) -> int:
+    expense_date = str(data.get("expense_date") or "").strip()
+    parsed = _parse_summary_date(expense_date)
+    if not parsed:
+        raise ValueError("Некорректная дата расхода")
+
+    period_year = int(data.get("period_year") or parsed.year)
+    period_month = int(data.get("period_month") or parsed.month)
+    if period_month < 1 or period_month > 12:
+        raise ValueError("Некорректный месяц расхода")
+
+    amount = float(data.get("amount") or 0)
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля")
+
+    cur = conn.execute(
+        """INSERT INTO monthly_expenses
+           (expense_date, period_year, period_month, category, amount, description)
+           VALUES(?,?,?,?,?,?)""",
+        (
+            expense_date, period_year, period_month,
+            (data.get("category") or "Прочее").strip(), amount,
+            (data.get("description") or "").strip() or None,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def fetch_monthly_expenses(conn: sqlite3.Connection, year: int = None, month: int = None):
+    query = "SELECT * FROM monthly_expenses WHERE 1=1"
+    params = []
+    if year is not None:
+        query += " AND COALESCE(period_year, CAST(substr(expense_date,1,4) AS INTEGER))=?"
+        params.append(int(year))
+    if month is not None:
+        query += " AND COALESCE(period_month, CAST(substr(expense_date,6,2) AS INTEGER))=?"
+        params.append(int(month))
+    query += " ORDER BY expense_date, id"
+    return conn.execute(query, params).fetchall()
+
+
+def delete_monthly_expense(conn: sqlite3.Connection, expense_id: int):
+    conn.execute("DELETE FROM monthly_expenses WHERE id=?", (int(expense_id),))
+    conn.commit()
+
+
+def set_tax_profile(conn: sqlite3.Connection, effective_from: str, regime: str, rate: float):
+    d = _parse_summary_date(effective_from)
+    if not d:
+        raise ValueError("Некорректная дата начала действия налогового режима")
+    regime = (regime or "").strip()
+    if regime not in ("С доходов", "Доходы минус расходы"):
+        raise ValueError("Неизвестный налоговый режим")
+    rate = float(rate)
+    if rate < 0 or rate > 100:
+        raise ValueError("Ставка налога должна быть от 0 до 100%")
+    start = d.replace(day=1).isoformat()
+    row = conn.execute("SELECT id FROM tax_profiles WHERE effective_from=? ORDER BY id DESC LIMIT 1", (start,)).fetchone()
+    if row:
+        conn.execute("UPDATE tax_profiles SET regime=?, rate=? WHERE id=?", (regime, rate, row["id"]))
+    else:
+        conn.execute("INSERT INTO tax_profiles(effective_from, regime, rate) VALUES(?,?,?)", (start, regime, rate))
+    conn.commit()
+
+
+def get_tax_profile(conn: sqlite3.Connection, year: int, month: int):
+    period = f"{int(year):04d}-{int(month):02d}-01"
+    row = conn.execute("SELECT * FROM tax_profiles WHERE effective_from <= ? ORDER BY effective_from DESC, id DESC LIMIT 1", (period,)).fetchone()
+    if row:
+        return {"effective_from": row["effective_from"], "regime": row["regime"], "rate": float(row["rate"] or 0)}
+    return {"effective_from": None, "regime": "С доходов", "rate": 7.0}
+
+
+def _calc_month_tax(conn: sqlite3.Connection, year: int, month: int, g: dict):
+    profile = get_tax_profile(conn, year, month)
+    rate = float(profile["rate"] or 0) / 100.0
+    if profile["regime"] == "Доходы минус расходы":
+        deductible = (float(g.get("purchase_cost",0) or 0) + float(g.get("logistics",0) or 0) + float(g.get("commission",0) or 0) + float(g.get("other_costs",0) or 0) + float(g.get("guarantee",0) or 0) + float(g.get("monthly_expenses",0) or 0))
+        base = max(0.0, float(g.get("contract_sum",0) or 0) - deductible)
+    else:
+        base = max(0.0, float(g.get("contract_sum",0) or 0))
+    tax = round(base * rate, 2)
+    return tax, base, profile
+
+def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
+    """Финансовые итоги 2.18.
+
+    Обычные контракты учитываются по месяцу заведения. Контракты с отложенной
+    закупкой до исполнения из итогов исключены; после «Исполнено» учитываются
+    целиком в месяце даты вручения.
+
+    Прочие месячные расходы из monthly_expenses уменьшают чистую прибыль месяца.
+    """
+    from calculations import calc_profit, calc_margin_pct
+
+    rows = conn.execute("SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id").fetchall()
     grouped = {}
     for r in rows:
-        period_date = _parse_db_date(r["created_at"]) or _parse_db_date(r["contract_date"])
+        period_date = _summary_period_for_purchase(conn, r)
         if period_date is None:
             continue
         if year is not None and period_date.year != int(year):
             continue
         if month is not None and period_date.month != int(month):
             continue
-
         key = (period_date.year, period_date.month)
         g = grouped.setdefault(key, {
-            "contract_sum": 0.0,
-            "purchase_cost": 0.0,
-            "logistics": 0.0,
-            "commission": 0.0,
-            "other_costs": 0.0,
-            "guarantee": 0.0,
-            "qty_total": 0.0,
-            "qty_paid": 0.0,
-            "qty_unpaid": 0.0,
+            "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
+            "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
+            "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
+            "qty_unpaid": 0.0, "contract_qty_total": 0.0,
+            "product_quantities": {}, "contracts_count": 0,
         })
-        for field in ("contract_sum", "purchase_cost", "logistics", "commission", "other_costs", "guarantee"):
+        g["contracts_count"] += 1
+        for field in ("contract_sum","purchase_cost","logistics","commission","other_costs","guarantee"):
             g[field] += float(r[field] or 0.0)
 
-        # Реализация считается только после фактического вручения.
-        if _parse_db_date(r["handover_date"]) is not None:
+        # Товары по контрактам месяца считаются независимо от этапа исполнения.
+        # Это значение должно 1:1 совпадать с суммой позиций в расшифровке контрактов месяца.
+        contract_items = fetch_items(conn, int(r["id"]))
+        for item in contract_items:
+            product = canonical_product_name(item["product"] or "") or "—"
+            qty = float(item["qty"] or 0.0)
+            g["contract_qty_total"] += qty
+            g["product_quantities"][product] = g["product_quantities"].get(product, 0.0) + qty
+
+        # v2.22.2: «Реализовано, шт.» определяется по фактическому этапу
+        # движения товара, а не только по наличию даты вручения.
+        # Отправлено -> товар уже покинул склад; Вручен/Исполнено -> тем более реализован.
+        # stock_written_off сохраняется идемпотентно после первой отправки и позволяет
+        # корректно считать старые записи, даже если статус позже изменён.
+        exec_status = (r["exec_status"] or "").strip()
+        realized = bool(int(r["stock_written_off"] or 0)) or exec_status in ("Отправлено", "Вручен", "Исполнено")
+        if realized:
             qty_row = conn.execute(
-                "SELECT COALESCE(SUM(qty), 0) AS qty FROM purchase_items WHERE purchase_id = ?",
+                "SELECT COALESCE(SUM(qty),0) AS qty FROM purchase_items WHERE purchase_id=?",
                 (r["id"],),
             ).fetchone()
             qty = float(qty_row["qty"] or 0.0)
@@ -1416,31 +1923,49 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             else:
                 g["qty_unpaid"] += qty
 
+    # Месяц может содержать только вне-контрактные расходы — он всё равно должен
+    # отображаться в итогах.
+    for e in fetch_monthly_expenses(conn, year=year, month=month):
+        d = _parse_summary_date(e["expense_date"])
+        ey = int(e["period_year"] or (d.year if d else 0))
+        em = int(e["period_month"] or (d.month if d else 0))
+        if not ey or not em:
+            continue
+        key = (ey, em)
+        g = grouped.setdefault(key, {
+            "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
+            "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
+            "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
+            "qty_unpaid": 0.0, "contract_qty_total": 0.0,
+            "product_quantities": {}, "contracts_count": 0,
+        })
+        g["monthly_expenses"] += float(e["amount"] or 0.0)
+
     result = []
-    for (y, m), g in sorted(grouped.items()):
-        contract_sum = g["contract_sum"]
-        purchase_cost = g["purchase_cost"]
-        logistics = g["logistics"]
-        commission = g["commission"]
-        other_costs = g["other_costs"]
-        guarantee = g["guarantee"]
-        tax = calc_tax(contract_sum)
-        profit = calc_profit(contract_sum, purchase_cost, logistics, commission,
-                             other_costs, guarantee, tax)
+    for (y,m),g in sorted(grouped.items()):
+        contract_sum=g["contract_sum"]; purchase_cost=g["purchase_cost"]
+        logistics=g["logistics"]; commission=g["commission"]
+        other_costs=g["other_costs"]; guarantee=g["guarantee"]
+        monthly_expenses=g["monthly_expenses"]
+        tax,tax_base,tax_profile=_calc_month_tax(conn,y,m,g)
+        contract_profit=calc_profit(contract_sum,purchase_cost,logistics,commission,other_costs,guarantee,tax)
+        profit=round(contract_profit-monthly_expenses,2)
+        total_expenses=round(purchase_cost+logistics+commission+other_costs+guarantee+tax+monthly_expenses,2)
         result.append({
-            "year": y,
-            "month": m,
-            "contract_sum": contract_sum,
-            "purchase_cost": purchase_cost,
-            "expenses": logistics + commission + other_costs + guarantee,
-            "tax": tax,
-            "profit": profit,
-            "margin_pct": calc_margin_pct(profit, contract_sum),
-            "qty_total": g["qty_total"],
-            "qty_paid": g["qty_paid"],
-            "qty_unpaid": g["qty_unpaid"],
+            "year":y,"month":m,"contracts_count":g["contracts_count"],
+            "contract_sum":contract_sum,"purchase_cost":purchase_cost,
+            "logistics":logistics,"commission":commission,"other_costs":other_costs,
+            "guarantee":guarantee,"tax":tax,"tax_base":tax_base,
+            "tax_regime":tax_profile["regime"],"tax_rate":tax_profile["rate"],
+            "tax_effective_from":tax_profile["effective_from"],"monthly_expenses":monthly_expenses,
+            "total_expenses":total_expenses,"profit":profit,
+            "margin_pct":calc_margin_pct(profit,contract_sum),
+            "qty_total":g["qty_total"],"qty_paid":g["qty_paid"],"qty_unpaid":g["qty_unpaid"],
+            "contract_qty_total":g["contract_qty_total"],
+            "product_quantities":dict(sorted(g["product_quantities"].items(), key=lambda kv: kv[0].casefold())),
         })
     return result
+
 
 def top_customers(conn: sqlite3.Connection, limit: int = 5):
     rows = conn.execute(
@@ -1469,21 +1994,45 @@ def insert_receipt(conn: sqlite3.Connection, data: dict) -> int:
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RECEIPT_FIELDS]
     cur = conn.execute(f"INSERT INTO stock_receipts ({cols}) VALUES ({placeholders})", values)
+    add_stock_audit(
+        conn, data.get("product"), "Приход товара", float(data.get("qty") or 0),
+        counterparty=data.get("supplier") or "",
+        details=f"Приход №{cur.lastrowid}; дата {data.get('receipt_date') or '—'}"
+    )
     conn.commit()
     return cur.lastrowid
 
 
 def update_receipt(conn: sqlite3.Connection, receipt_id: int, data: dict):
+    old = fetch_receipt_by_id(conn, receipt_id)
     set_clause = ", ".join(f"{f} = ?" for f in RECEIPT_FIELDS)
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RECEIPT_FIELDS] + [receipt_id]
     conn.execute(f"UPDATE stock_receipts SET {set_clause} WHERE id = ?", values)
+    old_product = old["product"] if old is not None else data.get("product")
+    details = (
+        f"Приход №{receipt_id}: "
+        f"{float(old['qty'] or 0) if old is not None else 0:g} → {float(data.get('qty') or 0):g} шт.; "
+        f"товар {old_product or '—'} → {data.get('product') or '—'}"
+    )
+    add_stock_audit(conn, old_product or data.get("product"), "Изменён приход", None,
+                    counterparty=data.get("supplier") or "", details=details)
+    if data.get("product") and data.get("product") != old_product:
+        add_stock_audit(conn, data.get("product"), "Изменён приход", None,
+                        counterparty=data.get("supplier") or "", details=details)
     conn.commit()
 
 
 def delete_receipt(conn: sqlite3.Connection, receipt_id: int):
+    old = fetch_receipt_by_id(conn, receipt_id)
+    if old is not None:
+        add_stock_audit(
+            conn, old["product"], "Удалён приход", -float(old["qty"] or 0),
+            counterparty=old["supplier"] or "",
+            details=f"Удалён приход №{receipt_id}; ранее было {float(old['qty'] or 0):g} шт."
+        )
     conn.execute("DELETE FROM stock_receipts WHERE id = ?", (receipt_id,))
     conn.commit()
 
@@ -1513,6 +2062,39 @@ def available_for_contract(conn: sqlite3.Connection, product: str, purchase_id=N
             own = conn.execute("SELECT COALESCE(SUM(stock_qty),0) AS q FROM purchase_items WHERE purchase_id=? AND product=?", (purchase_id, product)).fetchone()["q"]
             available += float(own or 0.0)
     return available
+
+def _product_name_map(conn: sqlite3.Connection):
+    """Карта normalized_key -> единое отображаемое название товара."""
+    _sync_product_catalog(conn)
+    rows = conn.execute(
+        "SELECT name, normalized_key FROM product_catalog WHERE active=1 ORDER BY id"
+    ).fetchall()
+    mapping = {}
+    for row in rows:
+        canonical = canonical_product_name(row["name"])
+        key = normalize_product_key(canonical)
+        if key and key not in mapping:
+            mapping[key] = canonical
+        raw_key = row["normalized_key"] or normalize_product_key(row["name"])
+        if raw_key and raw_key not in mapping:
+            mapping[raw_key] = canonical
+    for fixed in FIXED_PRODUCTS:
+        mapping[normalize_product_key(fixed)] = fixed
+    return mapping
+
+
+def _aggregate_product_rows(rows, name_map):
+    """Суммирует строки товара по нормализованному/каноническому имени."""
+    result = {}
+    for row in rows:
+        raw = row["product"]
+        key = normalize_product_key(canonical_product_name(raw))
+        if not key:
+            continue
+        name = name_map.get(key) or canonical_product_name(raw)
+        result[name] = result.get(name, 0.0) + float(row["q"] or 0.0)
+    return result
+
 
 def stock_summary(conn: sqlite3.Connection):
     """Сводка склада.
@@ -1544,10 +2126,11 @@ def stock_summary(conn: sqlite3.Connection):
         "SELECT product, SUM(qty) AS q FROM manual_reservations "
         "WHERE product IS NOT NULL AND product <> '' GROUP BY product"
     ).fetchall()
-    received = {r["product"]: (r["q"] or 0.0) for r in received_rows}
-    shipped = {r["product"]: (r["q"] or 0.0) for r in shipped_rows}
-    reserved = {r["product"]: (r["q"] or 0.0) for r in reserved_rows}
-    manual_reserved = {r["product"]: (r["q"] or 0.0) for r in manual_reserved_rows}
+    name_map = _product_name_map(conn)
+    received = _aggregate_product_rows(received_rows, name_map)
+    shipped = _aggregate_product_rows(shipped_rows, name_map)
+    reserved = _aggregate_product_rows(reserved_rows, name_map)
+    manual_reserved = _aggregate_product_rows(manual_reserved_rows, name_map)
     future_rows = conn.execute(
         """SELECT i.product AS product,
                   SUM(CASE WHEN COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
@@ -1556,14 +2139,29 @@ def stock_summary(conn: sqlite3.Connection):
            WHERE p.deleted_at IS NULL AND COALESCE(p.stock_written_off,0)=0
            GROUP BY i.product"""
     ).fetchall()
-    future = {r["product"]: (r["q"] or 0.0) for r in future_rows}
-    products = sorted(set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future))
+    future = _aggregate_product_rows(future_rows, name_map)
+    catalog = set(name_map.values())
+    products = sorted(
+        set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future) | catalog,
+        key=lambda name: (0 if name in FIXED_PRODUCTS else 1, str(name).casefold()),
+    )
     result = []
     for product in products:
         on_hand = received.get(product, 0.0) - shipped.get(product, 0.0)
         auto_res = reserved.get(product, 0.0)
         manual_res = manual_reserved.get(product, 0.0)
         total_res = auto_res + manual_res
+        future_demand = float(future.get(product, 0.0) or 0.0)
+
+        # v2.22.3: сколько реально нужно закупить под действующие контракты.
+        # 1) future_demand — часть контрактов, которая изначально помечена как
+        #    «Требуется закупка» / «Отложенная закупка» и не обеспечена складом;
+        # 2) если складского резерва по контрактам физически больше, чем on_hand,
+        #    добавляем этот дефицит.
+        # Ручной резерв под потенциальных клиентов сюда намеренно не включается.
+        contract_stock_shortage = max(0.0, auto_res - on_hand)
+        need_to_buy = future_demand + contract_stock_shortage
+
         result.append({
             "product": product,
             "on_hand": on_hand,
@@ -1571,7 +2169,8 @@ def stock_summary(conn: sqlite3.Connection):
             "auto_reserved": auto_res,
             "manual_reserved": manual_res,
             "available": on_hand - total_res,
-            "future_demand": future.get(product, 0.0),
+            "future_demand": future_demand,
+            "need_to_buy": need_to_buy,
         })
     return result
 
@@ -1709,9 +2308,24 @@ def normalize_competitor_name(name: str) -> str:
     return "".join(ch for ch in value if ch.isalnum())
 
 
-def canonical_competitor_name(conn: sqlite3.Connection, name: str, exclude_id: int = None) -> str:
-    """Возвращает уже используемое написание той же компании, если оно есть."""
+def normalize_inn(value: str) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def canonical_competitor_name(conn: sqlite3.Connection, name: str, competitor_inn: str = None, exclude_id: int = None) -> str:
+    """ИНН имеет приоритет над написанием названия компании."""
     clean = re.sub(r"\s+", " ", str(name or "").strip())
+    inn = normalize_inn(competitor_inn)
+    if inn:
+        query = "SELECT id, competitor FROM competitor_records WHERE competitor_inn=? AND competitor IS NOT NULL AND trim(competitor)<>''"
+        params = [inn]
+        if exclude_id is not None:
+            query += " AND id<>?"
+            params.append(int(exclude_id))
+        query += " ORDER BY id LIMIT 1"
+        row = conn.execute(query, params).fetchone()
+        if row:
+            return row["competitor"]
     key = normalize_competitor_name(clean)
     if not key:
         return clean
@@ -1732,8 +2346,9 @@ def insert_competitor_record(conn: sqlite3.Connection, data: dict) -> int:
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
+    data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
     if data.get("competitor"):
-        data["competitor"] = canonical_competitor_name(conn, data["competitor"])
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"))
     values = [data.get(f) for f in COMPETITOR_FIELDS]
     cur = conn.execute(f"INSERT INTO competitor_records ({cols}) VALUES ({placeholders})", values)
     conn.commit()
@@ -1745,8 +2360,9 @@ def update_competitor_record(conn: sqlite3.Connection, record_id: int, data: dic
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
+    data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
     if data.get("competitor"):
-        data["competitor"] = canonical_competitor_name(conn, data["competitor"], exclude_id=record_id)
+        data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"), exclude_id=record_id)
     values = [data.get(f) for f in COMPETITOR_FIELDS] + [record_id]
     conn.execute(f"UPDATE competitor_records SET {set_clause} WHERE id = ?", values)
     conn.commit()
@@ -1761,8 +2377,8 @@ def fetch_competitor_records(conn: sqlite3.Connection, search: str = None):
     query = "SELECT * FROM competitor_records WHERE 1=1"
     params = []
     if search:
-        query += " AND (competitor LIKE ? OR product LIKE ?)"
-        params.extend([f"%{search}%", f"%{search}%"])
+        query += " AND (competitor LIKE ? OR competitor_inn LIKE ? OR product LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
     query += " ORDER BY purchase_date DESC, id DESC"
     return conn.execute(query, params).fetchall()
 
@@ -1816,54 +2432,43 @@ def competitor_product_stats(conn: sqlite3.Connection):
 
 
 def competitor_stats(conn: sqlite3.Connection):
-    """
-    По каждому фактическому конкуренту: количество побед (записей),
-    средняя/мин/макс цена и отклонение от общей средней.
-
-    Варианты написания одной компании объединяются без учета регистра,
-    пробелов, кавычек, дефисов/тире и другой пунктуации. Например:
-    «ООО Альфа», «ооо альфа», «ООО-Альфа» и «ООО «Альфа»» — одна компания.
+    """Статистика по конкурентам. При наличии ИНН записи объединяются по ИНН,
+    даже если название компании введено по-разному. Для старых записей без ИНН
+    сохраняется объединение по нормализованному названию.
     """
     rows = conn.execute(
-        "SELECT id, competitor, unit_price FROM competitor_records "
-        "WHERE competitor IS NOT NULL AND competitor <> '' AND unit_price IS NOT NULL "
-        "ORDER BY id"
+        "SELECT id, competitor, competitor_inn, unit_price FROM competitor_records "
+        "WHERE competitor IS NOT NULL AND competitor <> '' AND unit_price IS NOT NULL ORDER BY id"
     ).fetchall()
     if not rows:
         return []
     overall_avg = sum(r["unit_price"] for r in rows) / len(rows)
-
     grouped = {}
     for r in rows:
-        key = normalize_competitor_name(r["competitor"])
-        if not key:
+        inn = normalize_inn(r["competitor_inn"])
+        key = ("inn", inn) if inn else ("name", normalize_competitor_name(r["competitor"]))
+        if not key[1]:
             continue
-        group = grouped.setdefault(key, {"prices": [], "labels": {}, "first": r["competitor"]})
+        group = grouped.setdefault(key, {"prices": [], "labels": {}, "first": r["competitor"], "inn": inn or None})
         group["prices"].append(r["unit_price"])
         label = re.sub(r"\s+", " ", r["competitor"].strip())
         group["labels"][label] = group["labels"].get(label, 0) + 1
-
     result = []
     for group in grouped.values():
         prices = group["prices"]
-        # Для отображения берём самое часто встречающееся написание; при равенстве
-        # сохраняем первое встретившееся, чтобы интерфейс не менялся случайно.
         max_count = max(group["labels"].values())
-        competitor = next(
-            (label for label, count in group["labels"].items() if count == max_count),
-            group["first"],
-        )
-        avg_price = sum(prices) / len(prices)
-        relative_pct = (avg_price - overall_avg) / overall_avg if overall_avg else None
+        competitor = next((label for label,count in group["labels"].items() if count==max_count), group["first"])
+        avg_price = sum(prices)/len(prices)
         result.append({
             "competitor": competitor,
+            "competitor_inn": group["inn"],
             "wins": len(prices),
             "avg_price": avg_price,
             "min_price": min(prices),
             "max_price": max(prices),
-            "relative_pct": relative_pct,
+            "relative_pct": (avg_price-overall_avg)/overall_avg if overall_avg else None,
         })
-    return sorted(result, key=lambda item: normalize_competitor_name(item["competitor"]))
+    return sorted(result, key=lambda item: (item.get("competitor_inn") or "", normalize_competitor_name(item["competitor"])))
 
 
 # ---------------------------------------------------------------- Калькулятор цены
@@ -1980,21 +2585,44 @@ def insert_manual_reservation(conn: sqlite3.Connection, data: dict) -> int:
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RESERVATION_FIELDS]
     cur = conn.execute(f"INSERT INTO manual_reservations ({cols}) VALUES ({placeholders})", values)
+    add_stock_audit(
+        conn, data.get("product"), "Ручной резерв создан", float(data.get("qty") or 0),
+        counterparty=data.get("organization") or "",
+        details=f"Резерв №{cur.lastrowid}; дата {data.get('reserved_date') or '—'}"
+    )
     conn.commit()
     return cur.lastrowid
 
 
 def update_manual_reservation(conn: sqlite3.Connection, reservation_id: int, data: dict):
+    old = fetch_manual_reservation_by_id(conn, reservation_id)
     set_clause = ", ".join(f"{f} = ?" for f in RESERVATION_FIELDS)
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RESERVATION_FIELDS] + [reservation_id]
     conn.execute(f"UPDATE manual_reservations SET {set_clause} WHERE id = ?", values)
+    old_product = old.get("product") if old else data.get("product")
+    details = (
+        f"Резерв №{reservation_id}: "
+        f"{float(old.get('qty') or 0) if old else 0:g} → {float(data.get('qty') or 0):g} шт."
+    )
+    add_stock_audit(conn, old_product or data.get("product"), "Ручной резерв изменён", None,
+                    counterparty=data.get("organization") or "", details=details)
+    if data.get("product") and data.get("product") != old_product:
+        add_stock_audit(conn, data.get("product"), "Ручной резерв изменён", None,
+                        counterparty=data.get("organization") or "", details=details)
     conn.commit()
 
 
 def delete_manual_reservation(conn: sqlite3.Connection, reservation_id: int):
+    old = fetch_manual_reservation_by_id(conn, reservation_id)
+    if old:
+        add_stock_audit(
+            conn, old.get("product"), "Ручной резерв удалён", -float(old.get("qty") or 0),
+            counterparty=old.get("organization") or "",
+            details=f"Удалён резерв №{reservation_id}; ранее было {float(old.get('qty') or 0):g} шт."
+        )
     conn.execute("DELETE FROM manual_reservations WHERE id = ?", (reservation_id,))
     conn.commit()
 

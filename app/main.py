@@ -113,6 +113,59 @@ def parse_date_iso_to_date(iso_str):
         return None
 
 
+def prepare_monthly_expense_input(date_text, amount_text, category="", description="", expected_period=None):
+    """Валидирует прочий расход.
+
+    Дата расхода справочная. Если выбран период итогов, именно он определяет,
+    в какой месяц попадёт расход, независимо от даты.
+    """
+    normalized = normalize_date_text(date_text)
+    expense_iso = parse_date_ru(normalized)
+    expense_date = parse_date_iso_to_date(expense_iso)
+    if expense_date is None:
+        raise ValueError("Укажите корректную дату расхода.")
+
+    amount = parse_money(amount_text)
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля.")
+
+    data = {
+        "expense_date": expense_iso,
+        "category": str(category or "").strip() or "Прочее",
+        "amount": amount,
+        "description": str(description or "").strip(),
+    }
+    if expected_period is not None:
+        data["period_year"] = int(expected_period[0])
+        data["period_month"] = int(expected_period[1])
+    return data, expense_date
+
+
+
+
+def prepare_selected_month_expense(amount_text, year, month):
+    """Готовит прочий расход для уже выбранного месяца итогов.
+
+    Пользователь вводит только сумму. Техническая дата ставится первым числом
+    выбранного месяца и не участвует в выборе периода.
+    """
+    amount = parse_money(amount_text)
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля.")
+    year = int(year)
+    month = int(month)
+    if month < 1 or month > 12:
+        raise ValueError("Некорректный месяц.")
+    return {
+        "expense_date": f"{year:04d}-{month:02d}-01",
+        "period_year": year,
+        "period_month": month,
+        "category": "Прочее",
+        "amount": amount,
+        "description": "",
+    }
+
+
 def bind_date_autodots(entry, var):
     """Надёжный ввод даты ДД.ММ.ГГГГ без перестановки цифр.
 
@@ -316,6 +369,26 @@ def fmt_qty(v):
         return str(int(v))
     return f"{v:g}"
 
+
+
+def fmt_product_quantities(values):
+    if not values:
+        return "—"
+    parts = []
+    for product, qty in sorted(values.items(), key=lambda kv: str(kv[0]).casefold()):
+        parts.append(f"{product} — {fmt_qty(qty)} шт.")
+    return "; ".join(parts) if parts else "—"
+
+
+def fit_dialog_size(req_w, req_h, screen_w, screen_h, min_w=640, min_h=360):
+    """Возвращает безопасный размер и позицию небольшого диалога."""
+    width = max(int(min_w), int(req_w or 0) + 20)
+    height = max(int(min_h), int(req_h or 0) + 20)
+    width = min(width, max(320, int(screen_w) - 40))
+    height = min(height, max(240, int(screen_h) - 80))
+    x = max(0, (int(screen_w) - width) // 2)
+    y = max(0, (int(screen_h) - height) // 2)
+    return width, height, x, y
 
 def truncate(text, limit=PRODUCT_DISPLAY_LIMIT):
     text = text or ""
@@ -979,7 +1052,7 @@ def open_file_external(path, parent=None):
 class PurchaseDialog(tk.Toplevel):
     """Карточка контракта с быстрым сценарием создания, товарами и документами."""
 
-    DATE_FIELD_KEYS = ("contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline")
+    DATE_FIELD_KEYS = ("contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline", "payment_date")
 
     HEADER_LABELS = [
         ("platform", "Площадка (ЭТП)", "combo", db.PLATFORM_OPTIONS),
@@ -1000,6 +1073,7 @@ class PurchaseDialog(tk.Toplevel):
         ("handover_date", "Дата вручения (ДД.ММ.ГГГГ)", "entry", None),
         ("payment_status", "Оплата", "combo", db.PAYMENT_STATUS_OPTIONS),
         ("payment_deadline", "Крайний срок оплаты Заказчиком (ДД.ММ.ГГГГ)", "entry", None),
+        ("payment_date", "Дата оплаты (ДД.ММ.ГГГГ)", "entry", None),
         ("exec_status", "Исполнение", "combo", db.EXEC_STATUS_OPTIONS),
         ("note", "Примечание", "text", None),
     ]
@@ -1090,7 +1164,7 @@ class PurchaseDialog(tk.Toplevel):
             "platform", "customer", "contract_no", "contract_date", "law",
             "contract_sum", "purchase_cost"
         }
-        deadline_keys = {"sign_deadline", "deadline", "payment_deadline"}
+        deadline_keys = {"sign_deadline", "deadline", "payment_deadline", "payment_date"}
         state_keys = {"contract_status", "exec_status", "payment_status"}
 
         contract_specs = [spec for spec in self.HEADER_LABELS if spec[0] in contract_keys]
@@ -1250,21 +1324,26 @@ class PurchaseDialog(tk.Toplevel):
                                      "в одном контракте одновременно).",
                   wraplength=380, justify="left", foreground=app_theme.MUTED).pack(fill="x", pady=(0, 6))
 
-        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty", "supply", "stock", "future"),
+        self.items_tree = ttk.Treeview(items_frame, columns=("product", "qty", "supply", "stock", "future", "procurement"),
                                         show="headings", height=10)
         for key, label in (("product","Наименование"),("qty","Кол-во"),("supply","Обеспечение"),
-                           ("stock","Со склада"),("future","Будущая потребность")):
+                           ("stock","Со склада"),("future","Будущая потребность"),("procurement","Закупка")):
             self.items_tree.heading(key, text=label, anchor="center")
         self.items_tree.column("product", width=220, anchor="center")
         self.items_tree.column("qty", width=70, anchor="center")
         self.items_tree.column("supply", width=150, anchor="center")
         self.items_tree.column("stock", width=85, anchor="center")
         self.items_tree.column("future", width=120, anchor="center")
+        self.items_tree.column("procurement", width=190, anchor="center")
         self.items_tree.pack(fill="both", expand=True)
         self.items_tree.bind("<<TreeviewSelect>>", lambda e: self._show_full_product_name())
 
-        ttk.Button(items_frame, text="Удалить выбранную позицию",
-                   command=self._remove_selected_item).pack(pady=(6, 4))
+        item_actions = ttk.Frame(items_frame)
+        item_actions.pack(fill="x", pady=(6, 4))
+        ttk.Button(item_actions, text="Удалить выбранную позицию",
+                   command=self._remove_selected_item).pack(side="left", padx=(0, 6))
+        ttk.Button(item_actions, text="Заказано / вернуть в закупку",
+                   command=self._toggle_selected_procurement_status).pack(side="left")
 
         self.full_name_var = tk.StringVar(value="—")
         ttk.Label(items_frame, textvariable=self.full_name_var, wraplength=380,
@@ -1687,23 +1766,8 @@ class PurchaseDialog(tk.Toplevel):
         return result["value"]
 
     def _document_stage_warnings(self, header=None):
-        if self.existing is None:
-            return []
-        purchase_id = self.existing["id"]
-        categories = {str(a["category"] or "Прочее") for a in db.fetch_attachments(self.conn, purchase_id)}
-        if header is None:
-            widgets = getattr(self, "widgets", {})
-            contract_status = widgets.get("contract_status").get().strip() if widgets.get("contract_status") else ""
-            exec_status = widgets.get("exec_status").get().strip() if widgets.get("exec_status") else ""
-        else:
-            contract_status = header.get("contract_status") or ""
-            exec_status = header.get("exec_status") or ""
-        warnings = []
-        if contract_status == "Заключен" and "Контракт" not in categories:
-            warnings.append("Контракт заключён, но документ категории «Контракт» не прикреплён.")
-        if exec_status == "Исполнено" and not ({"УПД / накладная", "Акт"} & categories):
-            warnings.append("Исполнение завершено, но нет документа категории «УПД / накладная» или «Акт».")
-        return warnings
+        """Документы необязательны: отсутствие вложений не создаёт предупреждений."""
+        return []
 
     def _refresh_document_advice(self):
         if not hasattr(self, "doc_advice_var"):
@@ -1977,9 +2041,40 @@ class PurchaseDialog(tk.Toplevel):
             mode = item.get("supply_mode") or "Со склада"
             stock_qty = float(item.get("stock_qty") if item.get("stock_qty") is not None else (qty if mode == "Со склада" else 0))
             future_qty = max(0.0, qty - stock_qty)
+            status = item.get("procurement_status") or "Не начата"
+            if mode == "Со склада" or future_qty <= 0:
+                procurement_text = "—"
+            elif status == "Заказано":
+                procurement_text = "Заказано / ожидается поступление"
+            else:
+                procurement_text = "Не начата"
             tree_insert_wrapped(self.items_tree, "", "end", iid=str(i),
                                 values=(item.get("product") or "—", fmt_qty(qty), mode,
-                                        fmt_qty(stock_qty), fmt_qty(future_qty)))
+                                        fmt_qty(stock_qty), fmt_qty(future_qty), procurement_text))
+
+    def _toggle_selected_procurement_status(self):
+        sel = self.items_tree.selection()
+        if not sel:
+            messagebox.showinfo("Закупка", "Сначала выберите товарную позицию.", parent=self)
+            return
+        idx = int(sel[0])
+        if idx < 0 or idx >= len(self.items):
+            return
+        item = self.items[idx]
+        mode = item.get("supply_mode") or "Со склада"
+        qty = float(item.get("qty") or 0)
+        stock_qty = float(item.get("stock_qty") or 0)
+        if mode == "Со склада" or qty <= stock_qty:
+            messagebox.showinfo("Закупка", "Для этой позиции закупка не требуется.", parent=self)
+            return
+        current = item.get("procurement_status") or "Не начата"
+        item["procurement_status"] = "Не начата" if current == "Заказано" else "Заказано"
+        self._refresh_items_tree()
+        try:
+            self.items_tree.selection_set(str(idx))
+            self.items_tree.focus(str(idx))
+        except Exception:
+            pass
 
     def _bind_next_action_updates(self):
         keys = ("contract_status", "sign_deadline", "deadline", "exec_status",
@@ -2058,7 +2153,7 @@ class PurchaseDialog(tk.Toplevel):
             else:
                 info_text = "Срок оплаты не указан"
             action_text = "Отметить контракт оплаченным"
-            self._next_action_target = ("payment_status", "Оплачено", None, None)
+            self._next_action_target = ("payment_status", "Оплачено", "payment_date", "Дата оплаты")
         else:
             info_text = "Контракт завершён — действий не требуется"
 
@@ -2231,7 +2326,8 @@ class PurchaseDialog(tk.Toplevel):
             messagebox.showerror("Ошибка ввода", "Количество со склада должно быть от 0 до общего количества.", parent=self)
             return
         self.items.append({"product": product, "qty": qty, "supply_mode": mode,
-                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days)})
+                           "stock_qty": stock_qty, "procurement_reminder_days": max(0, reminder_days),
+                           "procurement_status": "Не начата"})
         self.new_product_var.set("")
         self.new_qty_var.set("")
         self.new_stock_qty_var.set("")
@@ -2310,14 +2406,35 @@ class PurchaseDialog(tk.Toplevel):
         return db.ensure_product(self.conn, product)
 
     def _apply_auto_status_suggestions(self, header):
-        if header.get("handover_date") and (header.get("exec_status") or "") != "Исполнено":
-            if messagebox.askyesno(
-                "Подсказка по статусу",
-                "Заполнена дата вручения, но исполнение ещё не отмечено как «Исполнено».\n\nУстановить «Исполнено» автоматически?",
-                parent=self,
-            ):
-                header["exec_status"] = "Исполнено"
-                self.widgets["exec_status"].set("Исполнено")
+        # Дата вручения означает только «Вручен», но не «Исполнено».
+        if header.get("handover_date") and (header.get("exec_status") or "") not in ("Вручен", "Исполнено"):
+            header["exec_status"] = "Вручен"
+            self.widgets["exec_status"].set("Вручен")
+
+        # Оплата фиксируется отдельной датой. При быстром действии дата уже
+        # подставлена, а при ручном выборе «Оплачено» без даты используем сегодня.
+        if (header.get("payment_status") or "") == "Оплачено":
+            if not header.get("payment_date"):
+                header["payment_date"] = date.today().isoformat()
+                try:
+                    self.widgets["payment_date"].set(date.today().strftime(DATE_FMT))
+                except Exception:
+                    pass
+        else:
+            header["payment_date"] = None
+            try:
+                self.widgets["payment_date"].set("")
+            except Exception:
+                pass
+
+        # Исполнение завершается только после оплаты уже вручённого контракта.
+        delivered = bool(header.get("handover_date")) or (header.get("exec_status") or "") in ("Вручен", "Исполнено")
+        if (header.get("payment_status") or "") == "Оплачено" and delivered:
+            header["exec_status"] = "Исполнено"
+            self.widgets["exec_status"].set("Исполнено")
+        elif (header.get("exec_status") or "") == "Исполнено" and (header.get("payment_status") or "") != "Оплачено":
+            header["exec_status"] = "Вручен" if delivered else "В процессе"
+            self.widgets["exec_status"].set(header["exec_status"])
         return header
 
     def _smart_warnings(self, header):
@@ -2331,17 +2448,20 @@ class PurchaseDialog(tk.Toplevel):
         deadline=parse_date_iso_to_date(header.get("deadline"))
         handover=parse_date_iso_to_date(header.get("handover_date"))
         pay=parse_date_iso_to_date(header.get("payment_deadline"))
+        paid_on=parse_date_iso_to_date(header.get("payment_date"))
         if cdate and deadline and deadline < cdate:
             warnings.append("Срок исполнения раньше даты заключения контракта.")
         if cdate and handover and handover < cdate:
             warnings.append("Дата вручения раньше даты заключения контракта.")
         if cdate and pay and pay < cdate:
             warnings.append("Крайний срок оплаты раньше даты заключения контракта.")
+        if handover and paid_on and paid_on < handover:
+            warnings.append("Дата оплаты раньше даты вручения.")
         total_cost=sum(float(header.get(k) or 0) for k in ("purchase_cost","logistics","commission","other_costs","guarantee"))
         if header.get("contract_sum") is not None and total_cost > float(header.get("contract_sum") or 0):
             warnings.append(f"Расходы ({fmt_money(total_cost)}) больше суммы контракта ({fmt_money(header.get('contract_sum'))}).")
-        if (header.get("exec_status") or "") == "Исполнено" and not header.get("handover_date"):
-            warnings.append("Исполнение отмечено как «Исполнено», но дата вручения не заполнена.")
+        if (header.get("payment_status") or "") == "Оплачено" and not header.get("handover_date"):
+            warnings.append("Контракт отмечен как оплаченный, но дата вручения не заполнена. Статус «Исполнено» будет установлен только после вручения.")
         # Проверка остатка по каждой позиции с исключением собственного текущего резерва.
         for item in self.items:
             product=item.get("product") or ""; qty=float(item.get("qty") or 0)
@@ -2908,6 +3028,7 @@ class ReservationDialog(tk.Toplevel):
 class CompetitorDialog(tk.Toplevel):
     FIELDS_UI = [
         ("competitor", "Конкурент", "entry"),
+        ("competitor_inn", "ИНН", "entry"),
         ("product", "Товар", "entry"),
         ("trade_type", "Вид торгов", "entry"),
         ("qty", "Количество", "entry"),
@@ -2974,6 +3095,12 @@ class CompetitorDialog(tk.Toplevel):
         if not data.get("competitor") or not data.get("product"):
             messagebox.showerror("Ошибка ввода", "Укажите конкурента и товар.", parent=self)
             return
+        if data.get("competitor_inn"):
+            inn = "".join(ch for ch in str(data["competitor_inn"]) if ch.isdigit())
+            if len(inn) not in (10, 12):
+                messagebox.showerror("Ошибка ввода", "ИНН должен содержать 10 или 12 цифр.", parent=self)
+                return
+            data["competitor_inn"] = inn
 
         self.on_save(data, self.existing["id"] if self.existing is not None else None)
         self.destroy()
@@ -3379,7 +3506,7 @@ class ProductCatalogDialog(tk.Toplevel):
         super().__init__(parent); self.conn=conn; self.on_change=on_change
         self.title("Справочник товаров"); self.geometry("720x480"); self.transient(parent)
         frame=ttk.Frame(self,padding=10); frame.pack(fill="both",expand=True)
-        ttk.Label(frame,text="Единый справочник предотвращает дубли названий товара. Переименование обновляет контракт, склад, резерв и анализ конкурентов.",
+        ttk.Label(frame,text="Закреплённые товары: «Рутокен Lite 1010» и «Рутокен ЭЦП 3.0 3120». Они всегда остаются в складе. Другие товары можно добавлять и переименовывать.",
                   wraplength=680,justify="left").pack(fill="x",pady=(0,8))
         self.tree=ttk.Treeview(frame,columns=("name",),show="headings",selectmode="browse")
         self.tree.heading("name",text="Наименование товара",anchor="center"); self.tree.column("name",width=650,anchor="center")
@@ -3402,6 +3529,9 @@ class ProductCatalogDialog(tk.Toplevel):
         sel=self.tree.selection()
         if not sel: return
         old=self.tree.set(sel[0],"name")
+        if db.is_fixed_product(old):
+            messagebox.showinfo("Справочник товаров", "Этот товар закреплён и не может быть переименован.", parent=self)
+            return
         new=simpledialog.askstring("Переименовать товар","Новое наименование:",initialvalue=old,parent=self)
         if new and new.strip()!=old:
             try:
@@ -3479,9 +3609,7 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_app_close)
         self.deiconify()
         self.after(800, self._send_attention_email_if_due)
-        # Проверка обновления не блокирует старт и молчит, если обновления/интернета нет.
-        self.after(1800, self._start_update_check)
-        self.after(self.DAILY_SIGNING_CHECK_MS, self._daily_signing_tick)
+        # v2.17.2: обновления устанавливаются только вручную.\n        # Автоматическая проверка и замена EXE отключены.\n        self.after(self.DAILY_SIGNING_CHECK_MS, self._daily_signing_tick)
         self.after(self.AUTOSYNC_MS, self._autosync_tick)
 
     def _bind_app_hotkeys(self):
@@ -3879,77 +4007,29 @@ class App(tk.Tk):
         self.config(menu=menubar)
 
     def _open_update_settings(self):
-        """Настройки обновлений без технических параметров GitHub."""
+        """v2.17.2: обновления выполняются вручную, вне приложения."""
         win = tk.Toplevel(self)
         win.title("Обновления")
         win.transient(self)
         win.resizable(False, False)
         frame = ttk.Frame(win, padding=16)
         frame.pack(fill="both", expand=True)
-
         ttk.Label(
             frame,
             text=f"Установленная версия: v{__version__}",
             font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
-        ).pack(anchor="w", pady=(0, 6))
-
-        enabled_var = tk.BooleanVar(
-            value=db.get_setting(self.conn, "update_auto_enabled", "1") != "0"
-        )
-        auto_status_var = tk.StringVar()
-        status_var = tk.StringVar(
-            value="Проверка при запуске выполняется в фоне и не мешает работе."
-        )
-
-        def refresh_auto_status():
-            auto_status_var.set(
-                "Автоматическая проверка: включена"
-                if enabled_var.get()
-                else "Автоматическая проверка: выключена"
-            )
-
-        def save_auto():
-            db.set_setting(
-                self.conn,
-                "update_auto_enabled",
-                "1" if enabled_var.get() else "0",
-            )
-            refresh_auto_status()
-
-        refresh_auto_status()
-        ttk.Label(
-            frame,
-            textvariable=auto_status_var,
-            foreground=app_theme.GREEN,
-            font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
         ).pack(anchor="w", pady=(0, 8))
-        ttk.Checkbutton(
-            frame,
-            text="Проверять обновления автоматически при запуске",
-            variable=enabled_var,
-            command=save_auto,
-        ).pack(anchor="w", pady=(0, 10))
         ttk.Label(
             frame,
-            textvariable=status_var,
-            wraplength=470,
+            text=(
+                "Автоматическое обновление отключено. Новую проверенную сборку "
+                "UchetZakupok.exe устанавливайте вручную при закрытом приложении."
+            ),
+            wraplength=500,
             justify="left",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(0, 12))
-
-        def check_now():
-            status_var.set("Проверяю наличие новой версии...")
-            self._start_update_check(manual=True, parent=win, status_var=status_var)
-
-        buttons = ttk.Frame(frame)
-        buttons.pack(fill="x")
-        ttk.Button(
-            buttons,
-            text="Проверить обновления сейчас",
-            style="Primary.TButton",
-            command=check_now,
-        ).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="left")
+        ttk.Button(frame, text="Закрыть", command=win.destroy).pack(anchor="w")
 
     def _start_update_check(self, manual=False, parent=None, status_var=None):
         """Проверяет latest GitHub Release в отдельном потоке."""
@@ -4317,11 +4397,12 @@ class App(tk.Tk):
 
         kpi = ttk.Frame(top, padding=(0, 0, 0, 8))
         kpi.pack(fill="x")
+        self.kpi_total_var = tk.StringVar(value="Всего контрактов — 0")
         self.kpi_work_var = tk.StringVar(value="Контрактов в работе — 0")
-        self.kpi_sum_var = tk.StringVar(value="Сумма — 0 ₽")
+        self.kpi_sum_var = tk.StringVar(value="Сумма контрактов — 0 ₽")
         self.kpi_reserve_var = tk.StringVar(value="В резерве — 0 шт.")
         self.kpi_payment_var = tk.StringVar(value="Ожидают оплаты — 0 ₽")
-        for var in (self.kpi_work_var, self.kpi_sum_var, self.kpi_reserve_var, self.kpi_payment_var):
+        for var in (self.kpi_total_var, self.kpi_work_var, self.kpi_sum_var, self.kpi_reserve_var, self.kpi_payment_var):
             ttk.Label(kpi, textvariable=var, style="KPI.TLabel").pack(side="left", padx=(0, 8))
         row1 = ttk.Frame(top)
         row1.pack(fill="x")
@@ -4535,10 +4616,11 @@ class App(tk.Tk):
 
         _schedule_tree_rewrap(self.tree, 20)
 
-        # KPI считаются агрегатно в SQL, без повторной загрузки всех контрактов и товаров.
-        kpi = db.dashboard_kpis(self.conn)
+        # KPI используют тот же выбранный год/месяц, что и таблица контрактов.
+        kpi = db.dashboard_kpis(self.conn, year=filters["year"], month=filters["month"])
+        self.kpi_total_var.set(f"Всего контрактов — {kpi['total_count']}")
         self.kpi_work_var.set(f"Контрактов в работе — {kpi['work_count']}")
-        self.kpi_sum_var.set(f"Сумма — {fmt_money(kpi['work_sum'])}")
+        self.kpi_sum_var.set(f"Сумма контрактов — {fmt_money(kpi['total_sum'])}")
         self.kpi_reserve_var.set(f"В резерве — {fmt_qty(kpi['reserve_qty'])} шт.")
         self.kpi_payment_var.set(f"Ожидают оплаты — {fmt_money(kpi['awaiting'])}")
         counts = reminder_worker.attention_counts(reminder_worker.attention_items(self.conn))
@@ -4809,40 +4891,366 @@ class App(tk.Tk):
         self.summary_year_combo = ttk.Combobox(top, textvariable=self.summary_year_var, width=8, state="readonly")
         self.summary_year_combo.pack(side="left", padx=(2, 10))
         self.summary_year_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_summary())
-        cols = ["month", "contract_sum", "profit", "margin", "qty_total"]
-        labels = ["Месяц", "Сумма контрактов", "Чистая прибыль", "Рентабельность", "Реализовано, шт."]
-        self.summary_tree = ttk.Treeview(self.tab_summary, columns=cols, show="headings")
-        for key, label in zip(cols, labels):
+
+        ttk.Button(top, text="+ Прочий расход", command=self._add_monthly_expense).pack(side="left", padx=(4, 4))
+        ttk.Button(top, text="Расходы месяца", command=self._manage_monthly_expenses).pack(side="left", padx=(4, 10))
+        ttk.Button(top, text="Налоговый режим", command=self._edit_tax_profile).pack(side="left", padx=(4, 10))
+        ttk.Label(
+            top,
+            text="Двойной щелчок по месяцу — подробная расшифровка",
+            foreground=app_theme.MUTED,
+        ).pack(side="left", padx=(10, 0))
+
+        cols = ["month", "contracts", "contract_sum", "expenses", "monthly_expenses", "profit", "margin", "products", "qty_total"]
+        labels = [
+            "Месяц", "Контрактов", "Сумма контрактов", "Все расходы",
+            "Прочие расходы", "Чистая прибыль", "Рентабельность",
+            "Товары по контрактам", "Реализовано, шт."
+        ]
+        widths = [145, 85, 155, 145, 135, 145, 120, 360, 125]
+        self.summary_tree = ttk.Treeview(self.tab_summary, columns=cols, show="headings", selectmode="browse")
+        for key, label, width in zip(cols, labels, widths):
             self.summary_tree.heading(key, text=label, anchor="center")
-            self.summary_tree.column(key, width=190 if key != "month" else 180, anchor="center")
+            self.summary_tree.column(key, width=width, anchor="center")
         self.summary_tree.pack(fill="both", expand=True, padx=8, pady=8)
-        self.summary_tree.tag_configure("total", background=app_theme.SOFT_BLUE, font=("TkDefaultFont", BASE_FONT_SIZE, "bold"))
+        self.summary_tree.tag_configure(
+            "total", background=app_theme.SOFT_BLUE,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
+        )
+        self._last_summary_period = None
+
+        def remember_summary_period(_event=None):
+            period = self._selected_summary_period(require_selection=False, allow_last=False)
+            if period is not None:
+                self._last_summary_period = period
+
+        self.summary_tree.bind("<<TreeviewSelect>>", remember_summary_period, add="+")
+        self.summary_tree.bind("<ButtonRelease-1>", remember_summary_period, add="+")
         self.summary_tree.bind("<Double-1>", lambda e: self._open_summary_month_contracts())
-        ttk.Label(top, text="Двойной щелчок по месяцу — показать контракты").pack(side="left", padx=(12, 0))
 
     def refresh_summary(self):
         for item in self.summary_tree.get_children():
             self.summary_tree.delete(item)
         year = None if self.summary_year_var.get() in ("Все", "") else int(self.summary_year_var.get())
         summary = db.monthly_summary(self.conn, year=year, month=None)
-        total_sum = total_profit = total_qty = 0.0
+        total_sum = total_expenses = total_monthly_expenses = total_profit = total_qty = 0.0
+        total_contracts = 0
+        total_products = {}
         self.summary_tree._raw_tree_values = {}
         for row in summary:
+            iid = f"month_{row['year']}_{row['month']:02d}"
+            self.summary_tree._raw_tree_values[iid] = row
             month_label = f"{MONTHS_RU[row['month']]} {row['year']}"
-            tree_insert_wrapped(self.summary_tree, "", "end", iid=f"month_{row['year']}_{row['month']:02d}",
-                values=[month_label, fmt_money(row["contract_sum"]),
-                fmt_money(row["profit"]), fmt_pct(row["margin_pct"]), fmt_qty(row["qty_total"])])
+            tree_insert_wrapped(
+                self.summary_tree, "", "end", iid=iid,
+                values=[
+                    month_label,
+                    row.get("contracts_count", 0),
+                    fmt_money(row["contract_sum"]),
+                    fmt_money(row.get("total_expenses", 0)),
+                    fmt_money(row.get("monthly_expenses", 0)),
+                    fmt_money(row["profit"]),
+                    fmt_pct(row["margin_pct"]),
+                    fmt_product_quantities(row.get("product_quantities", {})),
+                    fmt_qty(row["qty_total"]),
+                ],
+            )
+            total_contracts += int(row.get("contracts_count", 0))
             total_sum += row["contract_sum"]
+            total_expenses += row.get("total_expenses", 0)
+            total_monthly_expenses += row.get("monthly_expenses", 0)
             total_profit += row["profit"]
             total_qty += row["qty_total"]
+            for product, qty in row.get("product_quantities", {}).items():
+                total_products[product] = total_products.get(product, 0.0) + float(qty or 0)
         if len(summary) > 1:
             margin_total = total_profit / total_sum if total_sum else None
-            tree_insert_wrapped(self.summary_tree, "", "end", iid="summary_total",
-                values=["ИТОГО", fmt_money(total_sum), fmt_money(total_profit),
-                fmt_pct(margin_total), fmt_qty(total_qty)], tags=("total",))
+            tree_insert_wrapped(
+                self.summary_tree, "", "end", iid="summary_total",
+                values=[
+                    "ИТОГО", total_contracts, fmt_money(total_sum), fmt_money(total_expenses),
+                    fmt_money(total_monthly_expenses), fmt_money(total_profit),
+                    fmt_pct(margin_total), fmt_product_quantities(total_products), fmt_qty(total_qty)
+                ],
+                tags=("total",),
+            )
+
+    def _selected_summary_period(self, require_selection=False, allow_last=True):
+        """Возвращает период выбранной строки итогов.
+
+        Для действий над месяцем запоминается последний реально выбранный месяц,
+        чтобы Treeview не терял период при смене focus после нажатия кнопки.
+        """
+        candidates = list(self.summary_tree.selection())
+        focused = self.summary_tree.focus()
+        if focused and focused not in candidates:
+            candidates.append(focused)
+        for raw_iid in candidates:
+            iid = str(raw_iid)
+            if not iid.startswith("month_"):
+                continue
+            try:
+                _, year_s, month_s = iid.split("_", 2)
+                period = (int(year_s), int(month_s))
+                self._last_summary_period = period
+                return period
+            except (ValueError, TypeError):
+                continue
+
+        if allow_last and getattr(self, "_last_summary_period", None):
+            return self._last_summary_period
+
+        if require_selection:
+            return None
+
+        try:
+            year = int(self.summary_year_var.get())
+        except (TypeError, ValueError):
+            year = date.today().year
+        month = date.today().month if year == date.today().year else 1
+        return year, month
+
+
+    def _select_summary_period(self, year, month):
+        iid = f"month_{int(year)}_{int(month):02d}"
+        if self.summary_tree.exists(iid):
+            self.summary_tree.selection_set(iid)
+            self.summary_tree.focus(iid)
+            self.summary_tree.see(iid)
+            self._last_summary_period = (int(year), int(month))
+            return True
+        return False
+
+    def _add_monthly_expense(self):
+        period = self._selected_summary_period(require_selection=True)
+        if period is None:
+            messagebox.showinfo(
+                "Прочий расход",
+                "Сначала выделите месяц в таблице «Итоги», затем нажмите «+ Прочий расход».",
+                parent=self,
+            )
+            return
+
+        year, month = period
+        win = tk.Toplevel(self)
+        win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
+        win.transient(self)
+        win.geometry("520x210")
+        win.minsize(520, 210)
+        win.resizable(False, False)
+
+        body = ttk.Frame(win, padding=18)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            body,
+            text=f"Прочий расход за {MONTHS_RU[month]} {year}",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 16))
+
+        ttk.Label(body, text="Сумма, руб.:").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=6)
+        amount_var = tk.StringVar()
+        amount_entry = ttk.Entry(body, textvariable=amount_var, width=30)
+        amount_entry.grid(row=1, column=1, sticky="ew", pady=6)
+        self._bind_context_menu(amount_entry)
+
+        ttk.Label(
+            body,
+            text="Расход будет отнесён к выделенному месяцу. Дата не требуется.",
+            foreground=app_theme.MUTED,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(6, 0))
+
+        def save():
+            try:
+                data = prepare_selected_month_expense(amount_var.get(), year, month)
+                db.insert_monthly_expense(self.conn, data)
+            except ValueError as exc:
+                messagebox.showerror("Ошибка ввода", str(exc), parent=win)
+                amount_entry.focus_set()
+                return
+            except Exception as exc:
+                _log(f"Итоги: не удалось сохранить прочий расход: {exc}")
+                messagebox.showerror(
+                    "Ошибка сохранения",
+                    f"Не удалось добавить прочий расход:\n{exc}",
+                    parent=win,
+                )
+                return
+
+            win.destroy()
+            self.refresh_summary()
+            self._select_summary_period(year, month)
+            messagebox.showinfo(
+                "Прочий расход",
+                f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.\n"
+                "Чистая прибыль пересчитана.",
+                parent=self,
+            )
+
+        ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
+        ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+
+        try:
+            win.update_idletasks()
+            screen_w, screen_h = win.winfo_screenwidth(), win.winfo_screenheight()
+            width, height = 520, 210
+            x = max(0, (screen_w - width) // 2)
+            y = max(0, (screen_h - height) // 2)
+            win.geometry(f"{width}x{height}+{x}+{y}")
+            win.lift()
+            win.focus_force()
+            win.grab_set()
+        except tk.TclError:
+            pass
+        amount_entry.focus_set()
+
+
+    def _edit_tax_profile(self):
+        year, month = self._selected_summary_period()
+        profile = db.get_tax_profile(self.conn, year, month)
+        win = tk.Toplevel(self)
+        win.title(f"Налоговый режим — {MONTHS_RU[month]} {year}")
+        win.transient(self)
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=14)
+        body.pack(fill="both", expand=True)
+
+        regime_var = tk.StringVar(value=profile.get("regime") or "С доходов")
+        rate_var = tk.StringVar(value=str(profile.get("rate", 7.0)).replace(".", ","))
+
+        ttk.Label(body, text="Режим:").grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
+        regime = ttk.Combobox(body, textvariable=regime_var, state="readonly", width=28,
+                              values=["С доходов", "Доходы минус расходы"])
+        regime.grid(row=0, column=1, sticky="ew", pady=5)
+        ttk.Label(body, text="Ставка, %:").grid(row=1, column=0, sticky="w", padx=(0,10), pady=5)
+        rate_entry = ttk.Entry(body, textvariable=rate_var, width=18)
+        rate_entry.grid(row=1, column=1, sticky="w", pady=5)
+        self._bind_context_menu(rate_entry)
+
+        ttk.Label(
+            body,
+            text=("Настройка действует с первого числа выбранного месяца и далее, "
+                  "пока не будет задан новый режим для более позднего периода."),
+            wraplength=430, justify="left", foreground=app_theme.MUTED
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8,10))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e")
+        def save():
+            try:
+                rate = parse_money(rate_var.get())
+                db.set_tax_profile(self.conn, f"{year:04d}-{month:02d}-01", regime_var.get(), rate)
+            except ValueError as exc:
+                messagebox.showerror("Ошибка ввода", str(exc), parent=win)
+                return
+            win.destroy()
+            self.refresh_summary()
+        ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
+        ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+
+    def _manage_monthly_expenses(self):
+        period = self._selected_summary_period(require_selection=True)
+        if period is None:
+            messagebox.showinfo(
+                "Расходы месяца",
+                "Сначала выделите нужный месяц в таблице «Итоги».",
+                parent=self,
+            )
+            return
+        year, month = period
+        rows = list(db.fetch_monthly_expenses(self.conn, year=year, month=month))
+        if not rows:
+            messagebox.showinfo(
+                "Расходы месяца",
+                f"За {MONTHS_RU[month]} {year} прочих расходов не внесено.",
+                parent=self,
+            )
+            return
+
+        win = tk.Toplevel(self)
+        win.title(f"Все прочие расходы — {MONTHS_RU[month]} {year}")
+        win.geometry("920x500")
+        win.transient(self)
+
+        header = ttk.Frame(win, padding=(10, 10, 10, 0))
+        header.pack(fill="x")
+        ttk.Label(
+            header,
+            text=f"{MONTHS_RU[month]} {year} · все внесённые прочие расходы",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).pack(side="left")
+
+        cols = ("date", "category", "amount", "description")
+        labels = ("Дата расхода", "Категория", "Сумма, руб.", "Описание")
+        widths = (130, 200, 170, 390)
+        tree = ttk.Treeview(win, columns=cols, show="headings", selectmode="browse")
+        for key, label, width in zip(cols, labels, widths):
+            tree.heading(key, text=label, anchor="center")
+            tree.column(key, width=width, anchor="e" if key == "amount" else ("w" if key == "description" else "center"))
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        total_var = tk.StringVar()
+        footer = ttk.Frame(win, padding=(10, 0, 10, 10))
+        footer.pack(fill="x")
+        ttk.Label(
+            footer,
+            textvariable=total_var,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).pack(side="left")
+
+        def reload_rows():
+            for iid in tree.get_children():
+                tree.delete(iid)
+            current_rows = list(db.fetch_monthly_expenses(self.conn, year=year, month=month))
+            total = 0.0
+            for r in current_rows:
+                amount = float(r["amount"] or 0)
+                total += amount
+                tree_insert_wrapped(
+                    tree, "", "end", iid=str(r["id"]),
+                    values=(
+                        fmt_date(r["expense_date"]),
+                        r["category"] or "Прочее",
+                        fmt_money(amount),
+                        r["description"] or "—",
+                    ),
+                )
+            total_var.set(f"Итого за {MONTHS_RU[month]}: {fmt_money(total)}")
+            if not current_rows:
+                win.destroy()
+                self.refresh_summary()
+                self._select_summary_period(year, month)
+                messagebox.showinfo(
+                    "Расходы месяца",
+                    f"За {MONTHS_RU[month]} {year} прочих расходов больше нет.",
+                    parent=self,
+                )
+
+        def remove_selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Удаление", "Выберите расход в таблице.", parent=win)
+                return
+            if not messagebox.askyesno("Удаление", "Удалить выбранный расход?", parent=win):
+                return
+            db.delete_monthly_expense(self.conn, int(sel[0]))
+            self.refresh_summary()
+            self._select_summary_period(year, month)
+            reload_rows()
+
+        ttk.Button(
+            footer, text="Удалить выбранный", command=remove_selected,
+            style="Danger.TButton"
+        ).pack(side="right", padx=4)
+        ttk.Button(footer, text="Закрыть", command=win.destroy).pack(side="right", padx=4)
+        reload_rows()
 
     def _open_summary_month_contracts(self):
-        """Показывает расшифровку выбранного месяца итогов по месяцу добавления."""
+        """Подробная расшифровка финансовых итогов выбранного месяца."""
         sel = self.summary_tree.selection()
         if not sel:
             return
@@ -4856,51 +5264,103 @@ class App(tk.Tk):
         except (ValueError, TypeError):
             return
 
-        # Итоги и главная таблица используют один принцип: месяц фактического
-        # добавления контракта (created_at). Само поле created_at остаётся техническим
-        # и пользователю не показывается.
-        rows = db.fetch_all(self.conn, year=year, month=month, operational_period=False)
+        rows = db.summary_contracts(self.conn, year=year, month=month)
+        summary_rows = db.monthly_summary(self.conn, year=year, month=month)
+        sm = summary_rows[0] if summary_rows else {
+            "contract_sum": 0, "purchase_cost": 0, "logistics": 0, "commission": 0,
+            "other_costs": 0, "guarantee": 0, "tax": 0, "tax_base": 0,
+            "tax_regime": "С доходов", "tax_rate": 7.0, "monthly_expenses": 0,
+            "total_expenses": 0, "profit": 0,
+        }
 
         win = tk.Toplevel(self)
-        win.title(f"Контракты за {MONTHS_RU[month]} {year}")
-        win.geometry("1450x620")
-        win.minsize(1050, 450)
+        win.title(f"Итоги — {MONTHS_RU[month]} {year}")
+        win.geometry("1480x760")
+        win.minsize(1100, 600)
 
         header = ttk.Frame(win, padding=(10, 10, 10, 4))
         header.pack(fill="x")
-        ttk.Label(header, text=f"{MONTHS_RU[month]} {year}",
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
-        ttk.Label(header, text="Итоги и эта расшифровка относятся к месяцу добавления контракта.").pack(
-            side="left", padx=(14, 0))
+        ttk.Label(
+            header, text=f"{MONTHS_RU[month]} {year}",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
+        ).pack(side="left")
+        ttk.Label(
+            header,
+            text=("Обычные контракты — по месяцу заведения; отложенная закупка — "
+                  "только после исполнения, по месяцу даты вручения."),
+            foreground=app_theme.MUTED,
+        ).pack(side="left", padx=(14, 0))
 
-        cols = ("num", "contract_date", "customer", "products", "sum", "exec", "payment")
-        labels = ("№ контракта", "Дата контракта", "Заказчик", "Товары / Кол-во",
+        breakdown = ttk.LabelFrame(win, text="Из чего сложился результат месяца", padding=8)
+        breakdown.pack(fill="x", padx=10, pady=(4, 8))
+        parts = [
+            ("Сумма контрактов", sm.get("contract_sum", 0)),
+            ("Себестоимость", sm.get("purchase_cost", 0)),
+            ("Логистика", sm.get("logistics", 0)),
+            ("Комиссии площадок", sm.get("commission", 0)),
+            ("Другие расходы в контрактах", sm.get("other_costs", 0)),
+            ("Обеспечение / гарантии", sm.get("guarantee", 0)),
+            (f"Налог · {sm.get('tax_regime', 'С доходов')} · {sm.get('tax_rate', 7):g}%", sm.get("tax", 0)),
+            ("Прочие расходы месяца", sm.get("monthly_expenses", 0)),
+            ("ВСЕ РАСХОДЫ", sm.get("total_expenses", 0)),
+            ("ЧИСТАЯ ПРИБЫЛЬ", sm.get("profit", 0)),
+        ]
+        for idx, (label, value) in enumerate(parts):
+            col = idx % 5
+            row = (idx // 5) * 2
+            ttk.Label(breakdown, text=label, foreground=app_theme.MUTED).grid(row=row, column=col, padx=10, sticky="w")
+            ttk.Label(
+                breakdown, text=fmt_money(value),
+                font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
+            ).grid(row=row + 1, column=col, padx=10, pady=(0, 5), sticky="w")
+
+        product_breakdown = ttk.LabelFrame(win, text="Товары по контрактам месяца", padding=8)
+        product_breakdown.pack(fill="x", padx=10, pady=(0, 8))
+        quantities = sm.get("product_quantities", {}) or {}
+        if quantities:
+            for idx, (product, qty) in enumerate(sorted(quantities.items(), key=lambda kv: str(kv[0]).casefold())):
+                ttk.Label(
+                    product_breakdown,
+                    text=f"{product} — {fmt_qty(qty)} шт.",
+                    font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+                ).grid(row=idx // 3, column=idx % 3, sticky="w", padx=12, pady=3)
+        else:
+            ttk.Label(product_breakdown, text="Товаров по контрактам этого месяца нет.", foreground=app_theme.MUTED).pack(anchor="w")
+
+        cols = ("num", "period", "customer", "products", "sum", "exec", "payment")
+        labels = ("№ контракта", "Период учёта", "Заказчик", "Товары / Кол-во",
                   "Сумма контракта", "Исполнение", "Оплата")
-        widths = (150, 120, 410, 340, 150, 140, 140)
+        widths = (140, 135, 360, 330, 150, 135, 135)
         tree = ttk.Treeview(win, columns=cols, show="headings", selectmode="browse")
         for key, label, width in zip(cols, labels, widths):
             tree.heading(key, text=label, anchor="center")
             tree.column(key, width=width, anchor="center")
         tree.pack(fill="both", expand=True, padx=10, pady=6)
 
-        total = 0.0
         for r in rows:
             items_text = "\n".join(
                 f"{it['product'] or '—'} — {fmt_qty(it['qty'])} шт."
                 for it in r.get("items", [])
             ) or "—"
-            contract_date = fmt_date(r.get("contract_date")) or "—"
-            contract_no = r.get("contract_no") or "—"
-            values = (contract_no, contract_date, r.get("customer") or "—", items_text,
-                      fmt_money(r.get("contract_sum") or 0.0), r.get("exec_status") or "—",
-                      r.get("payment_status") or "—")
+            period_note = (
+                "Исполнение " + fmt_date(r.get("summary_period"))
+                if r.get("deferred_purchase")
+                else "Заведение " + fmt_date(r.get("summary_period"))
+            )
+            values = (
+                r.get("contract_no") or "—", period_note, r.get("customer") or "—",
+                items_text, fmt_money(r.get("contract_sum") or 0.0),
+                r.get("exec_status") or "—", r.get("payment_status") or "—"
+            )
             tree_insert_wrapped(tree, "", "end", iid=str(r["id"]), values=values)
-            total += float(r.get("contract_sum") or 0.0)
 
         footer = ttk.Frame(win, padding=(10, 4, 10, 10))
         footer.pack(fill="x")
-        ttk.Label(footer, text=f"Контрактов: {len(rows)} | Сумма: {fmt_money(total)}",
-                  font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
+        ttk.Label(
+            footer,
+            text=f"Контрактов в итогах: {len(rows)} | Чистая прибыль: {fmt_money(sm.get('profit', 0))}",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
+        ).pack(side="left")
         ttk.Button(footer, text="Закрыть", command=win.destroy).pack(side="right")
 
         def open_selected_contract(_event=None):
@@ -4914,12 +5374,10 @@ class App(tk.Tk):
             existing = db.fetch_by_id(self.conn, pid)
             if not existing:
                 return
-
             def on_save(header_data, item_data):
                 db.update_purchase(self.conn, pid, header_data, item_data)
                 self.refresh_all()
                 return pid
-
             PurchaseDialog(self, on_save, existing=existing, conn=self.conn)
 
         tree.bind("<Double-1>", open_selected_contract)
@@ -5065,8 +5523,8 @@ class App(tk.Tk):
             foreground=app_theme.MUTED,
         ).pack(fill="x")
 
-        sum_cols = ["product", "on_hand", "reserved", "available", "future", "warning", "value"]
-        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Будущая потребность", "Внимание", "Стоимость остатка"]
+        sum_cols = ["product", "on_hand", "reserved", "available", "future", "need_buy", "warning", "value"]
+        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Будущая потребность", "Нужно закупить, шт.", "Внимание", "Стоимость остатка"]
         self.stock_summary_tree = ttk.Treeview(
             self.stock_balances_tab,
             columns=sum_cols,
@@ -5153,8 +5611,13 @@ class App(tk.Tk):
                 tag, warning = "low", "Осталось < 50 шт."
             else:
                 tag, warning = "positive", "—"
+            need_to_buy = float(row.get("need_to_buy", 0) or 0)
+            if need_to_buy > 0:
+                warning = f"Закупить {fmt_qty(need_to_buy)} шт."
+                tag = "negative" if available <= 0 else "low"
             values = [row["product"] or "—", fmt_qty(row["on_hand"]), fmt_qty(row["reserved"]), fmt_qty(available),
-                      fmt_qty(row.get("future_demand", 0)), warning, fmt_money(self._stock_product_value(row["product"]))]
+                      fmt_qty(row.get("future_demand", 0)), fmt_qty(need_to_buy), warning,
+                      fmt_money(self._stock_product_value(row["product"]))]
             tree_insert_wrapped(self.stock_summary_tree, "", "end", values=values, tags=(tag,))
 
         for item in self.stock_log_tree.get_children():
@@ -5203,21 +5666,60 @@ class App(tk.Tk):
             return
         product = self.stock_summary_tree.item(sel[0], "values")[0]
         events = db.stock_product_movement(self.conn, product)
+        history = db.fetch_stock_audit(self.conn, product)
+
         win = tk.Toplevel(self)
-        win.title(f"Движение товара: {product}")
-        win.geometry("900x450")
-        ttk.Label(win, text=product, font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), padding=8).pack(anchor="w")
+        win.title(f"Движение и история товара: {product}")
+        win.geometry("1050x620")
+        ttk.Label(
+            win, text=product,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), padding=8
+        ).pack(anchor="w")
+
+        notebook = ttk.Notebook(win)
+        notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        current_tab = ttk.Frame(notebook)
+        history_tab = ttk.Frame(notebook)
+        notebook.add(current_tab, text="Текущее движение")
+        notebook.add(history_tab, text="История событий")
+
         cols = ("date", "type", "qty", "balance", "counterparty", "details")
         labels = ("Дата", "Операция", "Кол-во", "Баланс", "Контрагент", "Основание")
-        tree = ttk.Treeview(win, columns=cols, show="headings")
+        tree = ttk.Treeview(current_tab, columns=cols, show="headings")
         for key, label in zip(cols, labels):
             tree.heading(key, text=label, anchor="center")
             tree.column(key, width=140 if key not in ("details", "counterparty") else 220, anchor="center")
-        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        tree.pack(fill="both", expand=True, padx=6, pady=6)
         for e in events:
-            tree_insert_wrapped(tree, "", "end", values=(fmt_date(e["date"]), e["type"], fmt_qty(e["qty"]),
-                                              fmt_qty(e["balance"]), e["counterparty"], e["details"]))
-        ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=(0,8))
+            tree_insert_wrapped(
+                tree, "", "end",
+                values=(
+                    fmt_date(e["date"]), e["type"], fmt_qty(e["qty"]),
+                    fmt_qty(e["balance"]), e["counterparty"], e["details"]
+                ),
+            )
+
+        hcols = ("datetime", "action", "qty", "contract", "counterparty", "details")
+        hlabels = ("Дата и время", "Событие", "Кол-во", "Контракт", "Контрагент", "Подробности")
+        htree = ttk.Treeview(history_tab, columns=hcols, show="headings")
+        widths = (165, 190, 100, 100, 210, 320)
+        for key, label, width in zip(hcols, hlabels, widths):
+            htree.heading(key, text=label, anchor="center")
+            htree.column(key, width=width, anchor="center" if key != "details" else "w")
+        htree.pack(fill="both", expand=True, padx=6, pady=6)
+        for r in history:
+            dt = str(r["event_at"] or "").replace("T", " ")
+            qty = "—" if r["qty"] is None else fmt_qty(r["qty"])
+            contract = f"#{r['purchase_id']}" if r["purchase_id"] else "—"
+            tree_insert_wrapped(
+                htree, "", "end",
+                values=(
+                    dt, r["action"] or "—", qty, contract,
+                    r["counterparty"] or "—", r["details"] or "—"
+                ),
+            )
+
+        ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=(0, 8))
 
     def _selected_receipt_id(self):
         sel = self.stock_log_tree.selection()
@@ -5299,8 +5801,8 @@ class App(tk.Tk):
 
         ttk.Label(self.tab_competitors, text="Записи о закупках конкурентов", padding=(8, 8, 8, 0),
                   font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
-        log_cols = ["competitor", "product", "trade_type", "qty", "unit_price", "purchase_date"]
-        log_labels = ["Конкурент", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
+        log_cols = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
+        log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
         self.competitor_log_tree = ttk.Treeview(self.tab_competitors, columns=log_cols,
                                                  show="headings", height=6)
         for key, label in zip(log_cols, log_labels):
@@ -5322,8 +5824,8 @@ class App(tk.Tk):
 
         ttk.Label(self.tab_competitors, text="Анализ по конкурентам", padding=(8, 8, 8, 0),
                   font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
-        c_cols = ["competitor", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
-        c_labels = ["Конкурент", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
+        c_cols = ["competitor", "competitor_inn", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
+        c_labels = ["Конкурент", "ИНН", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
                     "Цена отн. рынка"]
         self.competitor_stats_tree = ttk.Treeview(self.tab_competitors, columns=c_cols,
                                                     show="headings", height=5)
@@ -5340,7 +5842,7 @@ class App(tk.Tk):
         for item in self.competitor_log_tree.get_children():
             self.competitor_log_tree.delete(item)
         for r in db.fetch_competitor_records(self.conn):
-            values = [r["competitor"] or "", r["product"] or "", r["trade_type"] or "",
+            values = [r["competitor"] or "", r["competitor_inn"] or "", r["product"] or "", r["trade_type"] or "",
                       fmt_qty(r["qty"]), fmt_money(r["unit_price"]), fmt_date(r["purchase_date"])]
             tree_insert_wrapped(self.competitor_log_tree, "", "end", iid=str(r["id"]), values=values)
 
@@ -5356,7 +5858,7 @@ class App(tk.Tk):
             self.competitor_stats_tree.delete(item)
         for c in db.competitor_stats(self.conn):
             rel = fmt_pct(c["relative_pct"]) if c["relative_pct"] is not None else "—"
-            values = [c["competitor"], c["wins"], fmt_money(c["avg_price"]),
+            values = [c["competitor"], c.get("competitor_inn") or "—", c["wins"], fmt_money(c["avg_price"]),
                       fmt_money(c["min_price"]), fmt_money(c["max_price"]), rel]
             tree_insert_wrapped(self.competitor_stats_tree, "", "end", values=values)
 
