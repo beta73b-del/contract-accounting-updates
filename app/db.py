@@ -1089,12 +1089,16 @@ def _fixed_product_aliases():
             "Рутокен Lite 1010",
             "Рутокен Lite",
             "Рутокен лайт 1010",
+            "Рутокен 1010",
+            "Rutoken Lite 1010",
         ),
         "Рутокен ЭЦП 3.0 3120": (
             "Рутокен ЭЦП 3.0 3120",
             "Рутокен ЭЦП 3.0",
+            "Рутокен ЭЦП 3120",
             "Рутокен 3.0 3120",
             "Рутокен 3120",
+            "Rutoken ЭЦП 3.0 3120",
         ),
     }
     out = {}
@@ -1191,9 +1195,17 @@ def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) 
 def catalog_products(conn: sqlite3.Connection):
     _sync_product_catalog(conn)
     rows = conn.execute("SELECT name FROM product_catalog WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()
-    names = [r["name"] for r in rows]
-    fixed = [name for name in FIXED_PRODUCTS if name in names]
-    other = [name for name in names if name not in FIXED_PRODUCTS]
+    unique = {}
+    for r in rows:
+        name = canonical_product_name(r["name"])
+        key = normalize_product_key(name)
+        if key and key not in unique:
+            unique[key] = name
+    for fixed in FIXED_PRODUCTS:
+        unique[normalize_product_key(fixed)] = fixed
+    names = list(unique.values())
+    fixed = [name for name in FIXED_PRODUCTS if normalize_product_key(name) in unique]
+    other = sorted([name for name in names if name not in FIXED_PRODUCTS], key=str.casefold)
     return fixed + other
 
 def rename_product(conn: sqlite3.Connection, old_name: str, new_name: str):
@@ -2051,6 +2063,39 @@ def available_for_contract(conn: sqlite3.Connection, product: str, purchase_id=N
             available += float(own or 0.0)
     return available
 
+def _product_name_map(conn: sqlite3.Connection):
+    """Карта normalized_key -> единое отображаемое название товара."""
+    _sync_product_catalog(conn)
+    rows = conn.execute(
+        "SELECT name, normalized_key FROM product_catalog WHERE active=1 ORDER BY id"
+    ).fetchall()
+    mapping = {}
+    for row in rows:
+        canonical = canonical_product_name(row["name"])
+        key = normalize_product_key(canonical)
+        if key and key not in mapping:
+            mapping[key] = canonical
+        raw_key = row["normalized_key"] or normalize_product_key(row["name"])
+        if raw_key and raw_key not in mapping:
+            mapping[raw_key] = canonical
+    for fixed in FIXED_PRODUCTS:
+        mapping[normalize_product_key(fixed)] = fixed
+    return mapping
+
+
+def _aggregate_product_rows(rows, name_map):
+    """Суммирует строки товара по нормализованному/каноническому имени."""
+    result = {}
+    for row in rows:
+        raw = row["product"]
+        key = normalize_product_key(canonical_product_name(raw))
+        if not key:
+            continue
+        name = name_map.get(key) or canonical_product_name(raw)
+        result[name] = result.get(name, 0.0) + float(row["q"] or 0.0)
+    return result
+
+
 def stock_summary(conn: sqlite3.Connection):
     """Сводка склада.
 
@@ -2081,10 +2126,11 @@ def stock_summary(conn: sqlite3.Connection):
         "SELECT product, SUM(qty) AS q FROM manual_reservations "
         "WHERE product IS NOT NULL AND product <> '' GROUP BY product"
     ).fetchall()
-    received = {r["product"]: (r["q"] or 0.0) for r in received_rows}
-    shipped = {r["product"]: (r["q"] or 0.0) for r in shipped_rows}
-    reserved = {r["product"]: (r["q"] or 0.0) for r in reserved_rows}
-    manual_reserved = {r["product"]: (r["q"] or 0.0) for r in manual_reserved_rows}
+    name_map = _product_name_map(conn)
+    received = _aggregate_product_rows(received_rows, name_map)
+    shipped = _aggregate_product_rows(shipped_rows, name_map)
+    reserved = _aggregate_product_rows(reserved_rows, name_map)
+    manual_reserved = _aggregate_product_rows(manual_reserved_rows, name_map)
     future_rows = conn.execute(
         """SELECT i.product AS product,
                   SUM(CASE WHEN COALESCE(i.qty,0) > COALESCE(i.stock_qty,0)
@@ -2093,8 +2139,8 @@ def stock_summary(conn: sqlite3.Connection):
            WHERE p.deleted_at IS NULL AND COALESCE(p.stock_written_off,0)=0
            GROUP BY i.product"""
     ).fetchall()
-    future = {r["product"]: (r["q"] or 0.0) for r in future_rows}
-    catalog = set(catalog_products(conn))
+    future = _aggregate_product_rows(future_rows, name_map)
+    catalog = set(name_map.values())
     products = sorted(
         set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future) | catalog,
         key=lambda name: (0 if name in FIXED_PRODUCTS else 1, str(name).casefold()),
