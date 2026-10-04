@@ -186,7 +186,6 @@ CREATE TABLE IF NOT EXISTS monthly_expenses (
     description TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_monthly_expenses_date ON monthly_expenses(expense_date);
-CREATE INDEX IF NOT EXISTS idx_monthly_expenses_period ON monthly_expenses(period_year, period_month);
 
 CREATE TABLE IF NOT EXISTS tax_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
