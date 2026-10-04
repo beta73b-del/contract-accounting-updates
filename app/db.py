@@ -237,6 +237,11 @@ EXEC_STATUS_OPTIONS = ["В процессе", "Отправлено", "Вруч�
 SUPPLY_MODE_OPTIONS = ["Со склада", "Требуется закупка", "Отложенная закупка"]
 PROCUREMENT_STATUS_OPTIONS = ["Не начата", "Заказано"]
 
+FIXED_PRODUCTS = (
+    "Рутокен Lite 1010",
+    "Рутокен ЭЦП 3.0 3120",
+)
+
 BACKUP_KEEP = 20
 
 
@@ -892,6 +897,7 @@ def _migrate_schema(conn: sqlite3.Connection):
         conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
         conn.execute("UPDATE purchase_items SET stock_qty=qty WHERE supply_mode='Со склада' AND COALESCE(stock_qty,0)=0")
         _sync_product_catalog(conn)
+        _ensure_fixed_products(conn)
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -1039,7 +1045,78 @@ def normalize_product_key(name: str) -> str:
     text = re.sub(r"\s*([./,+()])\s*", r"\1", text)
     return text
 
+def _fixed_product_aliases():
+    aliases = {
+        "Рутокен Lite 1010": (
+            "Рутокен Lite 1010",
+            "Рутокен Lite",
+            "Рутокен лайт 1010",
+        ),
+        "Рутокен ЭЦП 3.0 3120": (
+            "Рутокен ЭЦП 3.0 3120",
+            "Рутокен ЭЦП 3.0",
+            "Рутокен 3.0 3120",
+            "Рутокен 3120",
+        ),
+    }
+    out = {}
+    for canonical, names in aliases.items():
+        for name in names:
+            out[normalize_product_key(name)] = canonical
+    return out
+
+
+def canonical_product_name(name: str) -> str:
+    clean = " ".join(str(name or "").split()).strip()
+    if not clean:
+        return ""
+    return _fixed_product_aliases().get(normalize_product_key(clean), clean)
+
+
+def is_fixed_product(name: str) -> bool:
+    canonical = canonical_product_name(name)
+    return canonical in FIXED_PRODUCTS
+
+
+def _ensure_fixed_products(conn: sqlite3.Connection):
+    """Закрепляет два базовых товара и аккуратно объединяет известные старые варианты названий."""
+    aliases = _fixed_product_aliases()
+    for table in ("purchase_items", "stock_receipts", "manual_reservations", "competitor_records"):
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT product FROM {table} WHERE product IS NOT NULL AND trim(product)<>''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for row in rows:
+            old = row["product"]
+            canonical = aliases.get(normalize_product_key(old))
+            if canonical and canonical != old:
+                conn.execute(f"UPDATE {table} SET product=? WHERE product=?", (canonical, old))
+
+    # Удаляем только известные алиасы из справочника, затем гарантируем канонические записи.
+    try:
+        rows = conn.execute("SELECT name, normalized_key FROM product_catalog").fetchall()
+        canonical_keys = {normalize_product_key(x) for x in FIXED_PRODUCTS}
+        for row in rows:
+            canonical = aliases.get(row["normalized_key"])
+            if canonical and row["normalized_key"] not in canonical_keys:
+                conn.execute("DELETE FROM product_catalog WHERE normalized_key=?", (row["normalized_key"],))
+        for name in FIXED_PRODUCTS:
+            key = normalize_product_key(name)
+            conn.execute(
+                """INSERT INTO product_catalog(name, normalized_key, active, created_at)
+                   VALUES(?,?,1,?)
+                   ON CONFLICT(normalized_key) DO UPDATE SET name=excluded.name, active=1""",
+                (name, key, datetime.now().isoformat(timespec="seconds")),
+            )
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
+
 def _sync_product_catalog(conn: sqlite3.Connection):
+    _ensure_fixed_products(conn)
     sources = [
         "SELECT product AS name FROM purchase_items",
         "SELECT product AS name FROM stock_receipts",
@@ -1057,7 +1134,7 @@ def _sync_product_catalog(conn: sqlite3.Connection):
     conn.commit()
 
 def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) -> str:
-    name = " ".join(str(name or "").split()).strip()
+    name = canonical_product_name(name)
     if not name:
         return ""
     key = normalize_product_key(name)
@@ -1076,11 +1153,16 @@ def ensure_product(conn: sqlite3.Connection, name: str, *, commit: bool = True) 
 def catalog_products(conn: sqlite3.Connection):
     _sync_product_catalog(conn)
     rows = conn.execute("SELECT name FROM product_catalog WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()
-    return [r["name"] for r in rows]
+    names = [r["name"] for r in rows]
+    fixed = [name for name in FIXED_PRODUCTS if name in names]
+    other = [name for name in names if name not in FIXED_PRODUCTS]
+    return fixed + other
 
 def rename_product(conn: sqlite3.Connection, old_name: str, new_name: str):
     old_name = str(old_name or "").strip()
     new_name = " ".join(str(new_name or "").split()).strip()
+    if is_fixed_product(old_name):
+        raise ValueError("Закреплённый товар нельзя переименовать.")
     if not old_name or not new_name:
         raise ValueError("Название товара не может быть пустым")
     old_key = normalize_product_key(old_name)
@@ -1722,11 +1804,21 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
             "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
             "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
-            "qty_unpaid": 0.0, "contracts_count": 0,
+            "qty_unpaid": 0.0, "contract_qty_total": 0.0,
+            "product_quantities": {}, "contracts_count": 0,
         })
         g["contracts_count"] += 1
         for field in ("contract_sum","purchase_cost","logistics","commission","other_costs","guarantee"):
             g[field] += float(r[field] or 0.0)
+
+        # Товары по контрактам месяца считаются независимо от этапа исполнения.
+        # Это значение должно 1:1 совпадать с суммой позиций в расшифровке контрактов месяца.
+        contract_items = fetch_items(conn, int(r["id"]))
+        for item in contract_items:
+            product = canonical_product_name(item["product"] or "") or "—"
+            qty = float(item["qty"] or 0.0)
+            g["contract_qty_total"] += qty
+            g["product_quantities"][product] = g["product_quantities"].get(product, 0.0) + qty
 
         # v2.22.2: «Реализовано, шт.» определяется по фактическому этапу
         # движения товара, а не только по наличию даты вручения.
@@ -1782,6 +1874,8 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             "total_expenses":total_expenses,"profit":profit,
             "margin_pct":calc_margin_pct(profit,contract_sum),
             "qty_total":g["qty_total"],"qty_paid":g["qty_paid"],"qty_unpaid":g["qty_unpaid"],
+            "contract_qty_total":g["contract_qty_total"],
+            "product_quantities":dict(sorted(g["product_quantities"].items(), key=lambda kv: kv[0].casefold())),
         })
     return result
 
@@ -1925,7 +2019,11 @@ def stock_summary(conn: sqlite3.Connection):
            GROUP BY i.product"""
     ).fetchall()
     future = {r["product"]: (r["q"] or 0.0) for r in future_rows}
-    products = sorted(set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future))
+    catalog = set(catalog_products(conn))
+    products = sorted(
+        set(received) | set(shipped) | set(reserved) | set(manual_reserved) | set(future) | catalog,
+        key=lambda name: (0 if name in FIXED_PRODUCTS else 1, str(name).casefold()),
+    )
     result = []
     for product in products:
         on_hand = received.get(product, 0.0) - shipped.get(product, 0.0)
