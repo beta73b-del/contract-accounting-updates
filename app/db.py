@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS purchase_items (
     qty REAL,
     supply_mode TEXT NOT NULL DEFAULT 'Со склада',
     stock_qty REAL NOT NULL DEFAULT 0,
-    procurement_reminder_days INTEGER NOT NULL DEFAULT 30
+    procurement_reminder_days INTEGER NOT NULL DEFAULT 30,
+    procurement_status TEXT NOT NULL DEFAULT 'Не начата'
 );
 
 CREATE TABLE IF NOT EXISTS stock_receipts (
@@ -222,6 +223,7 @@ PAYMENT_STATUS_OPTIONS = ["Не оплачено", "Оплачено"]
 # По ТЗ: "Просрочено" больше не ручной статус — вычисляется автоматически по датам
 EXEC_STATUS_OPTIONS = ["В процессе", "Отправлено", "Вручен", "Исполнено"]
 SUPPLY_MODE_OPTIONS = ["Со склада", "Требуется закупка", "Отложенная закупка"]
+PROCUREMENT_STATUS_OPTIONS = ["Не начата", "Заказано"]
 
 BACKUP_KEEP = 20
 
@@ -803,6 +805,7 @@ _PURCHASE_ITEMS_COLUMN_TYPES = {
     "supply_mode": "TEXT NOT NULL DEFAULT 'Со склада'",
     "stock_qty": "REAL NOT NULL DEFAULT 0",
     "procurement_reminder_days": "INTEGER NOT NULL DEFAULT 30",
+    "procurement_status": "TEXT NOT NULL DEFAULT 'Не начата'",
 }
 
 
@@ -1139,12 +1142,15 @@ def _insert_items(conn: sqlite3.Connection, purchase_id: int, items: list):
         mode = (item["supply_mode"] if _has_key(item, "supply_mode") else "Со склада") or "Со склада"
         stock_qty = item["stock_qty"] if _has_key(item, "stock_qty") else (qty if mode == "Со склада" else 0)
         reminder_days = item["procurement_reminder_days"] if _has_key(item, "procurement_reminder_days") else 30
+        procurement_status = (item["procurement_status"] if _has_key(item, "procurement_status") else "Не начата") or "Не начата"
+        if mode == "Со склада":
+            procurement_status = "Не начата"
         stock_qty = max(0.0, min(float(stock_qty or 0), float(qty or 0)))
         conn.execute(
             """INSERT INTO purchase_items
-               (purchase_id, product, qty, supply_mode, stock_qty, procurement_reminder_days)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (purchase_id, product, qty, mode, stock_qty, int(reminder_days or 30)),
+               (purchase_id, product, qty, supply_mode, stock_qty, procurement_reminder_days, procurement_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (purchase_id, product, qty, mode, stock_qty, int(reminder_days or 30), procurement_status),
         )
 
 
