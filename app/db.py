@@ -864,6 +864,12 @@ def _migrate_schema(conn: sqlite3.Connection):
         # v2.17: отдельной приемки больше нет. Старые этапы приводим к новой цепочке.
         conn.execute("UPDATE purchases SET exec_status='Вручен' WHERE exec_status='Приемка Заказчиком'")
         conn.execute("UPDATE purchases SET exec_status='Исполнено' WHERE exec_status='Подписан в ЕИС'")
+
+        # Сначала сохраняем исторический факт, что товар уже покинул склад.
+        conn.execute("""UPDATE purchases SET stock_written_off=1
+                        WHERE exec_status IN ('Отправлено','Вручен','Исполнено')
+                           OR (handover_date IS NOT NULL AND handover_date<>'')""")
+
         # v2.23: «Вручен» и «Исполнено» больше не считаются одним этапом.
         # Исполнено возможно только после оплаты заказчиком.
         conn.execute("""
@@ -882,11 +888,6 @@ def _migrate_schema(conn: sqlite3.Connection):
              WHERE COALESCE(payment_status,'')='Оплачено'
                AND (handover_date IS NOT NULL AND handover_date<>'')
         """)
-        # Фиксируем факт складского списания отдельно от текущего статуса:
-        # после «Вручен»/«Исполнено» товар не должен возвращаться на склад.
-        conn.execute("""UPDATE purchases SET stock_written_off=1
-                        WHERE exec_status IN ('Отправлено','Вручен','Исполнено')
-                           OR (handover_date IS NOT NULL AND handover_date<>'')""")
         # Старые позиции до v2.17 считались полностью обеспеченными складом.
         conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
         conn.execute("UPDATE purchase_items SET stock_qty=qty WHERE supply_mode='Со склада' AND COALESCE(stock_qty,0)=0")
