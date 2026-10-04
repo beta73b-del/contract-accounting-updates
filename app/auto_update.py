@@ -174,7 +174,7 @@ def _psq(value: str) -> str:
 
 
 def build_windows_update_script(pid: int, current_exe: str, new_exe: str, backup_exe: str, log_path: str) -> str:
-    """PowerShell-скрипт: ждёт закрытия приложения, заменяет EXE и запускает его снова."""
+    """PowerShell updater with rollback if the new EXE immediately fails."""
     return f'''$ErrorActionPreference = "Stop"
 $pidToWait = {int(pid)}
 $target = {_psq(current_exe)}
@@ -183,18 +183,32 @@ $backup = {_psq(backup_exe)}
 $log = {_psq(log_path)}
 try {{
     try {{ Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue }} catch {{}}
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 700
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backup) | Out-Null
-    if (Test-Path -LiteralPath $target) {{ Copy-Item -LiteralPath $target -Destination $backup -Force }}
+    if (Test-Path -LiteralPath $target) {{
+        Copy-Item -LiteralPath $target -Destination $backup -Force
+    }}
     Copy-Item -LiteralPath $source -Destination $target -Force
-    Start-Process -FilePath $target
+
+    $newProcess = Start-Process -FilePath $target -PassThru
+    Start-Sleep -Seconds 5
+    if ($newProcess.HasExited) {{
+        throw "Новая версия завершилась сразу после запуска."
+    }}
+
     Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue
     Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Обновление установлено успешно")
 }} catch {{
+    $updateError = $_.Exception.Message
     try {{
-        if (Test-Path -LiteralPath $backup) {{ Copy-Item -LiteralPath $backup -Destination $target -Force }}
+        if (Test-Path -LiteralPath $backup) {{
+            Copy-Item -LiteralPath $backup -Destination $target -Force
+            Start-Process -FilePath $target
+        }}
     }} catch {{}}
-    try {{ Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Ошибка обновления: " + $_.Exception.Message) }} catch {{}}
+    try {{
+        Add-Content -LiteralPath $log -Value ("[" + (Get-Date -Format "HH:mm:ss") + "] Ошибка обновления, выполнен откат: " + $updateError)
+    }} catch {{}}
 }}
 '''
 
