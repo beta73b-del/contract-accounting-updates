@@ -50,7 +50,7 @@ jobs:
       - name: Regression 2.23.2
         run: python tests/test_v2232_products.py
       - name: Regression 2.23.3
-        run: python tests/test_v2235_stability.py
+        run: python tests/test_v2233_stability.py
       - name: Verify paid button date binding
         shell: pwsh
         run: |
