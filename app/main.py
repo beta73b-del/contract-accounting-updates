@@ -356,6 +356,17 @@ def fmt_product_quantities(values):
         parts.append(f"{product} — {fmt_qty(qty)} шт.")
     return "; ".join(parts) if parts else "—"
 
+
+def fit_dialog_size(req_w, req_h, screen_w, screen_h, min_w=640, min_h=360):
+    """Возвращает безопасный размер и позицию небольшого диалога."""
+    width = max(int(min_w), int(req_w or 0) + 20)
+    height = max(int(min_h), int(req_h or 0) + 20)
+    width = min(width, max(320, int(screen_w) - 40))
+    height = min(height, max(240, int(screen_h) - 80))
+    x = max(0, (int(screen_w) - width) // 2)
+    y = max(0, (int(screen_h) - height) // 2)
+    return width, height, x, y
+
 def truncate(text, limit=PRODUCT_DISPLAY_LIMIT):
     text = text or ""
     if len(text) <= limit:
@@ -5001,7 +5012,7 @@ class App(tk.Tk):
         win = tk.Toplevel(self)
         win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
         win.transient(self)
-        win.resizable(False, False)
+        win.resizable(True, True)
         body = ttk.Frame(win, padding=14)
         body.pack(fill="both", expand=True)
 
@@ -5083,6 +5094,29 @@ class App(tk.Tk):
 
         ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+
+        # Windows/Tk иногда фиксирует transient-Toplevel на высоте первой строки,
+        # если resizable(False, False) был установлен до расчёта требуемой геометрии.
+        # Поэтому размер задаём только после построения ВСЕХ полей.
+        try:
+            win.update_idletasks()
+            width, height, x, y = fit_dialog_size(
+                win.winfo_reqwidth(), win.winfo_reqheight(),
+                win.winfo_screenwidth(), win.winfo_screenheight(),
+                min_w=680, min_h=380,
+            )
+            win.minsize(680, 380)
+            win.geometry(f"{width}x{height}+{x}+{y}")
+            win.resizable(False, False)
+            win.lift()
+            win.focus_force()
+            win.grab_set()
+        except tk.TclError:
+            # Даже если система не дала координаты экрана, окно должно остаться
+            # достаточно большим для всех полей.
+            win.geometry("680x380")
+            win.minsize(680, 380)
+
         if amount_entry is not None:
             amount_entry.focus_set()
 
