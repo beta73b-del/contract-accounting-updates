@@ -4745,6 +4745,7 @@ class App(tk.Tk):
 
         ttk.Button(top, text="+ Прочий расход", command=self._add_monthly_expense).pack(side="left", padx=(4, 4))
         ttk.Button(top, text="Расходы месяца", command=self._manage_monthly_expenses).pack(side="left", padx=(4, 10))
+        ttk.Button(top, text="Налоговый режим", command=self._edit_tax_profile).pack(side="left", padx=(4, 10))
         ttk.Label(
             top,
             text="Двойной щелчок по месяцу — подробная расшифровка",
@@ -4887,6 +4888,49 @@ class App(tk.Tk):
         ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
 
+    def _edit_tax_profile(self):
+        year, month = self._selected_summary_period()
+        profile = db.get_tax_profile(self.conn, year, month)
+        win = tk.Toplevel(self)
+        win.title(f"Налоговый режим — {MONTHS_RU[month]} {year}")
+        win.transient(self)
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=14)
+        body.pack(fill="both", expand=True)
+
+        regime_var = tk.StringVar(value=profile.get("regime") or "С доходов")
+        rate_var = tk.StringVar(value=str(profile.get("rate", 7.0)).replace(".", ","))
+
+        ttk.Label(body, text="Режим:").grid(row=0, column=0, sticky="w", padx=(0,10), pady=5)
+        regime = ttk.Combobox(body, textvariable=regime_var, state="readonly", width=28,
+                              values=["С доходов", "Доходы минус расходы"])
+        regime.grid(row=0, column=1, sticky="ew", pady=5)
+        ttk.Label(body, text="Ставка, %:").grid(row=1, column=0, sticky="w", padx=(0,10), pady=5)
+        rate_entry = ttk.Entry(body, textvariable=rate_var, width=18)
+        rate_entry.grid(row=1, column=1, sticky="w", pady=5)
+        self._bind_context_menu(rate_entry)
+
+        ttk.Label(
+            body,
+            text=("Настройка действует с первого числа выбранного месяца и далее, "
+                  "пока не будет задан новый режим для более позднего периода."),
+            wraplength=430, justify="left", foreground=app_theme.MUTED
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8,10))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e")
+        def save():
+            try:
+                rate = parse_money(rate_var.get())
+                db.set_tax_profile(self.conn, f"{year:04d}-{month:02d}-01", regime_var.get(), rate)
+            except ValueError as exc:
+                messagebox.showerror("Ошибка ввода", str(exc), parent=win)
+                return
+            win.destroy()
+            self.refresh_summary()
+        ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
+        ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+
     def _manage_monthly_expenses(self):
         year, month = self._selected_summary_period()
         win = tk.Toplevel(self)
@@ -4957,7 +5001,8 @@ class App(tk.Tk):
         summary_rows = db.monthly_summary(self.conn, year=year, month=month)
         sm = summary_rows[0] if summary_rows else {
             "contract_sum": 0, "purchase_cost": 0, "logistics": 0, "commission": 0,
-            "other_costs": 0, "guarantee": 0, "tax": 0, "monthly_expenses": 0,
+            "other_costs": 0, "guarantee": 0, "tax": 0, "tax_base": 0,
+            "tax_regime": "С доходов", "tax_rate": 7.0, "monthly_expenses": 0,
             "total_expenses": 0, "profit": 0,
         }
 
@@ -4988,7 +5033,7 @@ class App(tk.Tk):
             ("Комиссии площадок", sm.get("commission", 0)),
             ("Другие расходы в контрактах", sm.get("other_costs", 0)),
             ("Обеспечение / гарантии", sm.get("guarantee", 0)),
-            ("Налог", sm.get("tax", 0)),
+            (f"Налог · {sm.get('tax_regime', 'С доходов')} · {sm.get('tax_rate', 7):g}%", sm.get("tax", 0)),
             ("Прочие расходы месяца", sm.get("monthly_expenses", 0)),
             ("ВСЕ РАСХОДЫ", sm.get("total_expenses", 0)),
             ("ЧИСТАЯ ПРИБЫЛЬ", sm.get("profit", 0)),
