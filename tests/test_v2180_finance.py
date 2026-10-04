@@ -58,6 +58,7 @@ def test_deferred_moves_whole_contract_to_execution_month():
     h["exec_status"]="Вручен"
     h["handover_date"]="2026-10-10"
     h["payment_status"]="Оплачено"
+    h["payment_date"]="2026-10-10"
     db.update_purchase(c,pid,h,[dict(x) for x in h["items"]])
     assert db.monthly_summary(c,year=2026,month=9)==[]
     octo=db.monthly_summary(c,year=2026,month=10)
