@@ -3608,6 +3608,9 @@ class App(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_app_close)
         self.deiconify()
+        # v2.23.9: безопасная проверка GitHub Releases после запуска.
+        # Обновляется только EXE; база и данные не заменяются обновлятором.
+        self.after(2500, lambda: self._start_update_check(manual=False))
         self.after(800, self._send_attention_email_if_due)
         # v2.17.2: обновления устанавливаются только вручную.\n        # Автоматическая проверка и замена EXE отключены.\n        self.after(self.DAILY_SIGNING_CHECK_MS, self._daily_signing_tick)
         self.after(self.AUTOSYNC_MS, self._autosync_tick)
@@ -4007,29 +4010,65 @@ class App(tk.Tk):
         self.config(menu=menubar)
 
     def _open_update_settings(self):
-        """v2.17.2: обновления выполняются вручную, вне приложения."""
+        """Настройки безопасного обновления через GitHub Releases."""
         win = tk.Toplevel(self)
         win.title("Обновления")
         win.transient(self)
         win.resizable(False, False)
         frame = ttk.Frame(win, padding=16)
         frame.pack(fill="both", expand=True)
+
         ttk.Label(
             frame,
             text=f"Установленная версия: v{__version__}",
             font=(app_theme.FONT, BASE_FONT_SIZE, "bold"),
         ).pack(anchor="w", pady=(0, 8))
+
         ttk.Label(
             frame,
             text=(
-                "Автоматическое обновление отключено. Новую проверенную сборку "
-                "UchetZakupok.exe устанавливайте вручную при закрытом приложении."
+                "Обновление загружается из GitHub Releases и заменяет только "
+                "UchetZakupok.exe. Рабочая база, документы и папка data обновлятором "
+                "не заменяются. Перед установкой создаётся резервная копия."
             ),
-            wraplength=500,
+            wraplength=540,
             justify="left",
             style="Muted.TLabel",
-        ).pack(anchor="w", pady=(0, 12))
-        ttk.Button(frame, text="Закрыть", command=win.destroy).pack(anchor="w")
+        ).pack(anchor="w", pady=(0, 10))
+
+        auto_var = tk.BooleanVar(
+            value=db.get_setting(self.conn, "update_auto_enabled", "1") != "0"
+        )
+        status_var = tk.StringVar(value="")
+
+        def save_auto():
+            db.set_setting(self.conn, "update_auto_enabled", "1" if auto_var.get() else "0")
+            status_var.set(
+                "Проверка при запуске включена." if auto_var.get()
+                else "Проверка при запуске отключена."
+            )
+
+        ttk.Checkbutton(
+            frame,
+            text="Проверять обновления при запуске",
+            variable=auto_var,
+            command=save_auto,
+        ).pack(anchor="w", pady=(0, 10))
+
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+        ttk.Button(
+            buttons,
+            text="Проверить сейчас",
+            command=lambda: self._start_update_check(
+                manual=True, parent=win, status_var=status_var
+            ),
+            style="Primary.TButton",
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="left")
+
 
     def _start_update_check(self, manual=False, parent=None, status_var=None):
         """Проверяет latest GitHub Release в отдельном потоке."""
@@ -4093,7 +4132,8 @@ class App(tk.Tk):
         install = messagebox.askyesno(
             "Доступно обновление",
             f"Установлена версия v{__version__}.\nДоступна версия v{info.version}.{extra}\n\n"
-            "Перед установкой будет создана резервная копия базы и документов.\nУстановить обновление сейчас?",
+            "Перед установкой будет создана резервная копия данных. Обновляется только EXE.\n"
+            "Установить обновление сейчас?",
             parent=parent or self,
         )
         if install:
@@ -4155,16 +4195,23 @@ class App(tk.Tk):
         self._install_downloaded_update(info, path, update_root, parent=parent)
 
     def _install_downloaded_update(self, info, new_exe, update_root, parent=None):
-        """Синхронизирует данные, делает полный бэкап и запускает внешний updater."""
+        """Делает локальный бэкап данных и запускает внешний updater EXE.
+
+        Важно: обновление приложения не выполняет cloud->local или local->cloud
+        синхронизацию и не заменяет пользовательскую БД.
+        """
         try:
             self._update_storage_status("резервная копия перед обновлением...")
             self.update_idletasks()
             if self.conn is not None:
-                db.sync_working_to_cloud(self.conn)
-            backup = db.create_backup(db.cloud_db_path())
+                try:
+                    self.conn.commit()
+                except Exception:
+                    pass
+            backup = db.create_backup(db.default_db_path())
             if not backup:
                 raise RuntimeError("Не удалось создать резервную копию перед обновлением.")
-            _log(f"Автообновление: создан бэкап {backup}")
+            _log(f"Автообновление: создан локальный бэкап данных {backup}")
             auto_update.launch_windows_installer(new_exe, update_root, db.local_log_path())
         except Exception as exc:
             _log(f"Автообновление: установка отменена: {exc}")
