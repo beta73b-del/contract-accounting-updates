@@ -4859,7 +4859,7 @@ class App(tk.Tk):
         for idx, item in enumerate(items):
             days = item.get("days")
             if item.get("purchase_id") is None:
-                deadline_text = f"Доступно {fmt_qty(item.get('available', 0))} шт."
+                deadline_text = reminder_worker.stock_balance_text(item.get('available', 0), fmt_qty)
                 action_text = "Открыть склад"
             else:
                 deadline = item["date"].strftime(DATE_FMT) if item.get("date") else "Срок не указан"
@@ -6110,7 +6110,7 @@ class App(tk.Tk):
         for item in items[:12]:
             if item["kind"] == "stock":
                 lines.append(
-                    f"— Склад: {item['product']} — доступно {fmt_qty(item.get('available', 0))} шт."
+                    f"— Склад: {item['product']} — {reminder_worker.stock_balance_text(item.get('available', 0), fmt_qty)}"
                 )
                 continue
             days = item.get("days")

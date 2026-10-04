@@ -21,6 +21,15 @@ LOCAL_LOCK_FILENAME = "email_reminder_send.lock"
 LOCK_STALE_SECONDS = 20 * 60
 
 
+def stock_balance_text(available, format_qty=None) -> str:
+    """Показывать дефицит как недостающее количество, а не доступный остаток."""
+    available = float(available or 0)
+    format_qty = format_qty or (lambda value: f"{value:g}")
+    if available < 0:
+        return f"Не хватает {format_qty(-available)} шт."
+    return f"Доступно {format_qty(available)} шт."
+
+
 def _log(message: str) -> None:
     line = f"[{datetime.now().strftime('%H:%M:%S')}] Фоновая почта: {message}"
     try:
@@ -261,7 +270,7 @@ def build_attention_email(items, today: date | None = None) -> tuple[str, str]:
         for item in group:
             if item["kind"] == "stock":
                 lines.append(
-                    f"— {item['product']} | доступно: {item.get('available', 0):g} шт. | {item['action']}"
+                    f"— {item['product']} | {stock_balance_text(item.get('available', 0))} | {item['action']}"
                 )
                 continue
             deadline = item["date"].strftime(DATE_FMT) if item.get("date") else "—"
