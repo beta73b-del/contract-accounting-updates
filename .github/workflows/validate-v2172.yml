@@ -1,0 +1,54 @@
+name: Validate v2.17.2 full regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/validate-v2172.yml
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout v2.17.2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v2.17.1-manual-update
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+      - name: Compile/import and API presence
+        shell: pwsh
+        run: |
+          python -m compileall -q app
+          python -c "import sys; sys.path.insert(0,'app'); import main; assert hasattr(main,'App'); assert hasattr(main.App,'_open_trash'); assert hasattr(main.App,'_backup_now'); assert hasattr(main.App,'_restore_backup')"
+      - name: Full v2.17.2 business regression
+        shell: pwsh
+        run: python tests/test_v2172_regression.py
+      - name: Manual update mode assertions
+        shell: pwsh
+        run: |
+          python -c "from pathlib import Path; s=Path('app/main.py').read_text(encoding='utf-8'); assert 'self.after(1800, self._start_update_check)' not in s; assert 'Автоматическое обновление отключено' in s"
+      - name: Build Windows EXE
+        shell: pwsh
+        run: |
+          Set-Location app
+          python -m PyInstaller --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. main.py
+      - name: Runtime EXE smoke test
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA="$env:RUNNER_TEMP\UchetZakupokSmoke"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $p=Start-Process -FilePath "app\dist\UchetZakupok.exe" -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "EXE exited with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
