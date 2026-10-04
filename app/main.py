@@ -1687,23 +1687,8 @@ class PurchaseDialog(tk.Toplevel):
         return result["value"]
 
     def _document_stage_warnings(self, header=None):
-        if self.existing is None:
-            return []
-        purchase_id = self.existing["id"]
-        categories = {str(a["category"] or "Прочее") for a in db.fetch_attachments(self.conn, purchase_id)}
-        if header is None:
-            widgets = getattr(self, "widgets", {})
-            contract_status = widgets.get("contract_status").get().strip() if widgets.get("contract_status") else ""
-            exec_status = widgets.get("exec_status").get().strip() if widgets.get("exec_status") else ""
-        else:
-            contract_status = header.get("contract_status") or ""
-            exec_status = header.get("exec_status") or ""
-        warnings = []
-        if contract_status == "Заключен" and "Контракт" not in categories:
-            warnings.append("Контракт заключён, но документ категории «Контракт» не прикреплён.")
-        if exec_status == "Исполнено" and not ({"УПД / накладная", "Акт"} & categories):
-            warnings.append("Исполнение завершено, но нет документа категории «УПД / накладная» или «Акт».")
-        return warnings
+        """Документы необязательны: отсутствие вложений не создаёт предупреждений."""
+        return []
 
     def _refresh_document_advice(self):
         if not hasattr(self, "doc_advice_var"):
@@ -2310,14 +2295,12 @@ class PurchaseDialog(tk.Toplevel):
         return db.ensure_product(self.conn, product)
 
     def _apply_auto_status_suggestions(self, header):
-        if header.get("handover_date") and (header.get("exec_status") or "") != "Исполнено":
-            if messagebox.askyesno(
-                "Подсказка по статусу",
-                "Заполнена дата вручения, но исполнение ещё не отмечено как «Исполнено».\n\nУстановить «Исполнено» автоматически?",
-                parent=self,
-            ):
-                header["exec_status"] = "Исполнено"
-                self.widgets["exec_status"].set("Исполнено")
+        # v2.17.3: дата вручения сама переводит исполнение в «Вручен».
+        # Отдельного подтверждения не требуется: факт вручения уже введён пользователем.
+        # Статус «Исполнено» остаётся отдельным последующим этапом.
+        if header.get("handover_date") and (header.get("exec_status") or "") not in ("Вручен", "Исполнено"):
+            header["exec_status"] = "Вручен"
+            self.widgets["exec_status"].set("Вручен")
         return header
 
     def _smart_warnings(self, header):
