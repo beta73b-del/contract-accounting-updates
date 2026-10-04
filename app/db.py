@@ -1142,8 +1142,28 @@ def _audit_changes(old_row, old_items, header, items):
     return changes
 
 # ---------------------------------------------------------------- Контракты (шапка + позиции)
-def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
+def _normalize_execution_after_payment(header: dict, old=None):
+    """Единое бизнес-правило v2.23.
+
+    «Вручен» не означает «Исполнено». Исполнение наступает только когда товар
+    уже вручен заказчику И заказчик оплатил контракт.
+    """
     header = dict(header)
+    exec_status = (header.get("exec_status") or "").strip()
+    payment_status = (header.get("payment_status") or "").strip()
+    handover_date = header.get("handover_date")
+
+    delivered = bool(handover_date) or exec_status in ("Вручен", "Исполнено")
+    if payment_status == "Оплачено" and delivered:
+        header["exec_status"] = "Исполнено"
+    elif exec_status == "Исполнено" and payment_status != "Оплачено":
+        # Не позволяем вручную завершить неоплаченный контракт.
+        header["exec_status"] = "Вручен" if delivered else (old["exec_status"] if old is not None else "В процессе")
+    return header
+
+
+def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
+    header = _normalize_execution_after_payment(dict(header))
     header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header["stock_written_off"] = int(header.get("stock_written_off") or 0)
     cols = ", ".join(HEADER_FIELDS)
@@ -1208,6 +1228,7 @@ def _insert_items(conn: sqlite3.Connection, purchase_id: int, items: list):
 def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, items: list):
     header = dict(header)
     old = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    header = _normalize_execution_after_payment(header, old=old)
     old_items = fetch_items(conn, purchase_id)
     header["created_at"] = (header.get("created_at")
                              or (old["created_at"] if old else None)
@@ -1440,7 +1461,8 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
     return result
 
 def dashboard_kpis(conn: sqlite3.Connection):
-    """KPI главного экрана одним агрегатным запросом + агрегат склада."""
+    """KPI главного экрана. Резерв берётся из той же складской сводки,
+    что и вкладка «Склад», поэтому расхождений между экранами быть не должно."""
     r = conn.execute(
         """SELECT
                SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN 1 ELSE 0 END) AS work_count,
@@ -1448,16 +1470,13 @@ def dashboard_kpis(conn: sqlite3.Connection):
                SUM(CASE WHEN COALESCE(payment_status,'') <> 'Оплачено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS awaiting
            FROM purchases WHERE deleted_at IS NULL"""
     ).fetchone()
-    auto = conn.execute(
-        """SELECT COALESCE(SUM(i.qty),0) AS q FROM purchase_items i
-           JOIN purchases p ON p.id=i.purchase_id
-           WHERE p.deleted_at IS NULL
-             AND (p.handover_date IS NULL OR p.handover_date='')
-             AND COALESCE(p.exec_status,'') <> 'Отправлено'"""
-    ).fetchone()["q"] or 0.0
-    manual = conn.execute("SELECT COALESCE(SUM(qty),0) AS q FROM manual_reservations").fetchone()["q"] or 0.0
-    return {"work_count": int(r["work_count"] or 0), "work_sum": float(r["work_sum"] or 0),
-            "awaiting": float(r["awaiting"] or 0), "reserve_qty": float(auto) + float(manual)}
+    reserve_qty = sum(float(x.get("reserved", 0) or 0) for x in stock_summary(conn))
+    return {
+        "work_count": int(r["work_count"] or 0),
+        "work_sum": float(r["work_sum"] or 0),
+        "awaiting": float(r["awaiting"] or 0),
+        "reserve_qty": reserve_qty,
+    }
 
 
 def deadline_rows(conn: sqlite3.Connection):
