@@ -1330,9 +1330,9 @@ def fetch_by_id(conn: sqlite3.Connection, purchase_id: int):
 
 
 def distinct_years(conn: sqlite3.Connection):
-    """Годы для фильтров по месяцу добавления контракта."""
+    """Годы, встречающиеся в контрактах и финансовых итогах."""
     rows = conn.execute(
-        "SELECT created_at, contract_date FROM purchases WHERE deleted_at IS NULL"
+        "SELECT created_at, contract_date, handover_date FROM purchases WHERE deleted_at IS NULL"
     ).fetchall()
     years = set()
 
@@ -1349,9 +1349,17 @@ def distinct_years(conn: sqlite3.Connection):
         return None
 
     for r in rows:
-        parsed = _parse_period(r["created_at"]) or _parse_period(r["contract_date"])
-        if parsed is not None:
-            years.add(parsed.year)
+        for value in (r["created_at"], r["contract_date"], r["handover_date"]):
+            parsed = _parse_period(value)
+            if parsed is not None:
+                years.add(parsed.year)
+    try:
+        for r in conn.execute("SELECT expense_date FROM monthly_expenses").fetchall():
+            parsed = _parse_period(r["expense_date"])
+            if parsed is not None:
+                years.add(parsed.year)
+    except sqlite3.OperationalError:
+        pass
     return sorted(years)
 
 def distinct_products(conn: sqlite3.Connection):
