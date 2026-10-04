@@ -179,11 +179,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
 CREATE TABLE IF NOT EXISTS monthly_expenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     expense_date TEXT NOT NULL,
+    period_year INTEGER,
+    period_month INTEGER,
     category TEXT NOT NULL DEFAULT 'Прочее',
     amount REAL NOT NULL DEFAULT 0,
     description TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_monthly_expenses_date ON monthly_expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_monthly_expenses_period ON monthly_expenses(period_year, period_month);
 
 CREATE TABLE IF NOT EXISTS tax_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -825,6 +828,14 @@ _PURCHASE_ITEMS_COLUMN_TYPES = {
     "procurement_reminder_days": "INTEGER NOT NULL DEFAULT 30",
     "procurement_status": "TEXT NOT NULL DEFAULT 'Не начата'",
 }
+_MONTHLY_EXPENSES_COLUMN_TYPES = {
+    "expense_date": "TEXT",
+    "period_year": "INTEGER",
+    "period_month": "INTEGER",
+    "category": "TEXT NOT NULL DEFAULT 'Прочее'",
+    "amount": "REAL NOT NULL DEFAULT 0",
+    "description": "TEXT",
+}
 
 
 def _migrate_schema(conn: sqlite3.Connection):
@@ -843,6 +854,7 @@ def _migrate_schema(conn: sqlite3.Connection):
         "attachments": _ATTACHMENTS_COLUMN_TYPES,
         "competitor_records": _COMPETITOR_COLUMN_TYPES,
         "purchase_items": _PURCHASE_ITEMS_COLUMN_TYPES,
+        "monthly_expenses": _MONTHLY_EXPENSES_COLUMN_TYPES,
     }
     for table, columns in tables.items():
         try:
@@ -852,6 +864,23 @@ def _migrate_schema(conn: sqlite3.Connection):
         for col, col_type in columns.items():
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+    # v2.23.5: период прочего расхода хранится отдельно от фактической даты.
+    # Старые записи наследуют период из expense_date.
+    try:
+        conn.execute("""
+            UPDATE monthly_expenses
+               SET period_year = CAST(substr(expense_date,1,4) AS INTEGER)
+             WHERE period_year IS NULL OR period_year=0
+        """)
+        conn.execute("""
+            UPDATE monthly_expenses
+               SET period_month = CAST(substr(expense_date,6,2) AS INTEGER)
+             WHERE period_month IS NULL OR period_month=0
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_monthly_expenses_period ON monthly_expenses(period_year, period_month)")
+    except sqlite3.OperationalError:
+        pass
+
     # Для старых записей без даты заведения используем дату заключения,
     # а если её нет — дату текущей миграции.
     try:
@@ -1739,15 +1768,28 @@ def summary_contracts(conn: sqlite3.Connection, year: int, month: int):
 
 def insert_monthly_expense(conn: sqlite3.Connection, data: dict) -> int:
     expense_date = str(data.get("expense_date") or "").strip()
-    if not _parse_summary_date(expense_date):
+    parsed = _parse_summary_date(expense_date)
+    if not parsed:
         raise ValueError("Некорректная дата расхода")
+
+    period_year = int(data.get("period_year") or parsed.year)
+    period_month = int(data.get("period_month") or parsed.month)
+    if period_month < 1 or period_month > 12:
+        raise ValueError("Некорректный месяц расхода")
+
     amount = float(data.get("amount") or 0)
-    if amount < 0:
-        raise ValueError("Сумма расхода не может быть отрицательной")
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля")
+
     cur = conn.execute(
-        "INSERT INTO monthly_expenses(expense_date, category, amount, description) VALUES(?,?,?,?)",
-        (expense_date, (data.get("category") or "Прочее").strip(), amount,
-         (data.get("description") or "").strip() or None),
+        """INSERT INTO monthly_expenses
+           (expense_date, period_year, period_month, category, amount, description)
+           VALUES(?,?,?,?,?,?)""",
+        (
+            expense_date, period_year, period_month,
+            (data.get("category") or "Прочее").strip(), amount,
+            (data.get("description") or "").strip() or None,
+        ),
     )
     conn.commit()
     return int(cur.lastrowid)
@@ -1757,11 +1799,11 @@ def fetch_monthly_expenses(conn: sqlite3.Connection, year: int = None, month: in
     query = "SELECT * FROM monthly_expenses WHERE 1=1"
     params = []
     if year is not None:
-        query += " AND substr(expense_date,1,4)=?"
-        params.append(str(int(year)))
+        query += " AND COALESCE(period_year, CAST(substr(expense_date,1,4) AS INTEGER))=?"
+        params.append(int(year))
     if month is not None:
-        query += " AND substr(expense_date,6,2)=?"
-        params.append(f"{int(month):02d}")
+        query += " AND COALESCE(period_month, CAST(substr(expense_date,6,2) AS INTEGER))=?"
+        params.append(int(month))
     query += " ORDER BY expense_date, id"
     return conn.execute(query, params).fetchall()
 
@@ -1874,9 +1916,11 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
     # отображаться в итогах.
     for e in fetch_monthly_expenses(conn, year=year, month=month):
         d = _parse_summary_date(e["expense_date"])
-        if not d:
+        ey = int(e["period_year"] or (d.year if d else 0))
+        em = int(e["period_month"] or (d.month if d else 0))
+        if not ey or not em:
             continue
-        key = (d.year, d.month)
+        key = (ey, em)
         g = grouped.setdefault(key, {
             "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
             "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
