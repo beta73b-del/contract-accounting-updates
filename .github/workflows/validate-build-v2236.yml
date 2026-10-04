@@ -54,14 +54,16 @@ jobs:
       - name: Regression 2.23.4
         run: python tests/test_v2234_dashboard_period.py
       - name: Regression 2.23.5
-        run: python tests/test_v2236_monthly_expense_period.py
+        run: python tests/test_v2235_monthly_expense_period.py
+      - name: Regression 2.23.6
+        run: python tests/test_v2236_expense_dialog.py
       - name: Verify paid button date binding
         shell: pwsh
         run: |
           python -c "from pathlib import Path; s=Path('app/main.py').read_text(encoding='utf-8'); assert 'payment_status' in s and 'payment_date' in s and 'Дата оплаты' in s and 'Отметить контракт оплаченным' in s"
       - name: Verify version
         shell: pwsh
-        run: python -c "import sys; sys.path.insert(0,'app'); import app_version; assert app_version.__version__=='2.23.5'"
+        run: python -c "import sys; sys.path.insert(0,'app'); import app_version; assert app_version.__version__=='2.23.6'"
       - name: Build
         shell: pwsh
         run: |
