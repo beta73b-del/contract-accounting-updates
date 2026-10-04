@@ -348,6 +348,15 @@ def fmt_qty(v):
     return f"{v:g}"
 
 
+
+def fmt_product_quantities(values):
+    if not values:
+        return "—"
+    parts = []
+    for product, qty in sorted(values.items(), key=lambda kv: str(kv[0]).casefold()):
+        parts.append(f"{product} — {fmt_qty(qty)} шт.")
+    return "; ".join(parts) if parts else "—"
+
 def truncate(text, limit=PRODUCT_DISPLAY_LIMIT):
     text = text or ""
     if len(text) <= limit:
@@ -3444,7 +3453,7 @@ class ProductCatalogDialog(tk.Toplevel):
         super().__init__(parent); self.conn=conn; self.on_change=on_change
         self.title("Справочник товаров"); self.geometry("720x480"); self.transient(parent)
         frame=ttk.Frame(self,padding=10); frame.pack(fill="both",expand=True)
-        ttk.Label(frame,text="Единый справочник предотвращает дубли названий товара. Переименование обновляет контракт, склад, резерв и анализ конкурентов.",
+        ttk.Label(frame,text="Закреплённые товары: «Рутокен Lite 1010» и «Рутокен ЭЦП 3.0 3120». Они всегда остаются в складе. Другие товары можно добавлять и переименовывать.",
                   wraplength=680,justify="left").pack(fill="x",pady=(0,8))
         self.tree=ttk.Treeview(frame,columns=("name",),show="headings",selectmode="browse")
         self.tree.heading("name",text="Наименование товара",anchor="center"); self.tree.column("name",width=650,anchor="center")
@@ -3467,6 +3476,9 @@ class ProductCatalogDialog(tk.Toplevel):
         sel=self.tree.selection()
         if not sel: return
         old=self.tree.set(sel[0],"name")
+        if db.is_fixed_product(old):
+            messagebox.showinfo("Справочник товаров", "Этот товар закреплён и не может быть переименован.", parent=self)
+            return
         new=simpledialog.askstring("Переименовать товар","Новое наименование:",initialvalue=old,parent=self)
         if new and new.strip()!=old:
             try:
@@ -4834,12 +4846,13 @@ class App(tk.Tk):
             foreground=app_theme.MUTED,
         ).pack(side="left", padx=(10, 0))
 
-        cols = ["month", "contracts", "contract_sum", "expenses", "monthly_expenses", "profit", "margin", "qty_total"]
+        cols = ["month", "contracts", "contract_sum", "expenses", "monthly_expenses", "profit", "margin", "products", "qty_total"]
         labels = [
             "Месяц", "Контрактов", "Сумма контрактов", "Все расходы",
-            "Прочие расходы", "Чистая прибыль", "Рентабельность", "Реализовано, шт."
+            "Прочие расходы", "Чистая прибыль", "Рентабельность",
+            "Товары по контрактам", "Реализовано, шт."
         ]
-        widths = [155, 90, 165, 155, 145, 155, 130, 140]
+        widths = [145, 85, 155, 145, 135, 145, 120, 360, 125]
         self.summary_tree = ttk.Treeview(self.tab_summary, columns=cols, show="headings", selectmode="browse")
         for key, label, width in zip(cols, labels, widths):
             self.summary_tree.heading(key, text=label, anchor="center")
@@ -4858,6 +4871,7 @@ class App(tk.Tk):
         summary = db.monthly_summary(self.conn, year=year, month=None)
         total_sum = total_expenses = total_monthly_expenses = total_profit = total_qty = 0.0
         total_contracts = 0
+        total_products = {}
         self.summary_tree._raw_tree_values = {}
         for row in summary:
             iid = f"month_{row['year']}_{row['month']:02d}"
@@ -4873,6 +4887,7 @@ class App(tk.Tk):
                     fmt_money(row.get("monthly_expenses", 0)),
                     fmt_money(row["profit"]),
                     fmt_pct(row["margin_pct"]),
+                    fmt_product_quantities(row.get("product_quantities", {})),
                     fmt_qty(row["qty_total"]),
                 ],
             )
@@ -4882,6 +4897,8 @@ class App(tk.Tk):
             total_monthly_expenses += row.get("monthly_expenses", 0)
             total_profit += row["profit"]
             total_qty += row["qty_total"]
+            for product, qty in row.get("product_quantities", {}).items():
+                total_products[product] = total_products.get(product, 0.0) + float(qty or 0)
         if len(summary) > 1:
             margin_total = total_profit / total_sum if total_sum else None
             tree_insert_wrapped(
@@ -4889,7 +4906,7 @@ class App(tk.Tk):
                 values=[
                     "ИТОГО", total_contracts, fmt_money(total_sum), fmt_money(total_expenses),
                     fmt_money(total_monthly_expenses), fmt_money(total_profit),
-                    fmt_pct(margin_total), fmt_qty(total_qty)
+                    fmt_pct(margin_total), fmt_product_quantities(total_products), fmt_qty(total_qty)
                 ],
                 tags=("total",),
             )
@@ -5231,6 +5248,19 @@ class App(tk.Tk):
                 breakdown, text=fmt_money(value),
                 font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
             ).grid(row=row + 1, column=col, padx=10, pady=(0, 5), sticky="w")
+
+        product_breakdown = ttk.LabelFrame(win, text="Товары по контрактам месяца", padding=8)
+        product_breakdown.pack(fill="x", padx=10, pady=(0, 8))
+        quantities = sm.get("product_quantities", {}) or {}
+        if quantities:
+            for idx, (product, qty) in enumerate(sorted(quantities.items(), key=lambda kv: str(kv[0]).casefold())):
+                ttk.Label(
+                    product_breakdown,
+                    text=f"{product} — {fmt_qty(qty)} шт.",
+                    font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+                ).grid(row=idx // 3, column=idx % 3, sticky="w", padx=12, pady=3)
+        else:
+            ttk.Label(product_breakdown, text="Товаров по контрактам этого месяца нет.", foreground=app_theme.MUTED).pack(anchor="w")
 
         cols = ("num", "period", "customer", "products", "sum", "exec", "payment")
         labels = ("№ контракта", "Период учёта", "Заказчик", "Товары / Кол-во",
