@@ -1019,7 +1019,7 @@ def open_file_external(path, parent=None):
 class PurchaseDialog(tk.Toplevel):
     """Карточка контракта с быстрым сценарием создания, товарами и документами."""
 
-    DATE_FIELD_KEYS = ("contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline")
+    DATE_FIELD_KEYS = ("contract_date", "sign_deadline", "deadline", "handover_date", "payment_deadline", "payment_date")
 
     HEADER_LABELS = [
         ("platform", "Площадка (ЭТП)", "combo", db.PLATFORM_OPTIONS),
@@ -1040,6 +1040,7 @@ class PurchaseDialog(tk.Toplevel):
         ("handover_date", "Дата вручения (ДД.ММ.ГГГГ)", "entry", None),
         ("payment_status", "Оплата", "combo", db.PAYMENT_STATUS_OPTIONS),
         ("payment_deadline", "Крайний срок оплаты Заказчиком (ДД.ММ.ГГГГ)", "entry", None),
+        ("payment_date", "Дата оплаты (ДД.ММ.ГГГГ)", "entry", None),
         ("exec_status", "Исполнение", "combo", db.EXEC_STATUS_OPTIONS),
         ("note", "Примечание", "text", None),
     ]
@@ -1130,7 +1131,7 @@ class PurchaseDialog(tk.Toplevel):
             "platform", "customer", "contract_no", "contract_date", "law",
             "contract_sum", "purchase_cost"
         }
-        deadline_keys = {"sign_deadline", "deadline", "payment_deadline"}
+        deadline_keys = {"sign_deadline", "deadline", "payment_deadline", "payment_date"}
         state_keys = {"contract_status", "exec_status", "payment_status"}
 
         contract_specs = [spec for spec in self.HEADER_LABELS if spec[0] in contract_keys]
@@ -2119,7 +2120,7 @@ class PurchaseDialog(tk.Toplevel):
             else:
                 info_text = "Срок оплаты не указан"
             action_text = "Отметить контракт оплаченным"
-            self._next_action_target = ("payment_status", "Оплачено", None, None)
+            self._next_action_target = ("payment_status", "Оплачено", "payment_date", "Дата оплаты")
         else:
             info_text = "Контракт завершён — действий не требуется"
 
@@ -2377,7 +2378,23 @@ class PurchaseDialog(tk.Toplevel):
             header["exec_status"] = "Вручен"
             self.widgets["exec_status"].set("Вручен")
 
-        # v2.23: исполнение завершается только после оплаты заказчиком.
+        # Оплата фиксируется отдельной датой. При быстром действии дата уже
+        # подставлена, а при ручном выборе «Оплачено» без даты используем сегодня.
+        if (header.get("payment_status") or "") == "Оплачено":
+            if not header.get("payment_date"):
+                header["payment_date"] = date.today().isoformat()
+                try:
+                    self.widgets["payment_date"].set(date.today().strftime(DATE_FMT))
+                except Exception:
+                    pass
+        else:
+            header["payment_date"] = None
+            try:
+                self.widgets["payment_date"].set("")
+            except Exception:
+                pass
+
+        # Исполнение завершается только после оплаты уже вручённого контракта.
         delivered = bool(header.get("handover_date")) or (header.get("exec_status") or "") in ("Вручен", "Исполнено")
         if (header.get("payment_status") or "") == "Оплачено" and delivered:
             header["exec_status"] = "Исполнено"
@@ -2398,12 +2415,15 @@ class PurchaseDialog(tk.Toplevel):
         deadline=parse_date_iso_to_date(header.get("deadline"))
         handover=parse_date_iso_to_date(header.get("handover_date"))
         pay=parse_date_iso_to_date(header.get("payment_deadline"))
+        paid_on=parse_date_iso_to_date(header.get("payment_date"))
         if cdate and deadline and deadline < cdate:
             warnings.append("Срок исполнения раньше даты заключения контракта.")
         if cdate and handover and handover < cdate:
             warnings.append("Дата вручения раньше даты заключения контракта.")
         if cdate and pay and pay < cdate:
             warnings.append("Крайний срок оплаты раньше даты заключения контракта.")
+        if handover and paid_on and paid_on < handover:
+            warnings.append("Дата оплаты раньше даты вручения.")
         total_cost=sum(float(header.get(k) or 0) for k in ("purchase_cost","logistics","commission","other_costs","guarantee"))
         if header.get("contract_sum") is not None and total_cost > float(header.get("contract_sum") or 0):
             warnings.append(f"Расходы ({fmt_money(total_cost)}) больше суммы контракта ({fmt_money(header.get('contract_sum'))}).")
