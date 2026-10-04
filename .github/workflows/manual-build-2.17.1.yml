@@ -1,13 +1,13 @@
-name: Build v2.17.1 manual Windows artifact
+name: Build v2.17.2 manual Windows artifact
 
 on:
   push:
     branches:
-      - v2.17.1-manual-update
+      - v2.17.2-manual-update
     paths:
       - VERSION
       - app/**
-      - .github/workflows/manual-build-2.17.1.yml
+      - .github/workflows/manual-build-2.17.2.yml
   workflow_dispatch:
 
 permissions:
@@ -30,11 +30,11 @@ jobs:
         shell: pwsh
         run: |
           python -m compileall -q app
-          python -c "import sys; sys.path.insert(0,'app'); import main; assert hasattr(main,'App')"
+          python -c "import sys; sys.path.insert(0,'app'); import main; assert hasattr(main,'App'); assert hasattr(main.App,'_open_trash'); assert hasattr(main.App,'_backup_now'); assert hasattr(main.App,'_restore_backup')"
       - name: Verify version and manual update mode
         shell: pwsh
         run: |
-          python -c "import sys; sys.path.insert(0,'app'); import app_version; assert app_version.__version__=='2.17.1'"
+          python -c "import sys; sys.path.insert(0,'app'); import app_version; assert app_version.__version__=='2.17.2'"
           python -c "from pathlib import Path; s=Path('app/main.py').read_text(encoding='utf-8'); assert 'self.after(1800, self._start_update_check)' not in s; assert 'Автоматическое обновление отключено' in s"
       - name: Verify DB conflict preserves local
         shell: pwsh
@@ -87,7 +87,7 @@ jobs:
       - name: Upload manual installation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UchetZakupok-v2.17.1-manual
+          name: UchetZakupok-v2.17.2-manual
           path: |
             release/UchetZakupok.exe
             release/UchetZakupok.exe.sha256
