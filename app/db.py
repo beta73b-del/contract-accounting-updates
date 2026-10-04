@@ -1153,6 +1153,26 @@ def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
     purchase_id = cur.lastrowid
     _insert_items(conn, purchase_id, items)
     add_audit(conn, purchase_id, "Создан контракт", f"№ {header.get('contract_no') or '—'}")
+    for item in items or []:
+        product = item.get("product") if hasattr(item, "get") else None
+        qty = float(item.get("qty") or 0) if hasattr(item, "get") else 0.0
+        stock_qty = float(item.get("stock_qty") or 0) if hasattr(item, "get") else 0.0
+        if stock_qty > 0 and product:
+            add_audit(conn, purchase_id, "Резерв склада", f"{product}: зарезервировано {stock_qty:g} шт.")
+            add_stock_audit(
+                conn, product, "Резерв под контракт", stock_qty, purchase_id=purchase_id,
+                counterparty=header.get("customer") or "",
+                details=f"Контракт № {header.get('contract_no') or '—'}"
+            )
+        if hasattr(item, "get") and (item.get("procurement_status") or "") == "Заказано":
+            need = max(0.0, qty - stock_qty)
+            add_audit(conn, purchase_id, "Закупка заказана", f"{product or '—'}: ожидается {need:g} шт.")
+            if product and need > 0:
+                add_stock_audit(
+                    conn, product, "Ожидается поступление", need, purchase_id=purchase_id,
+                    counterparty=header.get("customer") or "",
+                    details=f"Контракт № {header.get('contract_no') or '—'}; товар заказан"
+                )
     conn.commit()
     return purchase_id
 
@@ -1192,20 +1212,120 @@ def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, it
     header["created_at"] = (header.get("created_at")
                              or (old["created_at"] if old else None)
                              or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    # Списание идемпотентно: впервые фиксируется на «Отправлено» и больше не сбрасывается.
+
     old_written_off = int(old["stock_written_off"] or 0) if old and "stock_written_off" in old.keys() else 0
     if (header.get("exec_status") or "") == "Отправлено":
         header["stock_written_off"] = 1
     else:
         header["stock_written_off"] = max(old_written_off, int(header.get("stock_written_off") or 0))
+
+    def item_map(seq):
+        out = {}
+        for x in seq or []:
+            get = x.get if hasattr(x, "get") else (lambda k, default=None: x[k] if k in x.keys() else default)
+            product = str(get("product", "") or "").strip()
+            if not product:
+                continue
+            row = out.setdefault(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+            row["qty"] += float(get("qty", 0) or 0)
+            row["stock_qty"] += float(get("stock_qty", 0) or 0)
+            status = get("procurement_status", "Не начата") or "Не начата"
+            if status == "Заказано":
+                row["procurement_status"] = "Заказано"
+        return out
+
+    before_items = item_map(old_items)
+    after_items = item_map(items)
     changes = _audit_changes(old, old_items, header, items)
+
     set_clause = ", ".join(f"{f} = ?" for f in HEADER_FIELDS)
     values = [header.get(f) for f in HEADER_FIELDS] + [purchase_id]
     conn.execute(f"UPDATE purchases SET {set_clause} WHERE id = ?", values)
     conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
     _insert_items(conn, purchase_id, items)
+
     if changes:
         add_audit(conn, purchase_id, "Изменён контракт", "\n".join(changes))
+
+    contract_no = header.get("contract_no") or (old["contract_no"] if old else None) or "—"
+    customer = header.get("customer") or (old["customer"] if old else None) or ""
+
+    if old is not None:
+        old_contract_status = old["contract_status"] or ""
+        new_contract_status = header.get("contract_status") or ""
+        if old_contract_status != new_contract_status:
+            add_audit(conn, purchase_id, "Статус контракта",
+                      f"{old_contract_status or '—'} → {new_contract_status or '—'}")
+
+        old_exec = old["exec_status"] or ""
+        new_exec = header.get("exec_status") or ""
+        if old_exec != new_exec:
+            action = {
+                "Отправлено": "Товар отправлен",
+                "Вручен": "Товар вручен",
+                "Исполнено": "Контракт исполнен",
+            }.get(new_exec, "Статус исполнения")
+            add_audit(conn, purchase_id, action, f"{old_exec or '—'} → {new_exec or '—'}")
+
+        old_payment = old["payment_status"] or ""
+        new_payment = header.get("payment_status") or ""
+        if old_payment != new_payment:
+            add_audit(
+                conn, purchase_id,
+                "Оплата получена" if new_payment == "Оплачено" else "Статус оплаты",
+                f"{old_payment or '—'} → {new_payment or '—'}"
+            )
+
+    new_written_off = int(header.get("stock_written_off") or 0)
+    if old_written_off == 0 and new_written_off == 1:
+        for product, state in after_items.items():
+            stock_qty = float(state.get("stock_qty") or 0)
+            if stock_qty <= 0:
+                continue
+            add_audit(conn, purchase_id, "Списание со склада",
+                      f"{product}: списано {stock_qty:g} шт. при отправке")
+            add_stock_audit(
+                conn, product, "Списание по контракту", -stock_qty,
+                purchase_id=purchase_id, counterparty=customer,
+                details=f"Контракт № {contract_no}; списание зафиксировано при статусе «Отправлено»"
+            )
+
+    for product in sorted(set(before_items) | set(after_items)):
+        before = before_items.get(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+        after = after_items.get(product, {"qty": 0.0, "stock_qty": 0.0, "procurement_status": "Не начата"})
+        old_stock = float(before.get("stock_qty") or 0)
+        new_stock = float(after.get("stock_qty") or 0)
+        if old_stock != new_stock and not (old_written_off == 0 and new_written_off == 1):
+            delta = new_stock - old_stock
+            add_audit(conn, purchase_id, "Резерв склада",
+                      f"{product}: {old_stock:g} → {new_stock:g} шт.")
+            add_stock_audit(
+                conn, product, "Резерв контракта изменён", delta,
+                purchase_id=purchase_id, counterparty=customer,
+                details=f"Контракт № {contract_no}; резерв {old_stock:g} → {new_stock:g} шт."
+            )
+
+        old_proc = before.get("procurement_status") or "Не начата"
+        new_proc = after.get("procurement_status") or "Не начата"
+        if old_proc != new_proc:
+            need = max(0.0, float(after.get("qty") or 0) - new_stock)
+            if new_proc == "Заказано":
+                add_audit(conn, purchase_id, "Закупка заказана",
+                          f"{product}: ожидается поступление {need:g} шт.")
+                add_stock_audit(
+                    conn, product, "Ожидается поступление", need,
+                    purchase_id=purchase_id, counterparty=customer,
+                    details=f"Контракт № {contract_no}; закупка отмечена как заказанная"
+                )
+            else:
+                add_audit(conn, purchase_id, "Закупка возвращена в работу",
+                          f"{product}: статус «{old_proc}» → «{new_proc}»")
+                add_stock_audit(
+                    conn, product, "Закупка возвращена в работу", None,
+                    purchase_id=purchase_id, counterparty=customer,
+                    details=f"Контракт № {contract_no}"
+                )
+
     conn.commit()
 
 
