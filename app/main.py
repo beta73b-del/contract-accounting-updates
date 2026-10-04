@@ -114,10 +114,10 @@ def parse_date_iso_to_date(iso_str):
 
 
 def prepare_monthly_expense_input(date_text, amount_text, category="", description="", expected_period=None):
-    """Валидирует данные формы прочего расхода без зависимости от Tkinter.
+    """Валидирует прочий расход.
 
-    expected_period=(year, month) гарантирует, что расход попадёт именно в
-    выделенный месяц итогов, а не в случайный/текущий период.
+    Дата расхода справочная. Если выбран период итогов, именно он определяет,
+    в какой месяц попадёт расход, независимо от даты.
     """
     normalized = normalize_date_text(date_text)
     expense_iso = parse_date_ru(normalized)
@@ -125,23 +125,22 @@ def prepare_monthly_expense_input(date_text, amount_text, category="", descripti
     if expense_date is None:
         raise ValueError("Укажите корректную дату расхода.")
 
-    if expected_period is not None:
-        year, month = int(expected_period[0]), int(expected_period[1])
-        if (expense_date.year, expense_date.month) != (year, month):
-            raise ValueError(
-                f"Дата расхода должна относиться к выбранному месяцу: {MONTHS_RU[month]} {year}."
-            )
-
     amount = parse_money(amount_text)
     if amount <= 0:
         raise ValueError("Сумма расхода должна быть больше нуля.")
 
-    return {
+    data = {
         "expense_date": expense_iso,
         "category": str(category or "").strip() or "Прочее",
         "amount": amount,
         "description": str(description or "").strip(),
-    }, expense_date
+    }
+    if expected_period is not None:
+        data["period_year"] = int(expected_period[0])
+        data["period_month"] = int(expected_period[1])
+    return data, expense_date
+
+
 
 
 def bind_date_autodots(entry, var):
@@ -4884,6 +4883,15 @@ class App(tk.Tk):
             "total", background=app_theme.SOFT_BLUE,
             font=("TkDefaultFont", BASE_FONT_SIZE, "bold")
         )
+        self._last_summary_period = None
+
+        def remember_summary_period(_event=None):
+            period = self._selected_summary_period(require_selection=False, allow_last=False)
+            if period is not None:
+                self._last_summary_period = period
+
+        self.summary_tree.bind("<<TreeviewSelect>>", remember_summary_period, add="+")
+        self.summary_tree.bind("<ButtonRelease-1>", remember_summary_period, add="+")
         self.summary_tree.bind("<Double-1>", lambda e: self._open_summary_month_contracts())
 
     def refresh_summary(self):
@@ -4933,12 +4941,11 @@ class App(tk.Tk):
                 tags=("total",),
             )
 
-    def _selected_summary_period(self, require_selection=False):
-        """Возвращает период именно выбранной строки итогов.
+    def _selected_summary_period(self, require_selection=False, allow_last=True):
+        """Возвращает период выбранной строки итогов.
 
-        После обновления Treeview selection может сбрасываться, поэтому дополнительно
-        учитываем focus(). Для действий над уже существующим месяцем можно потребовать
-        явное выделение и не подставлять текущий месяц молча.
+        Для действий над месяцем запоминается последний реально выбранный месяц,
+        чтобы Treeview не терял период при смене focus после нажатия кнопки.
         """
         candidates = list(self.summary_tree.selection())
         focused = self.summary_tree.focus()
@@ -4950,9 +4957,14 @@ class App(tk.Tk):
                 continue
             try:
                 _, year_s, month_s = iid.split("_", 2)
-                return int(year_s), int(month_s)
+                period = (int(year_s), int(month_s))
+                self._last_summary_period = period
+                return period
             except (ValueError, TypeError):
                 continue
+
+        if allow_last and getattr(self, "_last_summary_period", None):
+            return self._last_summary_period
 
         if require_selection:
             return None
@@ -4964,12 +4976,14 @@ class App(tk.Tk):
         month = date.today().month if year == date.today().year else 1
         return year, month
 
+
     def _select_summary_period(self, year, month):
         iid = f"month_{int(year)}_{int(month):02d}"
         if self.summary_tree.exists(iid):
             self.summary_tree.selection_set(iid)
             self.summary_tree.focus(iid)
             self.summary_tree.see(iid)
+            self._last_summary_period = (int(year), int(month))
             return True
         return False
 
@@ -4993,7 +5007,7 @@ class App(tk.Tk):
 
         ttk.Label(
             body,
-            text=f"Расход будет добавлен в: {MONTHS_RU[month]} {year}",
+            text=f"Период расхода: {MONTHS_RU[month]} {year} (определяется выбранной строкой)",
             font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
@@ -5026,8 +5040,15 @@ class App(tk.Tk):
             elif label == "Сумма, руб.:":
                 amount_entry = w
 
+        ttk.Label(
+            body,
+            text="Дата расхода сохраняется для справки и не влияет на выбранный месяц итогов.",
+            foreground=app_theme.MUTED,
+            wraplength=520,
+        ).grid(row=len(fields) + 1, column=0, columnspan=2, sticky="w", pady=(4, 2))
+
         buttons = ttk.Frame(body)
-        buttons.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save():
             try:
@@ -5053,7 +5074,7 @@ class App(tk.Tk):
 
             win.destroy()
             self.refresh_summary()
-            self._select_summary_period(saved_date.year, saved_date.month)
+            self._select_summary_period(year, month)
             messagebox.showinfo(
                 "Прочий расход",
                 f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.",
