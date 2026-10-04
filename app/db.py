@@ -35,7 +35,7 @@ HEADER_FIELDS = [
     "platform", "customer", "contract_no", "registry_record", "contract_date", "law",
     "contract_sum", "purchase_cost", "logistics", "commission", "other_costs",
     "guarantee", "contract_status", "sign_deadline", "deadline", "handover_date",
-    "payment_status", "payment_deadline", "exec_status",
+    "payment_status", "payment_deadline", "payment_date", "exec_status",
     "resp_purchase_name", "resp_purchase_phone", "resp_purchase_email",
     "resp_receiving_name", "resp_receiving_phone", "resp_receiving_email",
     "note", "created_at", "stock_written_off",
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     handover_date TEXT,
     payment_status TEXT,
     payment_deadline TEXT,
+    payment_date TEXT,
     exec_status TEXT,
     resp_purchase_name TEXT,
     resp_purchase_phone TEXT,
@@ -799,7 +800,7 @@ _PURCHASES_COLUMN_TYPES = {
     "law": "TEXT", "contract_sum": "REAL", "purchase_cost": "REAL", "logistics": "REAL",
     "commission": "REAL", "other_costs": "REAL", "guarantee": "REAL", "contract_status": "TEXT",
     "sign_deadline": "TEXT", "deadline": "TEXT", "handover_date": "TEXT", "payment_status": "TEXT",
-    "payment_deadline": "TEXT", "exec_status": "TEXT",
+    "payment_deadline": "TEXT", "payment_date": "TEXT", "exec_status": "TEXT",
     "resp_purchase_name": "TEXT", "resp_purchase_phone": "TEXT", "resp_purchase_email": "TEXT",
     "resp_receiving_name": "TEXT", "resp_receiving_phone": "TEXT", "resp_receiving_email": "TEXT",
     "note": "TEXT", "created_at": "TEXT", "deleted_at": "TEXT",
@@ -892,6 +893,15 @@ def _migrate_schema(conn: sqlite3.Connection):
                SET exec_status='Исполнено'
              WHERE COALESCE(payment_status,'')='Оплачено'
                AND (handover_date IS NOT NULL AND handover_date<>'')
+        """)
+        # Для исторических оплаченных записей точная дата оплаты раньше не хранилась.
+        # Если она отсутствует, используем дату вручения только как совместимый fallback.
+        conn.execute("""
+            UPDATE purchases
+               SET payment_date=handover_date
+             WHERE COALESCE(payment_status,'')='Оплачено'
+               AND (payment_date IS NULL OR payment_date='')
+               AND handover_date IS NOT NULL AND handover_date<>''
         """)
         # Старые позиции до v2.17 считались полностью обеспеченными складом.
         conn.execute("UPDATE purchase_items SET supply_mode=COALESCE(NULLIF(supply_mode,''),'Со склада')")
@@ -1034,7 +1044,7 @@ _AUDIT_LABELS = {
     "purchase_cost": "Себестоимость", "logistics": "Логистика", "commission": "Комиссия",
     "other_costs": "Другие расходы", "guarantee": "Обеспечение", "contract_status": "Статус контракта",
     "sign_deadline": "Подписать до", "deadline": "Срок исполнения", "handover_date": "Дата вручения",
-    "payment_status": "Оплата", "payment_deadline": "Срок оплаты", "exec_status": "Исполнение",
+    "payment_status": "Оплата", "payment_deadline": "Срок оплаты", "payment_date": "Дата оплаты", "exec_status": "Исполнение",
     "platform": "Площадка", "law": "Закон", "note": "Примечание", "created_at": "Дата",
 }
 
@@ -1244,21 +1254,30 @@ def _audit_changes(old_row, old_items, header, items):
 
 # ---------------------------------------------------------------- Контракты (шапка + позиции)
 def _normalize_execution_after_payment(header: dict, old=None):
-    """Единое бизнес-правило v2.23.
+    """Единое бизнес-правило v2.23.3.
 
-    «Вручен» не означает «Исполнено». Исполнение наступает только когда товар
-    уже вручен заказчику И заказчик оплатил контракт.
+    Вручен != Исполнено. Исполнение наступает только после оплаты заказчиком.
+    Для новой оплаты без даты подставляется текущая дата; при возврате в
+    «Не оплачено» дата оплаты очищается.
     """
     header = dict(header)
     exec_status = (header.get("exec_status") or "").strip()
     payment_status = (header.get("payment_status") or "").strip()
     handover_date = header.get("handover_date")
+    payment_date = header.get("payment_date")
+
+    if payment_status == "Оплачено":
+        if not payment_date:
+            old_status = (old["payment_status"] or "") if old is not None and "payment_status" in old.keys() else ""
+            old_date = old["payment_date"] if old is not None and "payment_date" in old.keys() else None
+            header["payment_date"] = old_date or date.today().isoformat()
+    else:
+        header["payment_date"] = None
 
     delivered = bool(handover_date) or exec_status in ("Вручен", "Исполнено")
     if payment_status == "Оплачено" and delivered:
         header["exec_status"] = "Исполнено"
     elif exec_status == "Исполнено" and payment_status != "Оплачено":
-        # Не позволяем вручную завершить неоплаченный контракт.
         header["exec_status"] = "Вручен" if delivered else (old["exec_status"] if old is not None else "В процессе")
     return header
 
@@ -1266,7 +1285,8 @@ def _normalize_execution_after_payment(header: dict, old=None):
 def insert_purchase(conn: sqlite3.Connection, header: dict, items: list) -> int:
     header = _normalize_execution_after_payment(dict(header))
     header["created_at"] = header.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    header["stock_written_off"] = int(header.get("stock_written_off") or 0)
+    reached_shipping = (header.get("exec_status") or "") in ("Отправлено", "Вручен", "Исполнено") or bool(header.get("handover_date"))
+    header["stock_written_off"] = 1 if reached_shipping else int(header.get("stock_written_off") or 0)
     cols = ", ".join(HEADER_FIELDS)
     placeholders = ", ".join(["?"] * len(HEADER_FIELDS))
     values = [header.get(f) for f in HEADER_FIELDS]
@@ -1336,7 +1356,8 @@ def update_purchase(conn: sqlite3.Connection, purchase_id: int, header: dict, it
                              or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     old_written_off = int(old["stock_written_off"] or 0) if old and "stock_written_off" in old.keys() else 0
-    if (header.get("exec_status") or "") == "Отправлено":
+    reached_shipping = (header.get("exec_status") or "") in ("Отправлено", "Вручен", "Исполнено") or bool(header.get("handover_date"))
+    if reached_shipping:
         header["stock_written_off"] = 1
     else:
         header["stock_written_off"] = max(old_written_off, int(header.get("stock_written_off") or 0))
@@ -1685,7 +1706,8 @@ def _summary_period_for_purchase(conn: sqlite3.Connection, purchase) -> date | N
     if _is_deferred_purchase_contract(conn, int(purchase["id"])):
         if (purchase["exec_status"] or "") != "Исполнено":
             return None
-        return _parse_summary_date(purchase["handover_date"])
+        payment_date = purchase["payment_date"] if "payment_date" in purchase.keys() else None
+        return _parse_summary_date(payment_date) or _parse_summary_date(purchase["handover_date"])
     return _parse_summary_date(purchase["created_at"]) or _parse_summary_date(purchase["contract_date"])
 
 
