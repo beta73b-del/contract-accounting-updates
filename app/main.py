@@ -5012,7 +5012,11 @@ class App(tk.Tk):
         win = tk.Toplevel(self)
         win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
         win.transient(self)
-        win.resizable(True, True)
+        # Сразу задаём безопасную геометрию. На части Windows/Tk transient-окно
+        # до первого update_idletasks ошибочно получает высоту одной строки.
+        win.geometry("720x430")
+        win.minsize(720, 430)
+        win.resizable(False, False)
         body = ttk.Frame(win, padding=14)
         body.pack(fill="both", expand=True)
 
@@ -5103,9 +5107,9 @@ class App(tk.Tk):
             width, height, x, y = fit_dialog_size(
                 win.winfo_reqwidth(), win.winfo_reqheight(),
                 win.winfo_screenwidth(), win.winfo_screenheight(),
-                min_w=680, min_h=380,
+                min_w=720, min_h=430,
             )
-            win.minsize(680, 380)
+            win.minsize(720, 430)
             win.geometry(f"{width}x{height}+{x}+{y}")
             win.resizable(False, False)
             win.lift()
@@ -5114,7 +5118,7 @@ class App(tk.Tk):
         except tk.TclError:
             # Даже если система не дала координаты экрана, окно должно остаться
             # достаточно большим для всех полей.
-            win.geometry("680x380")
+            win.geometry("720x430")
             win.minsize(680, 380)
 
         if amount_entry is not None:
