@@ -170,6 +170,14 @@ CREATE TABLE IF NOT EXISTS monthly_expenses (
 );
 CREATE INDEX IF NOT EXISTS idx_monthly_expenses_date ON monthly_expenses(expense_date);
 
+CREATE TABLE IF NOT EXISTS tax_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    effective_from TEXT NOT NULL,
+    regime TEXT NOT NULL DEFAULT 'С доходов',
+    rate REAL NOT NULL DEFAULT 7.0
+);
+CREATE INDEX IF NOT EXISTS idx_tax_profiles_effective ON tax_profiles(effective_from);
+
 CREATE INDEX IF NOT EXISTS idx_purchases_active_date ON purchases(deleted_at, contract_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_active_exec ON purchases(deleted_at, exec_status);
 CREATE INDEX IF NOT EXISTS idx_purchases_active_payment ON purchases(deleted_at, payment_status);
@@ -1454,6 +1462,44 @@ def delete_monthly_expense(conn: sqlite3.Connection, expense_id: int):
     conn.commit()
 
 
+def set_tax_profile(conn: sqlite3.Connection, effective_from: str, regime: str, rate: float):
+    d = _parse_summary_date(effective_from)
+    if not d:
+        raise ValueError("Некорректная дата начала действия налогового режима")
+    regime = (regime or "").strip()
+    if regime not in ("С доходов", "Доходы минус расходы"):
+        raise ValueError("Неизвестный налоговый режим")
+    rate = float(rate)
+    if rate < 0 or rate > 100:
+        raise ValueError("Ставка налога должна быть от 0 до 100%")
+    start = d.replace(day=1).isoformat()
+    row = conn.execute("SELECT id FROM tax_profiles WHERE effective_from=? ORDER BY id DESC LIMIT 1", (start,)).fetchone()
+    if row:
+        conn.execute("UPDATE tax_profiles SET regime=?, rate=? WHERE id=?", (regime, rate, row["id"]))
+    else:
+        conn.execute("INSERT INTO tax_profiles(effective_from, regime, rate) VALUES(?,?,?)", (start, regime, rate))
+    conn.commit()
+
+
+def get_tax_profile(conn: sqlite3.Connection, year: int, month: int):
+    period = f"{int(year):04d}-{int(month):02d}-01"
+    row = conn.execute("SELECT * FROM tax_profiles WHERE effective_from <= ? ORDER BY effective_from DESC, id DESC LIMIT 1", (period,)).fetchone()
+    if row:
+        return {"effective_from": row["effective_from"], "regime": row["regime"], "rate": float(row["rate"] or 0)}
+    return {"effective_from": None, "regime": "С доходов", "rate": 7.0}
+
+
+def _calc_month_tax(conn: sqlite3.Connection, year: int, month: int, g: dict):
+    profile = get_tax_profile(conn, year, month)
+    rate = float(profile["rate"] or 0) / 100.0
+    if profile["regime"] == "Доходы минус расходы":
+        deductible = (float(g.get("purchase_cost",0) or 0) + float(g.get("logistics",0) or 0) + float(g.get("commission",0) or 0) + float(g.get("other_costs",0) or 0) + float(g.get("guarantee",0) or 0) + float(g.get("monthly_expenses",0) or 0))
+        base = max(0.0, float(g.get("contract_sum",0) or 0) - deductible)
+    else:
+        base = max(0.0, float(g.get("contract_sum",0) or 0))
+    tax = round(base * rate, 2)
+    return tax, base, profile
+
 def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = None):
     """Финансовые итоги 2.18.
 
@@ -1463,7 +1509,7 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
 
     Прочие месячные расходы из monthly_expenses уменьшают чистую прибыль месяца.
     """
-    from calculations import calc_tax, calc_profit, calc_margin_pct
+    from calculations import calc_profit, calc_margin_pct
 
     rows = conn.execute("SELECT * FROM purchases WHERE deleted_at IS NULL ORDER BY id").fetchall()
     grouped = {}
@@ -1520,7 +1566,7 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
         logistics=g["logistics"]; commission=g["commission"]
         other_costs=g["other_costs"]; guarantee=g["guarantee"]
         monthly_expenses=g["monthly_expenses"]
-        tax=calc_tax(contract_sum)
+        tax,tax_base,tax_profile=_calc_month_tax(conn,y,m,g)
         contract_profit=calc_profit(contract_sum,purchase_cost,logistics,commission,other_costs,guarantee,tax)
         profit=round(contract_profit-monthly_expenses,2)
         total_expenses=round(purchase_cost+logistics+commission+other_costs+guarantee+tax+monthly_expenses,2)
@@ -1528,7 +1574,9 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             "year":y,"month":m,"contracts_count":g["contracts_count"],
             "contract_sum":contract_sum,"purchase_cost":purchase_cost,
             "logistics":logistics,"commission":commission,"other_costs":other_costs,
-            "guarantee":guarantee,"tax":tax,"monthly_expenses":monthly_expenses,
+            "guarantee":guarantee,"tax":tax,"tax_base":tax_base,
+            "tax_regime":tax_profile["regime"],"tax_rate":tax_profile["rate"],
+            "tax_effective_from":tax_profile["effective_from"],"monthly_expenses":monthly_expenses,
             "total_expenses":total_expenses,"profit":profit,
             "margin_pct":calc_margin_pct(profit,contract_sum),
             "qty_total":g["qty_total"],"qty_paid":g["qty_paid"],"qty_unpaid":g["qty_unpaid"],
