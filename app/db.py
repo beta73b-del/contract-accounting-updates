@@ -158,6 +158,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details TEXT
 );
 
+CREATE TABLE IF NOT EXISTS stock_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_at TEXT NOT NULL,
+    product TEXT NOT NULL,
+    action TEXT NOT NULL,
+    qty REAL,
+    purchase_id INTEGER,
+    counterparty TEXT,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_stock_audit_product ON stock_audit(product, event_at);
+
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -1072,6 +1084,25 @@ def add_audit(conn: sqlite3.Connection, purchase_id, action: str, details: str =
         "INSERT INTO audit_log(purchase_id, event_at, action, details) VALUES(?,?,?,?)",
         (purchase_id, datetime.now().isoformat(timespec="seconds"), action, details or ""),
     )
+
+def add_stock_audit(conn: sqlite3.Connection, product: str, action: str, qty=None,
+                    purchase_id=None, counterparty: str = "", details: str = ""):
+    product = str(product or "").strip()
+    if not product:
+        return
+    conn.execute(
+        """INSERT INTO stock_audit(event_at, product, action, qty, purchase_id, counterparty, details)
+           VALUES(?,?,?,?,?,?,?)""",
+        (datetime.now().isoformat(timespec="seconds"), product, action, qty, purchase_id,
+         counterparty or "", details or ""),
+    )
+
+
+def fetch_stock_audit(conn: sqlite3.Connection, product: str):
+    return conn.execute(
+        "SELECT * FROM stock_audit WHERE product=? ORDER BY id DESC", (product,)
+    ).fetchall()
+
 
 def fetch_audit(conn: sqlite3.Connection, purchase_id: int):
     return conn.execute(
