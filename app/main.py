@@ -5366,8 +5366,8 @@ class App(tk.Tk):
             foreground=app_theme.MUTED,
         ).pack(fill="x")
 
-        sum_cols = ["product", "on_hand", "reserved", "available", "future", "warning", "value"]
-        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Будущая потребность", "Внимание", "Стоимость остатка"]
+        sum_cols = ["product", "on_hand", "reserved", "available", "future", "need_buy", "warning", "value"]
+        sum_labels = ["Товар", "Всего, шт.", "Резерв, шт.", "Доступно, шт.", "Будущая потребность", "Нужно закупить, шт.", "Внимание", "Стоимость остатка"]
         self.stock_summary_tree = ttk.Treeview(
             self.stock_balances_tab,
             columns=sum_cols,
@@ -5454,8 +5454,13 @@ class App(tk.Tk):
                 tag, warning = "low", "Осталось < 50 шт."
             else:
                 tag, warning = "positive", "—"
+            need_to_buy = float(row.get("need_to_buy", 0) or 0)
+            if need_to_buy > 0:
+                warning = f"Закупить {fmt_qty(need_to_buy)} шт."
+                tag = "negative" if available <= 0 else "low"
             values = [row["product"] or "—", fmt_qty(row["on_hand"]), fmt_qty(row["reserved"]), fmt_qty(available),
-                      fmt_qty(row.get("future_demand", 0)), warning, fmt_money(self._stock_product_value(row["product"]))]
+                      fmt_qty(row.get("future_demand", 0)), fmt_qty(need_to_buy), warning,
+                      fmt_money(self._stock_product_value(row["product"]))]
             tree_insert_wrapped(self.stock_summary_tree, "", "end", values=values, tags=(tag,))
 
         for item in self.stock_log_tree.get_children():
