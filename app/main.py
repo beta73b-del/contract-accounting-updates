@@ -5425,21 +5425,60 @@ class App(tk.Tk):
             return
         product = self.stock_summary_tree.item(sel[0], "values")[0]
         events = db.stock_product_movement(self.conn, product)
+        history = db.fetch_stock_audit(self.conn, product)
+
         win = tk.Toplevel(self)
-        win.title(f"Движение товара: {product}")
-        win.geometry("900x450")
-        ttk.Label(win, text=product, font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), padding=8).pack(anchor="w")
+        win.title(f"Движение и история товара: {product}")
+        win.geometry("1050x620")
+        ttk.Label(
+            win, text=product,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), padding=8
+        ).pack(anchor="w")
+
+        notebook = ttk.Notebook(win)
+        notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        current_tab = ttk.Frame(notebook)
+        history_tab = ttk.Frame(notebook)
+        notebook.add(current_tab, text="Текущее движение")
+        notebook.add(history_tab, text="История событий")
+
         cols = ("date", "type", "qty", "balance", "counterparty", "details")
         labels = ("Дата", "Операция", "Кол-во", "Баланс", "Контрагент", "Основание")
-        tree = ttk.Treeview(win, columns=cols, show="headings")
+        tree = ttk.Treeview(current_tab, columns=cols, show="headings")
         for key, label in zip(cols, labels):
             tree.heading(key, text=label, anchor="center")
             tree.column(key, width=140 if key not in ("details", "counterparty") else 220, anchor="center")
-        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        tree.pack(fill="both", expand=True, padx=6, pady=6)
         for e in events:
-            tree_insert_wrapped(tree, "", "end", values=(fmt_date(e["date"]), e["type"], fmt_qty(e["qty"]),
-                                              fmt_qty(e["balance"]), e["counterparty"], e["details"]))
-        ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=(0,8))
+            tree_insert_wrapped(
+                tree, "", "end",
+                values=(
+                    fmt_date(e["date"]), e["type"], fmt_qty(e["qty"]),
+                    fmt_qty(e["balance"]), e["counterparty"], e["details"]
+                ),
+            )
+
+        hcols = ("datetime", "action", "qty", "contract", "counterparty", "details")
+        hlabels = ("Дата и время", "Событие", "Кол-во", "Контракт", "Контрагент", "Подробности")
+        htree = ttk.Treeview(history_tab, columns=hcols, show="headings")
+        widths = (165, 190, 100, 100, 210, 320)
+        for key, label, width in zip(hcols, hlabels, widths):
+            htree.heading(key, text=label, anchor="center")
+            htree.column(key, width=width, anchor="center" if key != "details" else "w")
+        htree.pack(fill="both", expand=True, padx=6, pady=6)
+        for r in history:
+            dt = str(r["event_at"] or "").replace("T", " ")
+            qty = "—" if r["qty"] is None else fmt_qty(r["qty"])
+            contract = f"#{r['purchase_id']}" if r["purchase_id"] else "—"
+            tree_insert_wrapped(
+                htree, "", "end",
+                values=(
+                    dt, r["action"] or "—", qty, contract,
+                    r["counterparty"] or "—", r["details"] or "—"
+                ),
+            )
+
+        ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=(0, 8))
 
     def _selected_receipt_id(self):
         sel = self.stock_log_tree.selection()
