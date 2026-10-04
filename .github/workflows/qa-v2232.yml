@@ -1,0 +1,21 @@
+name: QA v2.23.2 integrity
+on:
+  push:
+    branches: [qa-v2.23.2]
+    paths: ["tests/qa_v2232_integrity.py", ".github/workflows/qa-v2232.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qa:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install
+        shell: pwsh
+        run: |
+          python -m pip install -r app/requirements.txt
+      - name: Targeted QA
+        run: python tests/qa_v2232_integrity.py
