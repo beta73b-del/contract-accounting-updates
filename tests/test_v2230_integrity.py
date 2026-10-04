@@ -70,7 +70,7 @@ def test_financial_end_to_end_normal_contract():
     db.insert_receipt(c,{"product":"X","qty":100,"unit_cost":1,"receipt_date":"2026-10-01"})
     pid=db.insert_purchase(c,header("FIN"),[item(q=20,stock=20)])
     # Before shipping: in reserve, not realized.
-    s=db.stock_summary(c)[0]
+    s=next(r for r in db.stock_summary(c) if r["product"]=="X")
     assert s["reserved"]==20 and s["on_hand"]==100 and s["available"]==80
     m=db.monthly_summary(c,2026,10)[0]
     assert m["qty_total"]==0
@@ -78,7 +78,7 @@ def test_financial_end_to_end_normal_contract():
     # Ship: reserve removed, stock written off, realized appears.
     h=db.fetch_by_id(c,pid); h["exec_status"]="Отправлено"
     db.update_purchase(c,pid,h,[dict(x) for x in h["items"]])
-    s=db.stock_summary(c)[0]
+    s=next(r for r in db.stock_summary(c) if r["product"]=="X")
     assert s["reserved"]==0 and s["on_hand"]==80 and s["available"]==80
     m=db.monthly_summary(c,2026,10)[0]
     assert m["qty_total"]==20
