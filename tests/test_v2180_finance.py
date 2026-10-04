@@ -54,8 +54,9 @@ def test_deferred_moves_whole_contract_to_execution_month():
     c=newdb()
     pid=db.insert_purchase(c, header(contract_no="DEF2"), [item(mode="Отложенная закупка",stock=0)])
     h=db.fetch_by_id(c,pid)
-    h["exec_status"]="Исполнено"
+    h["exec_status"]="Вручен"
     h["handover_date"]="2026-10-10"
+    h["payment_status"]="Оплачено"
     db.update_purchase(c,pid,h,[dict(x) for x in h["items"]])
     assert db.monthly_summary(c,year=2026,month=9)==[]
     octo=db.monthly_summary(c,year=2026,month=10)
