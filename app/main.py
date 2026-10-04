@@ -113,6 +113,37 @@ def parse_date_iso_to_date(iso_str):
         return None
 
 
+def prepare_monthly_expense_input(date_text, amount_text, category="", description="", expected_period=None):
+    """Валидирует данные формы прочего расхода без зависимости от Tkinter.
+
+    expected_period=(year, month) гарантирует, что расход попадёт именно в
+    выделенный месяц итогов, а не в случайный/текущий период.
+    """
+    normalized = normalize_date_text(date_text)
+    expense_iso = parse_date_ru(normalized)
+    expense_date = parse_date_iso_to_date(expense_iso)
+    if expense_date is None:
+        raise ValueError("Укажите корректную дату расхода.")
+
+    if expected_period is not None:
+        year, month = int(expected_period[0]), int(expected_period[1])
+        if (expense_date.year, expense_date.month) != (year, month):
+            raise ValueError(
+                f"Дата расхода должна относиться к выбранному месяцу: {MONTHS_RU[month]} {year}."
+            )
+
+    amount = parse_money(amount_text)
+    if amount <= 0:
+        raise ValueError("Сумма расхода должна быть больше нуля.")
+
+    return {
+        "expense_date": expense_iso,
+        "category": str(category or "").strip() or "Прочее",
+        "amount": amount,
+        "description": str(description or "").strip(),
+    }, expense_date
+
+
 def bind_date_autodots(entry, var):
     """Надёжный ввод даты ДД.ММ.ГГГГ без перестановки цифр.
 
@@ -4904,13 +4935,28 @@ class App(tk.Tk):
         return False
 
     def _add_monthly_expense(self):
-        year, month = self._selected_summary_period()
+        period = self._selected_summary_period(require_selection=True)
+        if period is None:
+            messagebox.showinfo(
+                "Прочий расход",
+                "Сначала выделите месяц в таблице «Итоги», затем нажмите «+ Прочий расход».",
+                parent=self,
+            )
+            return
+
+        year, month = period
         win = tk.Toplevel(self)
-        win.title("Добавить прочий расход")
+        win.title(f"Добавить прочий расход — {MONTHS_RU[month]} {year}")
         win.transient(self)
         win.resizable(False, False)
         body = ttk.Frame(win, padding=14)
         body.pack(fill="both", expand=True)
+
+        ttk.Label(
+            body,
+            text=f"Расход будет добавлен в: {MONTHS_RU[month]} {year}",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         date_var = tk.StringVar(value=f"01.{month:02d}.{year}")
         category_var = tk.StringVar(value="Прочее")
@@ -4923,8 +4969,9 @@ class App(tk.Tk):
             ("Сумма, руб.:", amount_var),
             ("Описание:", description_var),
         ]
-        for r, (label, var) in enumerate(fields):
-            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10), pady=5)
+        amount_entry = None
+        for offset, (label, var) in enumerate(fields, start=1):
+            ttk.Label(body, text=label).grid(row=offset, column=0, sticky="w", padx=(0, 10), pady=5)
             if label == "Категория:":
                 w = ttk.Combobox(
                     body, textvariable=var,
@@ -4933,44 +4980,52 @@ class App(tk.Tk):
                 )
             else:
                 w = ttk.Entry(body, textvariable=var, width=39)
-            w.grid(row=r, column=1, sticky="ew", pady=5)
+            w.grid(row=offset, column=1, sticky="ew", pady=5)
             self._bind_context_menu(w)
             if label == "Дата расхода:":
                 bind_date_autodots(w, var)
+            elif label == "Сумма, руб.:":
+                amount_entry = w
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=len(fields), column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save():
             try:
-                expense_date = parse_date_ru(normalize_date_text(date_var.get()))
-                amount = parse_money(amount_var.get())
-                if amount <= 0:
-                    raise ValueError("Сумма расхода должна быть больше нуля.")
-                db.insert_monthly_expense(self.conn, {
-                    "expense_date": expense_date,
-                    "category": category_var.get().strip() or "Прочее",
-                    "amount": amount,
-                    "description": description_var.get().strip(),
-                })
+                data, saved_date = prepare_monthly_expense_input(
+                    date_var.get(),
+                    amount_var.get(),
+                    category_var.get(),
+                    description_var.get(),
+                    expected_period=(year, month),
+                )
+                db.insert_monthly_expense(self.conn, data)
             except ValueError as exc:
                 messagebox.showerror("Ошибка ввода", str(exc), parent=win)
                 return
-            saved_date = parse_date_iso_to_date(expense_date)
+            except Exception as exc:
+                _log(f"Итоги: не удалось сохранить прочий расход: {exc}")
+                messagebox.showerror(
+                    "Ошибка сохранения",
+                    f"Не удалось добавить прочий расход:\n{exc}",
+                    parent=win,
+                )
+                return
+
             win.destroy()
             self.refresh_summary()
-            if saved_date:
-                self._select_summary_period(saved_date.year, saved_date.month)
+            self._select_summary_period(saved_date.year, saved_date.month)
             messagebox.showinfo(
                 "Прочий расход",
-                f"Расход сохранён: {fmt_money(amount)}\n"
-                f"Период: {MONTHS_RU[saved_date.month]} {saved_date.year}" if saved_date
-                else f"Расход сохранён: {fmt_money(amount)}",
+                f"Расход {fmt_money(data['amount'])} добавлен в {MONTHS_RU[month]} {year}.",
                 parent=self,
             )
 
         ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
+        if amount_entry is not None:
+            amount_entry.focus_set()
+
 
     def _edit_tax_profile(self):
         year, month = self._selected_summary_period()
