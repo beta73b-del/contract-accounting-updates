@@ -4856,22 +4856,45 @@ class App(tk.Tk):
                 tags=("total",),
             )
 
-    def _selected_summary_period(self):
-        sel = self.summary_tree.selection()
-        if sel:
-            iid = str(sel[0])
-            if iid.startswith("month_"):
-                try:
-                    _, year_s, month_s = iid.split("_", 2)
-                    return int(year_s), int(month_s)
-                except (ValueError, TypeError):
-                    pass
+    def _selected_summary_period(self, require_selection=False):
+        """Возвращает период именно выбранной строки итогов.
+
+        После обновления Treeview selection может сбрасываться, поэтому дополнительно
+        учитываем focus(). Для действий над уже существующим месяцем можно потребовать
+        явное выделение и не подставлять текущий месяц молча.
+        """
+        candidates = list(self.summary_tree.selection())
+        focused = self.summary_tree.focus()
+        if focused and focused not in candidates:
+            candidates.append(focused)
+        for raw_iid in candidates:
+            iid = str(raw_iid)
+            if not iid.startswith("month_"):
+                continue
+            try:
+                _, year_s, month_s = iid.split("_", 2)
+                return int(year_s), int(month_s)
+            except (ValueError, TypeError):
+                continue
+
+        if require_selection:
+            return None
+
         try:
             year = int(self.summary_year_var.get())
         except (TypeError, ValueError):
             year = date.today().year
         month = date.today().month if year == date.today().year else 1
         return year, month
+
+    def _select_summary_period(self, year, month):
+        iid = f"month_{int(year)}_{int(month):02d}"
+        if self.summary_tree.exists(iid):
+            self.summary_tree.selection_set(iid)
+            self.summary_tree.focus(iid)
+            self.summary_tree.see(iid)
+            return True
+        return False
 
     def _add_monthly_expense(self):
         year, month = self._selected_summary_period()
@@ -4926,8 +4949,18 @@ class App(tk.Tk):
             except ValueError as exc:
                 messagebox.showerror("Ошибка ввода", str(exc), parent=win)
                 return
+            saved_date = parse_date_iso_to_date(expense_date)
             win.destroy()
             self.refresh_summary()
+            if saved_date:
+                self._select_summary_period(saved_date.year, saved_date.month)
+            messagebox.showinfo(
+                "Прочий расход",
+                f"Расход сохранён: {fmt_money(amount)}\n"
+                f"Период: {MONTHS_RU[saved_date.month]} {saved_date.year}" if saved_date
+                else f"Расход сохранён: {fmt_money(amount)}",
+                parent=self,
+            )
 
         ttk.Button(buttons, text="Сохранить", command=save, style="Primary.TButton").pack(side="left", padx=4)
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
@@ -4976,53 +5009,99 @@ class App(tk.Tk):
         ttk.Button(buttons, text="Отмена", command=win.destroy).pack(side="left", padx=4)
 
     def _manage_monthly_expenses(self):
-        year, month = self._selected_summary_period()
+        period = self._selected_summary_period(require_selection=True)
+        if period is None:
+            messagebox.showinfo(
+                "Расходы месяца",
+                "Сначала выделите нужный месяц в таблице «Итоги».",
+                parent=self,
+            )
+            return
+        year, month = period
+        rows = list(db.fetch_monthly_expenses(self.conn, year=year, month=month))
+        if not rows:
+            messagebox.showinfo(
+                "Расходы месяца",
+                f"За {MONTHS_RU[month]} {year} прочих расходов не внесено.",
+                parent=self,
+            )
+            return
+
         win = tk.Toplevel(self)
-        win.title(f"Прочие расходы — {MONTHS_RU[month]} {year}")
-        win.geometry("880x460")
+        win.title(f"Все прочие расходы — {MONTHS_RU[month]} {year}")
+        win.geometry("920x500")
         win.transient(self)
 
+        header = ttk.Frame(win, padding=(10, 10, 10, 0))
+        header.pack(fill="x")
+        ttk.Label(
+            header,
+            text=f"{MONTHS_RU[month]} {year} · все внесённые прочие расходы",
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).pack(side="left")
+
         cols = ("date", "category", "amount", "description")
-        labels = ("Дата", "Категория", "Сумма", "Описание")
-        widths = (120, 190, 140, 390)
+        labels = ("Дата расхода", "Категория", "Сумма, руб.", "Описание")
+        widths = (130, 200, 170, 390)
         tree = ttk.Treeview(win, columns=cols, show="headings", selectmode="browse")
         for key, label, width in zip(cols, labels, widths):
             tree.heading(key, text=label, anchor="center")
-            tree.column(key, width=width, anchor="center" if key != "description" else "w")
+            tree.column(key, width=width, anchor="e" if key == "amount" else ("w" if key == "description" else "center"))
         tree.pack(fill="both", expand=True, padx=10, pady=10)
 
         total_var = tk.StringVar()
         footer = ttk.Frame(win, padding=(10, 0, 10, 10))
         footer.pack(fill="x")
-        ttk.Label(footer, textvariable=total_var, font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(side="left")
+        ttk.Label(
+            footer,
+            textvariable=total_var,
+            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+        ).pack(side="left")
 
         def reload_rows():
             for iid in tree.get_children():
                 tree.delete(iid)
-            rows = db.fetch_monthly_expenses(self.conn, year=year, month=month)
+            current_rows = list(db.fetch_monthly_expenses(self.conn, year=year, month=month))
             total = 0.0
-            for r in rows:
-                total += float(r["amount"] or 0)
+            for r in current_rows:
+                amount = float(r["amount"] or 0)
+                total += amount
                 tree_insert_wrapped(
                     tree, "", "end", iid=str(r["id"]),
                     values=(
-                        fmt_date(r["expense_date"]), r["category"] or "Прочее",
-                        fmt_money(r["amount"]), r["description"] or "—"
+                        fmt_date(r["expense_date"]),
+                        r["category"] or "Прочее",
+                        fmt_money(amount),
+                        r["description"] or "—",
                     ),
                 )
-            total_var.set(f"Итого прочих расходов: {fmt_money(total)}")
+            total_var.set(f"Итого за {MONTHS_RU[month]}: {fmt_money(total)}")
+            if not current_rows:
+                win.destroy()
+                self.refresh_summary()
+                self._select_summary_period(year, month)
+                messagebox.showinfo(
+                    "Расходы месяца",
+                    f"За {MONTHS_RU[month]} {year} прочих расходов больше нет.",
+                    parent=self,
+                )
 
         def remove_selected():
             sel = tree.selection()
             if not sel:
+                messagebox.showinfo("Удаление", "Выберите расход в таблице.", parent=win)
                 return
             if not messagebox.askyesno("Удаление", "Удалить выбранный расход?", parent=win):
                 return
             db.delete_monthly_expense(self.conn, int(sel[0]))
-            reload_rows()
             self.refresh_summary()
+            self._select_summary_period(year, month)
+            reload_rows()
 
-        ttk.Button(footer, text="Удалить выбранный", command=remove_selected, style="Danger.TButton").pack(side="right", padx=4)
+        ttk.Button(
+            footer, text="Удалить выбранный", command=remove_selected,
+            style="Danger.TButton"
+        ).pack(side="right", padx=4)
         ttk.Button(footer, text="Закрыть", command=win.destroy).pack(side="right", padx=4)
         reload_rows()
 
