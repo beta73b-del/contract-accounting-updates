@@ -2190,21 +2190,44 @@ def insert_manual_reservation(conn: sqlite3.Connection, data: dict) -> int:
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RESERVATION_FIELDS]
     cur = conn.execute(f"INSERT INTO manual_reservations ({cols}) VALUES ({placeholders})", values)
+    add_stock_audit(
+        conn, data.get("product"), "Ручной резерв создан", float(data.get("qty") or 0),
+        counterparty=data.get("organization") or "",
+        details=f"Резерв №{cur.lastrowid}; дата {data.get('reserved_date') or '—'}"
+    )
     conn.commit()
     return cur.lastrowid
 
 
 def update_manual_reservation(conn: sqlite3.Connection, reservation_id: int, data: dict):
+    old = fetch_manual_reservation_by_id(conn, reservation_id)
     set_clause = ", ".join(f"{f} = ?" for f in RESERVATION_FIELDS)
     data = dict(data)
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     values = [data.get(f) for f in RESERVATION_FIELDS] + [reservation_id]
     conn.execute(f"UPDATE manual_reservations SET {set_clause} WHERE id = ?", values)
+    old_product = old.get("product") if old else data.get("product")
+    details = (
+        f"Резерв №{reservation_id}: "
+        f"{float(old.get('qty') or 0) if old else 0:g} → {float(data.get('qty') or 0):g} шт."
+    )
+    add_stock_audit(conn, old_product or data.get("product"), "Ручной резерв изменён", None,
+                    counterparty=data.get("organization") or "", details=details)
+    if data.get("product") and data.get("product") != old_product:
+        add_stock_audit(conn, data.get("product"), "Ручной резерв изменён", None,
+                        counterparty=data.get("organization") or "", details=details)
     conn.commit()
 
 
 def delete_manual_reservation(conn: sqlite3.Connection, reservation_id: int):
+    old = fetch_manual_reservation_by_id(conn, reservation_id)
+    if old:
+        add_stock_audit(
+            conn, old.get("product"), "Ручной резерв удалён", -float(old.get("qty") or 0),
+            counterparty=old.get("organization") or "",
+            details=f"Удалён резерв №{reservation_id}; ранее было {float(old.get('qty') or 0):g} шт."
+        )
     conn.execute("DELETE FROM manual_reservations WHERE id = ?", (reservation_id,))
     conn.commit()
 
