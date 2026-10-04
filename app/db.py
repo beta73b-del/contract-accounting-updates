@@ -864,6 +864,24 @@ def _migrate_schema(conn: sqlite3.Connection):
         # v2.17: отдельной приемки больше нет. Старые этапы приводим к новой цепочке.
         conn.execute("UPDATE purchases SET exec_status='Вручен' WHERE exec_status='Приемка Заказчиком'")
         conn.execute("UPDATE purchases SET exec_status='Исполнено' WHERE exec_status='Подписан в ЕИС'")
+        # v2.23: «Вручен» и «Исполнено» больше не считаются одним этапом.
+        # Исполнено возможно только после оплаты заказчиком.
+        conn.execute("""
+            UPDATE purchases
+               SET exec_status = CASE
+                   WHEN handover_date IS NOT NULL AND handover_date<>'' THEN 'Вручен'
+                   WHEN COALESCE(stock_written_off,0)=1 THEN 'Отправлено'
+                   ELSE 'В процессе'
+               END
+             WHERE exec_status='Исполнено'
+               AND COALESCE(payment_status,'Не оплачено')<>'Оплачено'
+        """)
+        conn.execute("""
+            UPDATE purchases
+               SET exec_status='Исполнено'
+             WHERE COALESCE(payment_status,'')='Оплачено'
+               AND (handover_date IS NOT NULL AND handover_date<>'')
+        """)
         # Фиксируем факт складского списания отдельно от текущего статуса:
         # после «Вручен»/«Исполнено» товар не должен возвращаться на склад.
         conn.execute("""UPDATE purchases SET stock_written_off=1
