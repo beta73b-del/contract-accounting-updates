@@ -25,7 +25,7 @@ def test_handover_sets_delivered():
 
 def test_handover_does_not_downgrade_executed():
     d=DummyDialog(); d.widgets["exec_status"].set("Исполнено")
-    h={"handover_date":"2026-10-04","exec_status":"Исполнено"}
+    h={"handover_date":"2026-10-04","exec_status":"Исполнено","payment_status":"Оплачено"}
     out=d._apply_auto_status_suggestions(h)
     assert out["exec_status"]=="Исполнено"
 
