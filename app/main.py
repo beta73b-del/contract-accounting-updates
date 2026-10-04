@@ -2891,6 +2891,7 @@ class ReservationDialog(tk.Toplevel):
 class CompetitorDialog(tk.Toplevel):
     FIELDS_UI = [
         ("competitor", "Конкурент", "entry"),
+        ("competitor_inn", "ИНН", "entry"),
         ("product", "Товар", "entry"),
         ("trade_type", "Вид торгов", "entry"),
         ("qty", "Количество", "entry"),
@@ -2957,6 +2958,12 @@ class CompetitorDialog(tk.Toplevel):
         if not data.get("competitor") or not data.get("product"):
             messagebox.showerror("Ошибка ввода", "Укажите конкурента и товар.", parent=self)
             return
+        if data.get("competitor_inn"):
+            inn = "".join(ch for ch in str(data["competitor_inn"]) if ch.isdigit())
+            if len(inn) not in (10, 12):
+                messagebox.showerror("Ошибка ввода", "ИНН должен содержать 10 или 12 цифр.", parent=self)
+                return
+            data["competitor_inn"] = inn
 
         self.on_save(data, self.existing["id"] if self.existing is not None else None)
         self.destroy()
@@ -5477,8 +5484,8 @@ class App(tk.Tk):
 
         ttk.Label(self.tab_competitors, text="Записи о закупках конкурентов", padding=(8, 8, 8, 0),
                   font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
-        log_cols = ["competitor", "product", "trade_type", "qty", "unit_price", "purchase_date"]
-        log_labels = ["Конкурент", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
+        log_cols = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
+        log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
         self.competitor_log_tree = ttk.Treeview(self.tab_competitors, columns=log_cols,
                                                  show="headings", height=6)
         for key, label in zip(log_cols, log_labels):
@@ -5500,8 +5507,8 @@ class App(tk.Tk):
 
         ttk.Label(self.tab_competitors, text="Анализ по конкурентам", padding=(8, 8, 8, 0),
                   font=("TkDefaultFont", BASE_FONT_SIZE, "bold")).pack(fill="x")
-        c_cols = ["competitor", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
-        c_labels = ["Конкурент", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
+        c_cols = ["competitor", "competitor_inn", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
+        c_labels = ["Конкурент", "ИНН", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
                     "Цена отн. рынка"]
         self.competitor_stats_tree = ttk.Treeview(self.tab_competitors, columns=c_cols,
                                                     show="headings", height=5)
@@ -5518,7 +5525,7 @@ class App(tk.Tk):
         for item in self.competitor_log_tree.get_children():
             self.competitor_log_tree.delete(item)
         for r in db.fetch_competitor_records(self.conn):
-            values = [r["competitor"] or "", r["product"] or "", r["trade_type"] or "",
+            values = [r["competitor"] or "", r["competitor_inn"] or "", r["product"] or "", r["trade_type"] or "",
                       fmt_qty(r["qty"]), fmt_money(r["unit_price"]), fmt_date(r["purchase_date"])]
             tree_insert_wrapped(self.competitor_log_tree, "", "end", iid=str(r["id"]), values=values)
 
@@ -5534,7 +5541,7 @@ class App(tk.Tk):
             self.competitor_stats_tree.delete(item)
         for c in db.competitor_stats(self.conn):
             rel = fmt_pct(c["relative_pct"]) if c["relative_pct"] is not None else "—"
-            values = [c["competitor"], c["wins"], fmt_money(c["avg_price"]),
+            values = [c["competitor"], c.get("competitor_inn") or "—", c["wins"], fmt_money(c["avg_price"]),
                       fmt_money(c["min_price"]), fmt_money(c["max_price"]), rel]
             tree_insert_wrapped(self.competitor_stats_tree, "", "end", values=values)
 
