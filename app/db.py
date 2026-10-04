@@ -1582,21 +1582,30 @@ def fetch_all(conn: sqlite3.Connection, year: int = None, month: int = None, sea
         result.append(row)
     return result
 
-def dashboard_kpis(conn: sqlite3.Connection):
-    """KPI главного экрана. Резерв берётся из той же складской сводки,
-    что и вкладка «Склад», поэтому расхождений между экранами быть не должно."""
-    r = conn.execute(
-        """SELECT
-               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN 1 ELSE 0 END) AS work_count,
-               SUM(CASE WHEN COALESCE(exec_status,'') <> 'Исполнено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS work_sum,
-               SUM(CASE WHEN COALESCE(payment_status,'') <> 'Оплачено' THEN COALESCE(contract_sum,0) ELSE 0 END) AS awaiting
-           FROM purchases WHERE deleted_at IS NULL"""
-    ).fetchone()
+def dashboard_kpis(conn: sqlite3.Connection, year: int = None, month: int = None):
+    """KPI главного экрана для выбранного периода.
+
+    Все контрактные показатели считаются по тем же строкам, что и основная
+    таблица контрактов при выбранных годе/месяце. Складской резерв остаётся
+    текущим фактическим резервом и берётся из stock_summary().
+    """
+    rows = fetch_all(conn, year=year, month=month, operational_period=True)
+
+    total_count = len(rows)
+    work_rows = [r for r in rows if (r.get("exec_status") or "") != "Исполнено"]
+    unpaid_rows = [r for r in rows if (r.get("payment_status") or "") != "Оплачено"]
+
+    total_sum = sum(float(r.get("contract_sum") or 0.0) for r in rows)
+    work_sum = sum(float(r.get("contract_sum") or 0.0) for r in work_rows)
+    awaiting = sum(float(r.get("contract_sum") or 0.0) for r in unpaid_rows)
     reserve_qty = sum(float(x.get("reserved", 0) or 0) for x in stock_summary(conn))
+
     return {
-        "work_count": int(r["work_count"] or 0),
-        "work_sum": float(r["work_sum"] or 0),
-        "awaiting": float(r["awaiting"] or 0),
+        "total_count": int(total_count),
+        "work_count": int(len(work_rows)),
+        "total_sum": float(total_sum),
+        "work_sum": float(work_sum),
+        "awaiting": float(awaiting),
         "reserve_qty": reserve_qty,
     }
 
