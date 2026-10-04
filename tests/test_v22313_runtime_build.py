@@ -11,7 +11,7 @@ def test_release_bundles_vc_runtime():
     s=(ROOT/".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "vcruntime140.dll" in s
     assert "--add-binary" in s
-    assert "pyi-archive-viewer" in s
+    assert "pyi-archive_viewer" in s
     assert "python311\\.dll" in s or "python311.dll" in s
 
 if __name__=="__main__":
