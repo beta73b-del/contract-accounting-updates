@@ -1850,7 +1850,8 @@ def monthly_summary(conn: sqlite3.Connection, year: int = None, month: int = Non
             "contract_sum": 0.0, "purchase_cost": 0.0, "logistics": 0.0,
             "commission": 0.0, "other_costs": 0.0, "guarantee": 0.0,
             "monthly_expenses": 0.0, "qty_total": 0.0, "qty_paid": 0.0,
-            "qty_unpaid": 0.0, "contracts_count": 0,
+            "qty_unpaid": 0.0, "contract_qty_total": 0.0,
+            "product_quantities": {}, "contracts_count": 0,
         })
         g["monthly_expenses"] += float(e["amount"] or 0.0)
 
