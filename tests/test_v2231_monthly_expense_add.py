@@ -16,13 +16,14 @@ def test_prepare_monthly_expense_valid():
     assert data["description"]=="Комиссия"
     assert (d.year,d.month,d.day)==(2026,10,15)
 
-def test_prepare_monthly_expense_wrong_month_rejected():
-    try:
-        main.prepare_monthly_expense_input("01.11.2026","100","Прочее","",expected_period=(2026,10))
-    except ValueError as e:
-        assert "выбранному месяцу" in str(e)
-    else:
-        raise AssertionError("wrong month was accepted")
+def test_prepare_monthly_expense_date_does_not_override_selected_period():
+    data,d = main.prepare_monthly_expense_input(
+        "01.11.2026","100","Прочее","",expected_period=(2026,10)
+    )
+    assert data["expense_date"]=="2026-11-01"
+    assert data["period_year"]==2026
+    assert data["period_month"]==10
+    assert (d.year,d.month,d.day)==(2026,11,1)
 
 def test_prepare_monthly_expense_zero_rejected():
     try:
