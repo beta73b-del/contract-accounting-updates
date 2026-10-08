@@ -4798,7 +4798,7 @@ class App(tk.Tk):
             return
         from excel_export import export_to_excel
         rows = db.fetch_all(self.conn, year=None, month=None)
-        export_to_excel(rows, filepath)
+        export_to_excel(rows, filepath, conn=self.conn)
         messagebox.showinfo("Экспорт", f"Данные выгружены в файл:\n{filepath}")
 
     # ---- Вкладка "Требует внимания" ----
