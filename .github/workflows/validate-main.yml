@@ -76,8 +76,8 @@ jobs:
         shell: pwsh
         run: |
           $listing = pyi-archive_viewer validation/UchetZakupok.exe -l 2>&1 | Out-String
-          if ($listing -notmatch 'python311\\.dll') { throw "python311.dll missing" }
-          if ($listing -notmatch 'vcruntime140\\.dll') { throw "vcruntime140.dll missing" }
+          if ($listing -notmatch 'python311\.dll') { throw "python311.dll missing" }
+          if ($listing -notmatch 'vcruntime140\.dll') { throw "vcruntime140.dll missing" }
           $env:LOCALAPPDATA = "$env:RUNNER_TEMP\\UchetZakupokValidation"
           $env:ZAKUPKI_APP_ROOT = "$env:RUNNER_TEMP\\UchetZakupokValidationApp"
           New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA,$env:ZAKUPKI_APP_ROOT | Out-Null
