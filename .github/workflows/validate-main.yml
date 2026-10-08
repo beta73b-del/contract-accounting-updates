@@ -49,3 +49,53 @@ jobs:
           if ($failed.Count -gt 0) {
             throw "Failed tests: $($failed -join ', ')"
           }
+
+      - name: Build unsigned validation EXE
+        shell: pwsh
+        run: |
+          Push-Location app
+          $pythonExe = (Get-Command python).Source
+          $pythonDir = Split-Path -Parent $pythonExe
+          $extra = @()
+          foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll")) {
+            $candidate = Join-Path $pythonDir $dll
+            if (-not (Test-Path $candidate)) { $candidate = Join-Path $env:SystemRoot "System32\\$dll" }
+            if (Test-Path $candidate) {
+              $extra += "--add-binary"
+              $extra += "$candidate;."
+            }
+          }
+          python -m PyInstaller --clean --noconfirm --onefile --windowed --name UchetZakupok --collect-data spellchecker --additional-hooks-dir=. @extra main.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+          Pop-Location
+          New-Item -ItemType Directory -Force -Path validation | Out-Null
+          Copy-Item app/dist/UchetZakupok.exe validation/UchetZakupok.exe -Force
+          $hash = (Get-FileHash validation/UchetZakupok.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  UchetZakupok.exe" | Set-Content validation/UchetZakupok.exe.sha256 -Encoding ascii
+      - name: Verify embedded runtime and startup
+        shell: pwsh
+        run: |
+          $listing = pyi-archive_viewer validation/UchetZakupok.exe -l 2>&1 | Out-String
+          if ($listing -notmatch 'python311\\.dll') { throw "python311.dll missing" }
+          if ($listing -notmatch 'vcruntime140\\.dll') { throw "vcruntime140.dll missing" }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\\UchetZakupokValidation"
+          $env:ZAKUPKI_APP_ROOT = "$env:RUNNER_TEMP\\UchetZakupokValidationApp"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA,$env:ZAKUPKI_APP_ROOT | Out-Null
+          $p = Start-Process -FilePath "validation/UchetZakupok.exe" -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) { throw "EXE failed to remain running. Exit code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - name: Verify updater restart and rollback
+        shell: pwsh
+        run: |
+          python tests/test_v22315_ota_restart.py --exe validation/UchetZakupok.exe
+          if ($LASTEXITCODE -ne 0) { throw "Updater regression failed" }
+      - name: Upload test build (not release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: UchetZakupok-windows-validation
+          path: |
+            validation/UchetZakupok.exe
+            validation/UchetZakupok.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
