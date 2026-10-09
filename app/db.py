@@ -2507,6 +2507,42 @@ def competitor_stats(conn: sqlite3.Connection):
     return sorted(result, key=lambda item: (item.get("competitor_inn") or "", normalize_competitor_name(item["competitor"])))
 
 
+def competitor_offer_analysis(conn: sqlite3.Connection):
+    """Каждая закупка — отдельное наблюдение цены при конкретном количестве.
+
+    Сравнение проводится только с предыдущей по дате закупкой той же компании
+    (приоритет ИНН) и того же товара. Суммирование количеств недопустимо.
+    """
+    rows = conn.execute(
+        """SELECT id, competitor, competitor_inn, product, trade_type, qty,
+                  unit_price, purchase_date
+           FROM competitor_records
+           WHERE competitor IS NOT NULL AND TRIM(competitor) <> ''
+             AND product IS NOT NULL AND TRIM(product) <> ''
+             AND qty IS NOT NULL AND qty > 0
+             AND unit_price IS NOT NULL AND unit_price >= 0
+           ORDER BY COALESCE(purchase_date, ''), id"""
+    ).fetchall()
+    previous = {}
+    result = []
+    for record in rows:
+        row = dict(record)
+        inn = normalize_inn(row["competitor_inn"])
+        company_key = ("inn", inn) if inn else ("name", normalize_competitor_name(row["competitor"]))
+        group_key = (company_key, row["product"])
+        prior = previous.get(group_key)
+        row["previous_qty"] = prior["qty"] if prior else None
+        row["previous_price"] = prior["unit_price"] if prior else None
+        row["qty_change"] = float(row["qty"]) - float(prior["qty"]) if prior else None
+        row["price_change_pct"] = (
+            (float(row["unit_price"]) - float(prior["unit_price"])) / float(prior["unit_price"])
+            if prior and float(prior["unit_price"]) > 0 else None
+        )
+        result.append(row)
+        previous[group_key] = row
+    return sorted(result, key=lambda r: (r["purchase_date"] or "", r["id"]), reverse=True)
+
+
 # ---------------------------------------------------------------- Калькулятор цены
 def insert_calculator_row(conn: sqlite3.Connection, data: dict) -> int:
     cols = ", ".join(CALCULATOR_FIELDS)
