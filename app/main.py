@@ -5918,10 +5918,11 @@ class App(tk.Tk):
 
         # 3. Анализ по конкурентам. Нижнему блоку даём такой же приоритет,
         # как журналу, чтобы он не был обрезан и показывал нормальное число строк.
-        stats_panel, stats_inner = make_panel("Анализ по конкурентам")
-        c_cols = ["competitor", "competitor_inn", "wins", "avg_price", "min_price", "max_price", "relative_pct"]
-        c_labels = ["Конкурент", "ИНН", "Кол-во побед", "Средняя цена", "Мин. цена", "Макс. цена",
-                    "Цена отн. рынка"]
+        stats_panel, stats_inner = make_panel("Анализ предложений конкурентов (каждая закупка отдельно)")
+        c_cols = ["competitor", "competitor_inn", "product", "qty", "unit_price",
+                  "qty_change", "price_change_pct", "purchase_date"]
+        c_labels = ["Конкурент", "ИНН", "Товар", "Количество, шт.", "Цена за ед., руб.",
+                    "Изменение кол-ва, шт.", "Изменение цены, %", "Дата закупки"]
         self.competitor_stats_tree = ttk.Treeview(
             stats_inner, columns=c_cols, show="headings", height=6
         )
@@ -5957,11 +5958,16 @@ class App(tk.Tk):
 
         for item in self.competitor_stats_tree.get_children():
             self.competitor_stats_tree.delete(item)
-        for c in db.competitor_stats(self.conn):
-            rel = fmt_pct(c["relative_pct"]) if c["relative_pct"] is not None else "—"
-            values = [c["competitor"], c.get("competitor_inn") or "—", c["wins"], fmt_money(c["avg_price"]),
-                      fmt_money(c["min_price"]), fmt_money(c["max_price"]), rel]
-            tree_insert_wrapped(self.competitor_stats_tree, "", "end", values=values)
+        for c in db.competitor_offer_analysis(self.conn):
+            delta = c["price_change_pct"]
+            price_delta = f"{delta * 100:+.1f}%" if delta is not None else "—"
+            qty_delta = c["qty_change"]
+            qty_change = f"{qty_delta:+g}" if qty_delta is not None else "—"
+            values = [c["competitor"], c.get("competitor_inn") or "—", c["product"],
+                      fmt_qty(c["qty"]), fmt_money(c["unit_price"]), qty_change,
+                      price_delta, fmt_date(c["purchase_date"])]
+            tree_insert_wrapped(self.competitor_stats_tree, "", "end",
+                                iid=f"offer_{c['id']}", values=values)
 
     def _add_competitor(self):
         def on_save(data, _id):
