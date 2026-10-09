@@ -3031,6 +3031,7 @@ class CompetitorDialog(tk.Toplevel):
         ("competitor_inn", "ИНН", "entry"),
         ("product", "Товар", "entry"),
         ("trade_type", "Вид торгов", "entry"),
+        ("platform", "Площадка (ЭТП)", "combo"),
         ("qty", "Количество", "entry"),
         ("unit_price", "Цена за единицу, руб.", "entry"),
         ("purchase_date", "Дата закупки (ДД.ММ.ГГГГ)", "entry"),
@@ -3053,6 +3054,8 @@ class CompetitorDialog(tk.Toplevel):
                 date_var = tk.StringVar()
                 w = ttk.Entry(form, width=36, textvariable=date_var)
                 bind_date_autodots(w, date_var)
+            elif key == "platform":
+                w = ttk.Combobox(form, width=33, values=db.PLATFORM_OPTIONS, state="normal")
             else:
                 w = ttk.Entry(form, width=36)
             w.grid(row=row, column=1, sticky="w", pady=4)
@@ -5885,8 +5888,8 @@ class App(tk.Tk):
 
         # 1. Журнал закупок конкурентов.
         log_panel, log_inner = make_panel("Записи о закупках конкурентов")
-        log_cols = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
-        log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Кол-во", "Цена за ед.", "Дата закупки"]
+        log_cols = ["competitor", "competitor_inn", "product", "trade_type", "platform", "qty", "unit_price", "purchase_date"]
+        log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Площадка (ЭТП)", "Кол-во", "Цена за ед.", "Дата закупки"]
         self.competitor_log_tree = ttk.Treeview(
             log_inner, columns=log_cols, show="headings", height=5, selectmode="browse"
         )
@@ -5919,9 +5922,9 @@ class App(tk.Tk):
         # 3. Анализ по конкурентам. Нижнему блоку даём такой же приоритет,
         # как журналу, чтобы он не был обрезан и показывал нормальное число строк.
         stats_panel, stats_inner = make_panel("Анализ предложений конкурентов (каждая закупка отдельно)")
-        c_cols = ["competitor", "competitor_inn", "product", "qty", "unit_price",
+        c_cols = ["competitor", "competitor_inn", "platform", "product", "qty", "unit_price",
                   "qty_change", "price_change_pct", "purchase_date"]
-        c_labels = ["Конкурент", "ИНН", "Товар", "Количество, шт.", "Цена за ед., руб.",
+        c_labels = ["Конкурент", "ИНН", "Площадка (ЭТП)", "Товар", "Количество, шт.", "Цена за ед., руб.",
                     "Изменение кол-ва, шт.", "Изменение цены, %", "Дата закупки"]
         self.competitor_stats_tree = ttk.Treeview(
             stats_inner, columns=c_cols, show="headings", height=6
@@ -5945,7 +5948,7 @@ class App(tk.Tk):
             self.competitor_log_tree.delete(item)
         for r in db.fetch_competitor_records(self.conn):
             values = [r["competitor"] or "", r["competitor_inn"] or "", r["product"] or "", r["trade_type"] or "",
-                      fmt_qty(r["qty"]), fmt_money(r["unit_price"]), fmt_date(r["purchase_date"])]
+                      r["platform"] or "—", fmt_qty(r["qty"]), fmt_money(r["unit_price"]), fmt_date(r["purchase_date"])]
             tree_insert_wrapped(self.competitor_log_tree, "", "end", iid=str(r["id"]), values=values)
 
         for item in self.competitor_product_tree.get_children():
@@ -5963,7 +5966,7 @@ class App(tk.Tk):
             price_delta = f"{delta * 100:+.1f}%" if delta is not None else "—"
             qty_delta = c["qty_change"]
             qty_change = f"{qty_delta:+g}" if qty_delta is not None else "—"
-            values = [c["competitor"], c.get("competitor_inn") or "—", c["product"],
+            values = [c["competitor"], c.get("competitor_inn") or "—", c.get("platform") or "—", c["product"] or "—",
                       fmt_qty(c["qty"]), fmt_money(c["unit_price"]), qty_change,
                       price_delta, fmt_date(c["purchase_date"])]
             tree_insert_wrapped(self.competitor_stats_tree, "", "end",
