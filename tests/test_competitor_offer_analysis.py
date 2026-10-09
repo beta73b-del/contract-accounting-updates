@@ -40,6 +40,13 @@ def test_offers_keep_quantities_separate_and_calculate_price_changes():
     other_product = next(r for r in offers if r["product"] == "Рутокен ЭЦП 3.0 3120")
     assert other_product["price_change_pct"] is None
     assert len(db.fetch_competitor_records(conn)) == 5
+    # Неполная историческая строка остаётся видимой, не участвуя в сравнении.
+    _record(conn, "Конкурент А", "1234567890", "Рутокен Lite 1010", None, None, "2026-09-19")
+    offers = db.competitor_offer_analysis(conn)
+    assert len(offers) == 6
+    incomplete = next(r for r in offers if r["purchase_date"] == "2026-09-19")
+    assert incomplete["qty_change"] is None
+    assert incomplete["price_change_pct"] is None
     conn.close()
 
 
