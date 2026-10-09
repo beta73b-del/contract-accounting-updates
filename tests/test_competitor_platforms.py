@@ -60,6 +60,8 @@ def test_legacy_database_migration_with_safe_backup():
             with sqlite3.connect(backup_path) as back:
                 assert "platform" not in [r[1] for r in back.execute("PRAGMA table_info(competitor_records)")]
                 assert back.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            conn.close()
+            conn = None
             conn = db.get_connection(path)
             assert len(db.fetch_competitor_records(conn)) == 1
             assert db.fetch_competitor_records(conn)[0]["platform"] is None
