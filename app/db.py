@@ -951,6 +951,34 @@ def get_connection(db_path: str = None) -> sqlite3.Connection:
         "SELECT name FROM sqlite_master WHERE type='table' AND name='calculator_rows'"
     )
     is_new_db = cur.fetchone() is None
+
+    # Перед добавлением столбца ЭТП сохраняем согласованную копию старой БД.
+    # Пропускаем временные in-memory базы; исходный файл не перезаписываем.
+    if not is_new_db and path != ":memory:":
+        legacy_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='competitor_records'"
+        ).fetchone()
+        if legacy_table:
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(competitor_records)")}
+            if "platform" not in columns:
+                backup_path = os.path.abspath(path) + ".before_competitor_platform.bak"
+                if not os.path.exists(backup_path):
+                    backup_conn = sqlite3.connect(backup_path)
+                    try:
+                        conn.backup(backup_conn)
+                        check = backup_conn.execute("PRAGMA integrity_check").fetchone()
+                        if not check or check[0] != "ok":
+                            raise sqlite3.DatabaseError("Ошибка проверки резервной копии перед миграцией ЭТП")
+                    except Exception:
+                        backup_conn.close()
+                        try:
+                            os.remove(backup_path)
+                        except OSError:
+                            pass
+                        conn.close()
+                        raise
+                    else:
+                        backup_conn.close()
     conn.executescript(SCHEMA)
     conn.commit()
     _migrate_schema(conn)
