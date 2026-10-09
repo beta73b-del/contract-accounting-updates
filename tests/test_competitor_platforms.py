@@ -1,6 +1,7 @@
 """Площадки конкурентов: независимые закупки, сравнение цен и безопасная миграция."""
 import os
 import sqlite3
+from contextlib import closing
 import sys
 import tempfile
 
@@ -57,7 +58,7 @@ def test_legacy_database_migration_with_safe_backup():
             assert rows[0]["platform"] is None
             backup_path = path + ".before_competitor_platform.bak"
             assert os.path.isfile(backup_path)
-            with sqlite3.connect(backup_path) as back:
+            with closing(sqlite3.connect(backup_path)) as back:
                 assert "platform" not in [r[1] for r in back.execute("PRAGMA table_info(competitor_records)")]
                 assert back.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             conn.close()
