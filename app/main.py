@@ -4973,7 +4973,7 @@ class App(tk.Tk):
 
         self.summary_tree.bind("<<TreeviewSelect>>", remember_summary_period, add="+")
         self.summary_tree.bind("<ButtonRelease-1>", remember_summary_period, add="+")
-        self.summary_tree.bind("<Double-1>", lambda e: self._open_summary_month_contracts())
+        self.summary_tree.bind("<Double-1>", self._open_summary_cell)
 
     def refresh_summary(self):
         for item in self.summary_tree.get_children():
@@ -5239,6 +5239,47 @@ class App(tk.Tk):
                     parent=self,
                 )
 
+        def edit_selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Изменение", "Выберите расход в таблице.", parent=win)
+                return
+            expense_id = int(sel[0])
+            row = next((r for r in db.fetch_monthly_expenses(self.conn, year=year, month=month)
+                        if int(r["id"]) == expense_id), None)
+            if row is None:
+                messagebox.showerror("Изменение", "Расход не найден. Обновите список.", parent=win)
+                reload_rows()
+                return
+            entered = simpledialog.askstring(
+                "Изменить сумму расхода",
+                "Новая сумма расхода, руб.:",
+                initialvalue=fmt_money(float(row["amount"] or 0)),
+                parent=win,
+            )
+            if entered is None:
+                return
+            try:
+                amount = parse_money(entered)
+                if not amount or amount <= 0:
+                    raise ValueError("Сумма расхода должна быть больше нуля")
+                updated = db.update_monthly_expense_amount(self.conn, expense_id, amount, year, month)
+                if not updated:
+                    raise ValueError("Расход не найден в выбранном месяце")
+            except (ValueError, TypeError) as exc:
+                messagebox.showerror("Ошибка ввода", str(exc), parent=win)
+                return
+            except Exception as exc:
+                _log(f"Итоги: ошибка изменения расхода: {exc}")
+                messagebox.showerror("Ошибка сохранения", str(exc), parent=win)
+                return
+            self.refresh_summary()
+            self._select_summary_period(year, month)
+            reload_rows()
+            if tree.exists(str(expense_id)):
+                tree.selection_set(str(expense_id))
+                tree.see(str(expense_id))
+
         def remove_selected():
             sel = tree.selection()
             if not sel:
@@ -5252,11 +5293,32 @@ class App(tk.Tk):
             reload_rows()
 
         ttk.Button(
+            footer, text="Изменить сумму", command=edit_selected,
+        ).pack(side="right", padx=4)
+        tree.bind("<Double-1>", lambda event: edit_selected()
+                  if tree.identify_region(event.x, event.y) == "cell" else None)
+
+        ttk.Button(
             footer, text="Удалить выбранный", command=remove_selected,
             style="Danger.TButton"
         ).pack(side="right", padx=4)
         ttk.Button(footer, text="Закрыть", command=win.destroy).pack(side="right", padx=4)
         reload_rows()
+
+    def _open_summary_cell(self, event):
+        """Двойной щелчок по прочим расходам открывает редактирование месяца."""
+        if self.summary_tree.identify_region(event.x, event.y) != "cell":
+            return
+        row_id = self.summary_tree.identify_row(event.y)
+        if not str(row_id).startswith("month_"):
+            return
+        self.summary_tree.selection_set(row_id)
+        self.summary_tree.focus(row_id)
+        column = self.summary_tree.identify_column(event.x)
+        if column == "#5":
+            self._manage_monthly_expenses()
+        else:
+            self._open_summary_month_contracts()
 
     def _open_summary_month_contracts(self):
         """Подробная расшифровка финансовых итогов выбранного месяца."""
