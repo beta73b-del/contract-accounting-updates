@@ -44,7 +44,7 @@ HEADER_FIELDS = [
 ITEM_FIELDS = ["product", "qty"]
 RECEIPT_FIELDS = ["product", "qty", "unit_cost", "receipt_date", "supplier", "note"]
 ATTACHMENT_FIELDS = ["filename", "stored_path", "added_date", "category", "note"]
-COMPETITOR_FIELDS = ["competitor", "competitor_inn", "product", "trade_type", "qty", "unit_price", "purchase_date"]
+COMPETITOR_FIELDS = ["competitor", "competitor_inn", "product", "trade_type", "platform", "qty", "unit_price", "purchase_date"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS purchases (
@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS competitor_records (
     competitor_inn TEXT,
     product TEXT,
     trade_type TEXT,
+    platform TEXT,
     qty REAL,
     unit_price REAL,
     purchase_date TEXT
@@ -819,7 +820,7 @@ _ATTACHMENTS_COLUMN_TYPES = {
 }
 _COMPETITOR_COLUMN_TYPES = {
     "competitor": "TEXT", "competitor_inn": "TEXT", "product": "TEXT", "trade_type": "TEXT",
-    "qty": "REAL", "unit_price": "REAL", "purchase_date": "TEXT",
+    "platform": "TEXT", "qty": "REAL", "unit_price": "REAL", "purchase_date": "TEXT",
 }
 _PURCHASE_ITEMS_COLUMN_TYPES = {
     "purchase_id": "INTEGER", "product": "TEXT", "qty": "REAL",
@@ -2383,6 +2384,7 @@ def insert_competitor_record(conn: sqlite3.Connection, data: dict) -> int:
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
+    data["platform"] = str(data.get("platform") or "").strip() or None
     if data.get("competitor"):
         data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"))
     values = [data.get(f) for f in COMPETITOR_FIELDS]
@@ -2397,6 +2399,7 @@ def update_competitor_record(conn: sqlite3.Connection, record_id: int, data: dic
     if data.get("product"):
         data["product"] = ensure_product(conn, data["product"])
     data["competitor_inn"] = normalize_inn(data.get("competitor_inn")) or None
+    data["platform"] = str(data.get("platform") or "").strip() or None
     if data.get("competitor"):
         data["competitor"] = canonical_competitor_name(conn, data["competitor"], data.get("competitor_inn"), exclude_id=record_id)
     values = [data.get(f) for f in COMPETITOR_FIELDS] + [record_id]
@@ -2514,7 +2517,7 @@ def competitor_offer_analysis(conn: sqlite3.Connection):
     (приоритет ИНН) и того же товара. Суммирование количеств недопустимо.
     """
     rows = conn.execute(
-        """SELECT id, competitor, competitor_inn, product, trade_type, qty,
+        """SELECT id, competitor, competitor_inn, product, trade_type, platform, qty,
                   unit_price, purchase_date
            FROM competitor_records
            WHERE competitor IS NOT NULL AND TRIM(competitor) <> ''
