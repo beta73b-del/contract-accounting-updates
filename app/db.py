@@ -17,6 +17,7 @@ import glob
 import getpass
 import hashlib
 import json
+import math
 import os
 import shutil
 import socket
@@ -1830,6 +1831,28 @@ def fetch_monthly_expenses(conn: sqlite3.Connection, year: int = None, month: in
         params.append(int(month))
     query += " ORDER BY expense_date, id"
     return conn.execute(query, params).fetchall()
+
+
+
+def update_monthly_expense_amount(conn: sqlite3.Connection, expense_id: int,
+                                  amount: float, year: int, month: int) -> bool:
+    """Изменяет сумму существующего расхода только в выбранном месяце.
+
+    Не переносит расход между периодами и не создаёт новых записей.
+    """
+    amount = float(amount)
+    if not math.isfinite(amount) or amount <= 0:
+        raise ValueError("Сумма расхода должна быть положительным числом")
+    cur = conn.execute(
+        """UPDATE monthly_expenses SET amount=?
+           WHERE id=?
+             AND COALESCE(period_year, CAST(substr(expense_date,1,4) AS INTEGER))=?
+             AND COALESCE(period_month, CAST(substr(expense_date,6,2) AS INTEGER))=?""",
+        (amount, int(expense_id), int(year), int(month)),
+    )
+    if cur.rowcount:
+        conn.commit()
+    return cur.rowcount == 1
 
 
 def delete_monthly_expense(conn: sqlite3.Connection, expense_id: int):
