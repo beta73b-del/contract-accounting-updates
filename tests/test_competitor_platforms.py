@@ -47,22 +47,25 @@ def test_legacy_database_migration_with_safe_backup():
             VALUES ('Тест', '1234567890', 'Рутокен Lite 1010', 'Аукцион', 150, 1250, '2026-09-01')""")
         old.commit()
         old.close()
-        conn = db.get_connection(path)
-        rows = db.fetch_competitor_records(conn)
-        assert len(rows) == 1
-        assert rows[0]["qty"] == 150 and rows[0]["unit_price"] == 1250
-        assert rows[0]["competitor_inn"] == "1234567890"
-        assert rows[0]["platform"] is None
-        backup_path = path + ".before_competitor_platform.bak"
-        assert os.path.isfile(backup_path)
-        with sqlite3.connect(backup_path) as back:
-            assert "platform" not in [r[1] for r in back.execute("PRAGMA table_info(competitor_records)")]
-            assert back.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        conn.close()
-        conn = db.get_connection(path)
-        assert len(db.fetch_competitor_records(conn)) == 1
-        assert db.fetch_competitor_records(conn)[0]["platform"] is None
-        conn.close()
+        conn = None
+        try:
+            conn = db.get_connection(path)
+            rows = db.fetch_competitor_records(conn)
+            assert len(rows) == 1
+            assert rows[0]["qty"] == 150 and rows[0]["unit_price"] == 1250
+            assert rows[0]["competitor_inn"] == "1234567890"
+            assert rows[0]["platform"] is None
+            backup_path = path + ".before_competitor_platform.bak"
+            assert os.path.isfile(backup_path)
+            with sqlite3.connect(backup_path) as back:
+                assert "platform" not in [r[1] for r in back.execute("PRAGMA table_info(competitor_records)")]
+                assert back.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            conn = db.get_connection(path)
+            assert len(db.fetch_competitor_records(conn)) == 1
+            assert db.fetch_competitor_records(conn)[0]["platform"] is None
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 if __name__ == "__main__":
