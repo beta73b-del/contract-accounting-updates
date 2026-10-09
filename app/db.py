@@ -2518,9 +2518,6 @@ def competitor_offer_analysis(conn: sqlite3.Connection):
                   unit_price, purchase_date
            FROM competitor_records
            WHERE competitor IS NOT NULL AND TRIM(competitor) <> ''
-             AND product IS NOT NULL AND TRIM(product) <> ''
-             AND qty IS NOT NULL AND qty > 0
-             AND unit_price IS NOT NULL AND unit_price >= 0
            ORDER BY COALESCE(purchase_date, ''), id"""
     ).fetchall()
     previous = {}
@@ -2533,13 +2530,18 @@ def competitor_offer_analysis(conn: sqlite3.Connection):
         prior = previous.get(group_key)
         row["previous_qty"] = prior["qty"] if prior else None
         row["previous_price"] = prior["unit_price"] if prior else None
-        row["qty_change"] = float(row["qty"]) - float(prior["qty"]) if prior else None
+        complete = (row["qty"] is not None and row["qty"] > 0
+                    and row["unit_price"] is not None and row["unit_price"] >= 0)
+        row["qty_change"] = (
+            float(row["qty"]) - float(prior["qty"]) if prior and complete else None
+        )
         row["price_change_pct"] = (
             (float(row["unit_price"]) - float(prior["unit_price"])) / float(prior["unit_price"])
-            if prior and float(prior["unit_price"]) > 0 else None
+            if prior and complete and float(prior["unit_price"]) > 0 else None
         )
         result.append(row)
-        previous[group_key] = row
+        if complete and row["product"]:
+            previous[group_key] = row
     return sorted(result, key=lambda r: (r["purchase_date"] or "", r["id"]), reverse=True)
 
 
