@@ -2541,8 +2541,9 @@ def competitor_stats(conn: sqlite3.Connection):
 def competitor_offer_analysis(conn: sqlite3.Connection):
     """Каждая закупка — отдельное наблюдение цены при конкретном количестве.
 
-    Сравнение проводится только с предыдущей по дате закупкой той же компании
-    (приоритет ИНН) и того же товара. Суммирование количеств недопустимо.
+    Сравнение проводится с предыдущей по дате закупкой той же компании,
+    товара и ЭТП (приоритет идентификации компании — ИНН).
+    Суммирование количеств недопустимо.
     """
     rows = conn.execute(
         """SELECT id, competitor, competitor_inn, product, trade_type, platform, qty,
@@ -2557,7 +2558,7 @@ def competitor_offer_analysis(conn: sqlite3.Connection):
         row = dict(record)
         inn = normalize_inn(row["competitor_inn"])
         company_key = ("inn", inn) if inn else ("name", normalize_competitor_name(row["competitor"]))
-        group_key = (company_key, row["product"])
+        group_key = (company_key, row["product"], (row["platform"] or "").strip().casefold())
         prior = previous.get(group_key)
         row["previous_qty"] = prior["qty"] if prior else None
         row["previous_price"] = prior["unit_price"] if prior else None
