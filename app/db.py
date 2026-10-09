@@ -954,7 +954,7 @@ def get_connection(db_path: str = None) -> sqlite3.Connection:
 
     # Перед добавлением столбца ЭТП сохраняем согласованную копию старой БД.
     # Пропускаем временные in-memory базы; исходный файл не перезаписываем.
-    if not is_new_db and path != ":memory:":
+    if path != ":memory:":
         legacy_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='competitor_records'"
         ).fetchone()
