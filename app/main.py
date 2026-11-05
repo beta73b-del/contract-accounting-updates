@@ -27,6 +27,7 @@ import reminder_worker
 import scheduler_win
 import theme as app_theme
 import auto_update
+import competitor_analysis
 
 DEFAULT_UPDATE_REPO = "beta73b-del/contract-accounting-updates"
 from app_version import __version__
@@ -5865,113 +5866,275 @@ class App(tk.Tk):
             db.delete_manual_reservation(self.conn, rid)
             self.refresh_stock()
 
-    # ---- Вкладка "Анализ конкурентов" ----
+    # ---- Вкладка "Анализ конкурентов": две товарные таблицы ----
     def _build_competitors_tab(self):
-        top = ttk.Frame(self.tab_competitors, padding=8)
-        top.pack(fill="x")
-        ttk.Button(top, text="Добавить запись", command=self._add_competitor).pack(side="left", padx=4)
-        ttk.Button(top, text="Редактировать", command=self._edit_competitor).pack(side="left", padx=4)
-        ttk.Button(top, text="Удалить", command=self._delete_competitor).pack(side="left", padx=4)
+        header = ttk.Frame(self.tab_competitors, padding=(10, 8))
+        header.pack(fill="x")
+        ttk.Label(header, text="Цены закупок конкурентов", font=("TkDefaultFont", 12, "bold")).pack(side="left")
+        ttk.Button(header, text="Анализ конкурента", command=self._show_competitor_analysis).pack(side="right", padx=4)
+        ttk.Button(header, text="Обновить таблицы", command=self.refresh_competitors).pack(side="right", padx=4)
 
-        # v2.23.12: три аналитических блока размещены в вертикальном PanedWindow.
-        # Это не даёт нижнему блоку схлопываться до 1–2 строк на экранах с
-        # масштабированием Windows/DPI; границы между блоками можно перетаскивать.
+        ttk.Label(
+            self.tab_competitors,
+            text=("Зафиксированные закупки из истории приложения; не текущие предложения ЕИС. "
+                  "Дважды щёлкните по цене, чтобы увидеть конкурента. "
+                  "Отсутствующие даты и площадки не подставляются автоматически."),
+            wraplength=1150, justify="left", padding=(12, 0, 12, 7),
+        ).pack(fill="x")
+
         panes = ttk.Panedwindow(self.tab_competitors, orient=tk.VERTICAL)
-        panes.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        panes.pack(fill="both", expand=True, padx=10, pady=(0, 8))
         self.competitor_panes = panes
+        self.competitor_board_trees = {}
+        self.competitor_board_summaries = {}
+        self._competitor_board_records = {}
+        self._competitor_selected_id = None
 
-        def make_panel(title):
-            panel = ttk.LabelFrame(panes, text=title, padding=(6, 6, 6, 6))
-            inner = ttk.Frame(panel)
-            inner.pack(fill="both", expand=True)
-            return panel, inner
+        column_info = [
+            ("unit_price", "Цена за 1 шт., ₽", 180, "e"),
+            ("platform", "Электронная площадка (ЭТП)", 280, "w"),
+            ("purchase_date", "Дата закупки / торгов", 190, "center"),
+            ("qty", "Количество, шт.", 145, "e"),
+            ("trade_type", "Вид торгов", 260, "w"),
+        ]
+        for product in competitor_analysis.PRODUCTS:
+            panel = ttk.LabelFrame(panes, text=product, padding=7)
+            summary_var = tk.StringVar(value="Загрузка записей…")
+            self.competitor_board_summaries[product] = summary_var
+            ttk.Label(panel, textvariable=summary_var).pack(fill="x", padx=2, pady=(0, 5))
+            table_area = ttk.Frame(panel)
+            table_area.pack(fill="both", expand=True)
+            table_area.grid_rowconfigure(0, weight=1)
+            table_area.grid_columnconfigure(0, weight=1)
+            cols = [item[0] for item in column_info]
+            tree = ttk.Treeview(table_area, columns=cols, show="headings", selectmode="browse", height=7)
+            for key, title, width, anchor in column_info:
+                tree.heading(key, text=title, anchor="center")
+                tree.column(key, width=width, minwidth=85, anchor=anchor, stretch=True)
+            ys = ttk.Scrollbar(table_area, orient="vertical", command=tree.yview)
+            xs = ttk.Scrollbar(table_area, orient="horizontal", command=tree.xview)
+            tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+            tree.grid(row=0, column=0, sticky="nsew")
+            ys.grid(row=0, column=1, sticky="ns")
+            xs.grid(row=1, column=0, sticky="ew")
+            self.competitor_board_trees[product] = tree
+            tree.bind("<Double-1>", lambda _event, name=product: self._show_competitor_price_details(name))
+            tree.bind("<Return>", lambda _event, name=product: self._show_competitor_price_details(name))
+            tree.bind("<<TreeviewSelect>>",
+                      lambda _event, name=product: self._remember_competitor_selection(name))
+            panes.add(panel, weight=1)
 
-        # 1. Журнал закупок конкурентов.
-        log_panel, log_inner = make_panel("Записи о закупках конкурентов")
-        log_cols = ["competitor", "competitor_inn", "product", "trade_type", "platform", "qty", "unit_price", "purchase_date"]
-        log_labels = ["Конкурент", "ИНН", "Товар", "Вид торгов", "Площадка (ЭТП)", "Кол-во", "Цена за ед.", "Дата закупки"]
-        self.competitor_log_tree = ttk.Treeview(
-            log_inner, columns=log_cols, show="headings", height=5, selectmode="browse"
-        )
-        log_scroll = ttk.Scrollbar(log_inner, orient="vertical", command=self.competitor_log_tree.yview)
-        self.competitor_log_tree.configure(yscrollcommand=log_scroll.set)
-        for key, label in zip(log_cols, log_labels):
-            self.competitor_log_tree.heading(key, text=label, anchor="center")
-            self.competitor_log_tree.column(key, width=150, anchor="center")
-        self.competitor_log_tree.pack(side="left", fill="both", expand=True)
-        log_scroll.pack(side="right", fill="y")
-        self.competitor_log_tree.bind("<Double-1>", lambda e: self._edit_competitor())
-        panes.add(log_panel, weight=3)
-
-        # 2. Анализ цен по товарам.
-        product_panel, product_inner = make_panel("Анализ цен по товару")
-        p_cols = ["product", "min_price", "max_price", "avg_price", "median_price", "count", "change_pct"]
-        p_labels = ["Товар", "Мин. цена", "Макс. цена", "Средняя цена", "Медиана", "Наблюдений", "Изменение"]
-        self.competitor_product_tree = ttk.Treeview(
-            product_inner, columns=p_cols, show="headings", height=4
-        )
-        product_scroll = ttk.Scrollbar(product_inner, orient="vertical", command=self.competitor_product_tree.yview)
-        self.competitor_product_tree.configure(yscrollcommand=product_scroll.set)
-        for key, label in zip(p_cols, p_labels):
-            self.competitor_product_tree.heading(key, text=label, anchor="center")
-            self.competitor_product_tree.column(key, width=150, anchor="center")
-        self.competitor_product_tree.pack(side="left", fill="both", expand=True)
-        product_scroll.pack(side="right", fill="y")
-        panes.add(product_panel, weight=2)
-
-        # 3. Анализ по конкурентам. Нижнему блоку даём такой же приоритет,
-        # как журналу, чтобы он не был обрезан и показывал нормальное число строк.
-        stats_panel, stats_inner = make_panel("Анализ предложений конкурентов (каждая закупка отдельно)")
-        c_cols = ["competitor", "competitor_inn", "platform", "product", "qty", "unit_price",
-                  "qty_change", "price_change_pct", "purchase_date"]
-        c_labels = ["Конкурент", "ИНН", "Площадка (ЭТП)", "Товар", "Количество, шт.", "Цена за ед., руб.",
-                    "Изменение кол-ва, шт.", "Изменение цены, %", "Дата закупки"]
-        self.competitor_stats_tree = ttk.Treeview(
-            stats_inner, columns=c_cols, show="headings", height=6
-        )
-        stats_scroll = ttk.Scrollbar(stats_inner, orient="vertical", command=self.competitor_stats_tree.yview)
-        self.competitor_stats_tree.configure(yscrollcommand=stats_scroll.set)
-        for key, label in zip(c_cols, c_labels):
-            self.competitor_stats_tree.heading(key, text=label, anchor="center")
-            self.competitor_stats_tree.column(key, width=150, anchor="center")
-        self.competitor_stats_tree.pack(side="left", fill="both", expand=True)
-        stats_scroll.pack(side="right", fill="y")
-        panes.add(stats_panel, weight=3)
-
+    def _remember_competitor_selection(self, product):
+        tree = self.competitor_board_trees.get(product)
+        if tree is not None and tree.selection():
+            self._competitor_selected_id = int(tree.selection()[0])
 
     def _selected_competitor_id(self):
-        sel = self.competitor_log_tree.selection()
-        return int(sel[0]) if sel else None
+        return getattr(self, "_competitor_selected_id", None)
 
     def refresh_competitors(self):
-        for item in self.competitor_log_tree.get_children():
-            self.competitor_log_tree.delete(item)
-        for r in db.fetch_competitor_records(self.conn):
-            values = [r["competitor"] or "", r["competitor_inn"] or "", r["product"] or "", r["trade_type"] or "",
-                      r["platform"] or "—", fmt_qty(r["qty"]), fmt_money(r["unit_price"]), fmt_date(r["purchase_date"])]
-            tree_insert_wrapped(self.competitor_log_tree, "", "end", iid=str(r["id"]), values=values)
+        board = competitor_analysis.product_price_board(self.conn)
+        self._competitor_board_records = {
+            int(row["id"]): row for rows in board.values() for row in rows
+        }
+        self._competitor_selected_id = None
+        for product, tree in self.competitor_board_trees.items():
+            tree.delete(*tree.get_children())
+            entries = board.get(product, [])
+            for record in entries:
+                value = record.get("unit_price")
+                date_text = record.get("purchase_date")
+                quantity = record.get("qty")
+                try:
+                    amount = fmt_money(value) if value is not None else "—"
+                except (ValueError, OverflowError):
+                    amount = "—"
+                try:
+                    count = fmt_qty(quantity) if quantity is not None else "—"
+                except (ValueError, TypeError):
+                    count = "—"
+                values = (
+                    amount,
+                    record.get("platform") or "Не указана",
+                    fmt_date(date_text) if date_text else "—",
+                    count,
+                    record.get("trade_type") or "—",
+                )
+                tree.insert("", "end", iid=str(record["id"]), values=values)
+            stats = competitor_analysis.price_statistics(entries)
+            self.competitor_board_summaries[product].set(
+                f"Записей: {stats['observations']}  |  С ценой: {stats['priced']}  |  "
+                f"Медиана: {fmt_money(stats['median'])}  |  "
+                f"Минимум: {fmt_money(stats['minimum'])}  |  "
+                f"Максимум: {fmt_money(stats['maximum'])}"
+            )
 
-        for item in self.competitor_product_tree.get_children():
-            self.competitor_product_tree.delete(item)
-        for p in db.competitor_product_stats(self.conn):
-            change = fmt_pct(p["change_pct"]) if p["change_pct"] is not None else "—"
-            values = [p["product"], fmt_money(p["min_price"]), fmt_money(p["max_price"]),
-                      fmt_money(p["avg_price"]), fmt_money(p["median_price"]), p["count"], change]
-            tree_insert_wrapped(self.competitor_product_tree, "", "end", values=values)
+    def _show_competitor_price_details(self, product):
+        tree = self.competitor_board_trees.get(product)
+        selected = tree.selection() if tree is not None else ()
+        if not selected:
+            return
+        row = self._competitor_board_records.get(int(selected[0]))
+        if row is None:
+            return
+        win = tk.Toplevel(self)
+        win.title("Цена закупки — сведения о конкуренте")
+        win.geometry(f"{min(750, win.winfo_screenwidth() - 60)}x"
+                     f"{min(480, win.winfo_screenheight() - 100)}")
+        content = ttk.Frame(win, padding=16)
+        content.pack(fill="both", expand=True)
+        details = [
+            ("Модель", product),
+            ("Цена за единицу", fmt_money(row.get("unit_price"))),
+            ("Конкурент", row.get("competitor") or "Не указан"),
+            ("ИНН", row.get("competitor_inn") or "Не указан"),
+            ("Площадка (ЭТП)", row.get("platform") or "Не указана"),
+            ("Дата закупки / торгов", fmt_date(row.get("purchase_date")) if row.get("purchase_date") else "—"),
+            ("Количество", fmt_qty(row.get("qty")) if row.get("qty") is not None else "—"),
+            ("Вид торгов", row.get("trade_type") or "—"),
+        ]
+        for i, (label, value) in enumerate(details):
+            ttk.Label(content, text=label + ":").grid(row=i, column=0, sticky="nw", pady=5, padx=(0, 18))
+            ttk.Label(content, text=value, wraplength=450).grid(row=i, column=1, sticky="w", pady=5)
+        content.grid_columnconfigure(1, weight=1)
+        buttons = ttk.Frame(content)
+        buttons.grid(row=len(details), column=0, columnspan=2, sticky="w", pady=(14, 0))
+        identity = competitor_analysis.competitor_identity(row)
+        def open_history():
+            win.destroy()
+            self._show_competitor_analysis(initial_key=identity)
+        ttk.Button(buttons, text="Анализ этого конкурента", command=open_history,
+                   state="normal" if identity else "disabled").pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="left")
+        win.transient(self)
+        win.lift()
 
-        for item in self.competitor_stats_tree.get_children():
-            self.competitor_stats_tree.delete(item)
-        for c in db.competitor_offer_analysis(self.conn):
-            delta = c["price_change_pct"]
-            price_delta = f"{delta * 100:+.1f}%" if delta is not None else "—"
-            qty_delta = c["qty_change"]
-            qty_change = f"{qty_delta:+g}" if qty_delta is not None else "—"
-            values = [c["competitor"], c.get("competitor_inn") or "—", c.get("platform") or "—", c["product"] or "—",
-                      fmt_qty(c["qty"]), fmt_money(c["unit_price"]), qty_change,
-                      price_delta, fmt_date(c["purchase_date"])]
-            tree_insert_wrapped(self.competitor_stats_tree, "", "end",
-                                iid=f"offer_{c['id']}", values=values)
+    def _show_competitor_analysis(self, initial_key=None):
+        board = competitor_analysis.product_price_board(self.conn)
+        profiles = competitor_analysis.competitor_profiles(board)
+        win = tk.Toplevel(self)
+        win.title("Анализ конкурентов — история цен и площадки")
+        win.geometry(f"{min(1230, win.winfo_screenwidth() - 70)}x"
+                     f"{min(730, win.winfo_screenheight() - 110)}")
+        main = ttk.Frame(win, padding=10)
+        main.pack(fill="both", expand=True)
+        ttk.Label(
+            main, text="Статистика основана только на зафиксированных закупках. "
+                       "Типичная цена — медиана цен за единицу, без взвешивания по количеству.",
+            wraplength=1100, justify="left",
+        ).pack(fill="x", pady=(0, 7))
 
+        split = ttk.Panedwindow(main, orient=tk.HORIZONTAL)
+        split.pack(fill="both", expand=True)
+        left = ttk.LabelFrame(split, text="Конкуренты", padding=5)
+        right = ttk.Frame(split)
+        split.add(left, weight=1)
+        split.add(right, weight=3)
+
+        def table(parent, specs, height=6):
+            frame = ttk.Frame(parent)
+            frame.pack(fill="both", expand=True)
+            frame.grid_rowconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+            tree = ttk.Treeview(frame, columns=[s[0] for s in specs], show="headings",
+                                selectmode="browse", height=height)
+            for key, heading, width in specs:
+                tree.heading(key, text=heading, anchor="center")
+                tree.column(key, width=width, minwidth=65, anchor="w", stretch=True)
+            yscroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+            xscroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+            tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+            tree.grid(row=0, column=0, sticky="nsew")
+            yscroll.grid(row=0, column=1, sticky="ns")
+            xscroll.grid(row=1, column=0, sticky="ew")
+            return tree
+
+        company_tree = table(left, [
+            ("competitor", "Наименование", 230),
+            ("inn", "ИНН", 120),
+            ("count", "Записей", 80),
+        ], height=18)
+        name_var = tk.StringVar(value="Выберите конкурента")
+        ttk.Label(right, textvariable=name_var, font=("TkDefaultFont", 11, "bold")).pack(
+            fill="x", padx=5, pady=(0, 5))
+        details = ttk.Panedwindow(right, orient=tk.VERTICAL)
+        details.pack(fill="both", expand=True)
+
+        product_panel = ttk.LabelFrame(details, text="Типичная стоимость по каждой модели", padding=5)
+        product_tree = table(product_panel, [
+            ("product", "Товар", 215), ("count", "Записей", 80),
+            ("median", "Медиана", 115), ("avg", "Средняя", 115),
+            ("min", "Минимум", 115), ("max", "Максимум", 115),
+        ], height=4)
+        details.add(product_panel, weight=1)
+
+        platform_panel = ttk.LabelFrame(details, text="На каких электронных площадках закупали", padding=5)
+        platform_tree = table(platform_panel, [
+            ("product", "Товар", 205), ("platform", "ЭТП", 200),
+            ("count", "Записей", 75), ("median", "Медиана", 105),
+            ("min", "Минимум", 105), ("max", "Максимум", 105),
+            ("last_date", "Последняя дата", 115),
+        ], height=6)
+        details.add(platform_panel, weight=1)
+
+        history_panel = ttk.LabelFrame(details, text="История отдельных закупок", padding=5)
+        history_tree = table(history_panel, [
+            ("date", "Дата", 110), ("product", "Товар", 205),
+            ("price", "Цена / шт.", 120), ("qty", "Кол-во", 85),
+            ("platform", "ЭТП", 195), ("trade_type", "Вид торгов", 165),
+        ], height=9)
+        details.add(history_panel, weight=2)
+
+        def update_profile(_event=None):
+            selection = company_tree.selection()
+            if not selection:
+                return
+            profile = profiles[int(selection[0])]
+            name_var.set(profile["competitor"] +
+                         (f"  |  ИНН {profile['competitor_inn']}" if profile["competitor_inn"] else ""))
+            for tree in (product_tree, platform_tree, history_tree):
+                tree.delete(*tree.get_children())
+            for item in profile["products"]:
+                product_tree.insert("", "end", values=(
+                    item["product"], item["observations"], fmt_money(item["median"]),
+                    fmt_money(item["average"]), fmt_money(item["minimum"]), fmt_money(item["maximum"]),
+                ))
+            for item in profile["platforms"]:
+                platform_tree.insert("", "end", values=(
+                    item["product"], item["platform"], item["observations"],
+                    fmt_money(item["median"]), fmt_money(item["minimum"]), fmt_money(item["maximum"]),
+                    fmt_date(item["last_date"]) if item["last_date"] else "—",
+                ))
+            for item in profile["records"]:
+                history_tree.insert("", "end", values=(
+                    fmt_date(item["purchase_date"]) if item.get("purchase_date") else "—",
+                    item["product"], fmt_money(item.get("unit_price")),
+                    fmt_qty(item["qty"]) if item.get("qty") is not None else "—",
+                    item.get("platform") or "Не указана",
+                    item.get("trade_type") or "—",
+                ))
+
+        company_tree.bind("<<TreeviewSelect>>", update_profile)
+        selected_index = 0
+        for idx, profile in enumerate(profiles):
+            company_tree.insert("", "end", iid=str(idx), values=(
+                profile["competitor"], profile["competitor_inn"] or "—", profile["observations"],
+            ))
+            if profile["key"] == initial_key:
+                selected_index = idx
+        if profiles:
+            company_tree.selection_set(str(selected_index))
+            company_tree.focus(str(selected_index))
+            company_tree.see(str(selected_index))
+            update_profile()
+        else:
+            name_var.set("Нет сохранённых данных о конкурентах по выбранным моделям")
+        ttk.Button(main, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(7, 0))
+        win.transient(self)
+        win.lift()
+
+    # API ручного ввода сохранён для обратной совместимости; на основном экране
+    # эти команды не показываются, поскольку таблицы заполняются при открытии.
     def _add_competitor(self):
         def on_save(data, _id):
             db.insert_competitor_record(self.conn, data)
@@ -5981,10 +6144,11 @@ class App(tk.Tk):
     def _edit_competitor(self):
         rid = self._selected_competitor_id()
         if rid is None:
-            messagebox.showinfo("Выбор записи", "Сначала выберите строку в таблице.")
+            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.")
             return
         existing = db.fetch_competitor_record_by_id(self.conn, rid)
-
+        if existing is None:
+            return
         def on_save(data, _id):
             db.update_competitor_record(self.conn, rid, data)
             self.refresh_competitors()
@@ -5993,9 +6157,9 @@ class App(tk.Tk):
     def _delete_competitor(self):
         rid = self._selected_competitor_id()
         if rid is None:
-            messagebox.showinfo("Выбор записи", "Сначала выберите строку в таблице.")
+            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.")
             return
-        if messagebox.askyesno("Удаление", "Удалить запись?"):
+        if messagebox.askyesno("Удаление", "Удалить запись?", parent=self):
             db.delete_competitor_record(self.conn, rid)
             self.refresh_competitors()
 
