@@ -41,7 +41,12 @@ def test_competitor_tab_uses_resizable_panes_and_scrollbars():
     assert block.count('ttk.Scrollbar') >= 2
     assert 'panes.add(panel, weight=1)' in block
     assert 'height=7' in block
-    assert 'Добавить запись' not in block
+    # Ручной ввод снова является обязательным элементом вкладки.
+    assert 'Добавить запись' in block
+    assert 'Редактировать' in block
+    assert 'Удалить' in block
+    assert 'Обновить таблицы' not in block
+    assert 'product_filter=name' in block
 
 if __name__=="__main__":
     for t in [test_ecp_3120_aliases_are_one_product,test_stock_merges_ecp_3120_variants,test_competitor_tab_uses_resizable_panes_and_scrollbars]:
