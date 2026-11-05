@@ -6142,10 +6142,17 @@ class App(tk.Tk):
         self._competitor_board_records = {
             int(row["id"]): row for rows in board.values() for row in rows
         }
-        self._competitor_selected_id = None
+        old_selection = self._competitor_selected_id
         for model, tree in self.competitor_board_trees.items():
             self._fill_competitor_tree(tree, self.competitor_board_summaries[model],
                                        board.get(model, []))
+        # Если отредактированная строка ещё существует, сохраняем её выделение.
+        self._competitor_selected_id = (
+            old_selection if old_selection is not None and any(
+                str(old_selection) in tree.selection()
+                for tree in self.competitor_board_trees.values()
+            ) else None
+        )
         expanded = getattr(self, "_competitor_expanded_window", None)
         if expanded is not None and expanded.winfo_exists():
             for model, tree in self._competitor_expanded_trees.items():
