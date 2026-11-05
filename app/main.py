@@ -5876,6 +5876,8 @@ class App(tk.Tk):
         ttk.Button(header, text="Добавить запись", command=self._add_competitor).pack(side="left", padx=5)
         ttk.Button(header, text="Редактировать", command=self._edit_competitor).pack(side="left", padx=5)
         ttk.Button(header, text="Удалить", command=self._delete_competitor).pack(side="left", padx=5)
+        ttk.Button(header, text="Развернуть таблицы", command=self._show_competitor_expanded).pack(
+            side="right", padx=5)
         # Таблицы обновляются автоматически после добавления/изменения/удаления.
 
         help_label = ttk.Label(
@@ -5894,10 +5896,13 @@ class App(tk.Tk):
         self.competitor_panes = panes
         self.competitor_board_trees = {}
         self.competitor_board_summaries = {}
+        self._competitor_expanded_window = None
+        self._competitor_expanded_trees = {}
+        self._competitor_expanded_summaries = {}
         self._competitor_board_records = {}
         self._competitor_selected_id = None
 
-        column_info = [
+        self.competitor_column_info = [
             ("unit_price", "Цена за 1 шт., ₽", 140, "center"),
             ("platform", "Площадка (ЭТП)", 230, "center"),
             ("purchase_date", "Дата торгов", 150, "center"),
@@ -5912,6 +5917,10 @@ class App(tk.Tk):
                 heading, text=product + " — анализ конкурентов",
                 command=lambda name=product: self._show_competitor_analysis(product_filter=name),
             ).pack(side="left")
+            ttk.Button(
+                heading, text="Развернуть таблицу",
+                command=lambda name=product: self._show_competitor_expanded(name),
+            ).pack(side="right", padx=4)
             summary_var = tk.StringVar(value="Загрузка записей…")
             self.competitor_board_summaries[product] = summary_var
             ttk.Label(panel, textvariable=summary_var).pack(fill="x", padx=2, pady=(0, 5))
@@ -5919,9 +5928,9 @@ class App(tk.Tk):
             table_area.pack(fill="both", expand=True)
             table_area.grid_rowconfigure(0, weight=1)
             table_area.grid_columnconfigure(0, weight=1)
-            cols = [item[0] for item in column_info]
+            cols = [item[0] for item in self.competitor_column_info]
             tree = ttk.Treeview(table_area, columns=cols, show="headings", selectmode="browse", height=7)
-            for key, title, width, anchor in column_info:
+            for key, title, width, anchor in self.competitor_column_info:
                 tree.heading(key, text=title, anchor="center")
                 tree.column(key, width=width, minwidth=85, anchor=anchor, stretch=True)
             ys = ttk.Scrollbar(table_area, orient="vertical", command=tree.yview)
@@ -5945,52 +5954,221 @@ class App(tk.Tk):
     def _selected_competitor_id(self):
         return getattr(self, "_competitor_selected_id", None)
 
+    def _show_competitor_expanded(self, product=None):
+        """Максимизированный просмотр обеих моделей; никаких копий БД."""
+        if product is not None and product not in competitor_analysis.PRODUCTS:
+            raise ValueError("Неизвестная модель товара")
+        existing = getattr(self, "_competitor_expanded_window", None)
+        if existing is not None and existing.winfo_exists():
+            notebook = self._competitor_expanded_notebook
+            if product:
+                notebook.select(competitor_analysis.PRODUCTS.index(product))
+            existing.deiconify()
+            existing.lift()
+            existing.focus_set()
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Анализ конкурентов — полный просмотр закупок")
+        win.geometry(f"{min(win.winfo_screenwidth() - 70, 1200)}x"
+                     f"{min(win.winfo_screenheight() - 100, 800)}")
+        self._competitor_expanded_window = win
+        self._competitor_expanded_trees = {}
+        self._competitor_expanded_summaries = {}
+
+        def close():
+            self._competitor_expanded_window = None
+            self._competitor_expanded_trees = {}
+            self._competitor_expanded_summaries = {}
+            win.destroy()
+
+        def toggle_fullscreen(_event=None):
+            win.attributes("-fullscreen", not bool(win.attributes("-fullscreen")))
+            return "break"
+
+        def escape(_event=None):
+            if bool(win.attributes("-fullscreen")):
+                win.attributes("-fullscreen", False)
+            else:
+                close()
+            return "break"
+
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<F11>", toggle_fullscreen)
+        win.bind("<Escape>", escape)
+
+        toolbar = ttk.Frame(win, padding=(12, 10))
+        toolbar.pack(fill="x")
+        ttk.Label(toolbar, text="Закупки конкурентов — расширенная таблица",
+                  font=("TkDefaultFont", 12, "bold")).pack(side="left", padx=(0, 12))
+
+        notebook = ttk.Notebook(win)
+        self._competitor_expanded_notebook = notebook
+
+        def active_product():
+            return competitor_analysis.PRODUCTS[notebook.index(notebook.select())]
+
+        def selected_id():
+            tree = self._competitor_expanded_trees[active_product()]
+            selected = tree.selection()
+            if not selected:
+                messagebox.showinfo("Выбор записи", "Выберите строку в таблице.", parent=win)
+                return None
+            return int(selected[0])
+
+        def edit_selected():
+            rid = selected_id()
+            if rid is not None:
+                self._edit_competitor(rid=rid, parent=win)
+
+        def delete_selected():
+            rid = selected_id()
+            if rid is not None:
+                self._delete_competitor(rid=rid, parent=win)
+
+        def show_selected():
+            name = active_product()
+            tree = self._competitor_expanded_trees[name]
+            if not tree.selection():
+                messagebox.showinfo("Выбор записи", "Выберите строку в таблице.", parent=win)
+                return
+            self._show_competitor_price_details(name, tree=tree, parent=win)
+
+        ttk.Button(toolbar, text="Добавить запись",
+                   command=lambda: self._add_competitor(parent=win)).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Редактировать", command=edit_selected).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Удалить", command=delete_selected).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Открыть запись", command=show_selected).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Закрыть просмотр", command=close).pack(side="right", padx=3)
+        ttk.Button(toolbar, text="Полный экран (F11)", command=toggle_fullscreen).pack(
+            side="right", padx=3)
+        ttk.Button(
+            toolbar, text="Анализ модели",
+            command=lambda: self._show_competitor_analysis(
+                product_filter=active_product(), parent=win),
+        ).pack(side="right", padx=3)
+
+        ttk.Label(win, text="Выберите модель на вкладке. F11 — весь экран, Esc — выход. "
+                  "Для очень больших списков доступна прокрутка.",
+                  padding=(12, 0, 12, 7)).pack(fill="x")
+        notebook.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        for model in competitor_analysis.PRODUCTS:
+            panel = ttk.Frame(notebook, padding=(6, 8))
+            notebook.add(panel, text=model)
+            summary = tk.StringVar(value="Загрузка записей…")
+            self._competitor_expanded_summaries[model] = summary
+            ttk.Label(panel, textvariable=summary).pack(fill="x", padx=4, pady=(0, 6))
+            area = ttk.Frame(panel)
+            area.pack(fill="both", expand=True)
+            area.grid_rowconfigure(0, weight=1)
+            area.grid_columnconfigure(0, weight=1)
+            tree = ttk.Treeview(
+                area, columns=[info[0] for info in self.competitor_column_info],
+                show="headings", selectmode="browse", height=20,
+            )
+            for key, title, width, anchor in self.competitor_column_info:
+                tree.heading(key, text=title, anchor="center")
+                tree.column(key, width=width, minwidth=85, anchor=anchor, stretch=True)
+            ybar = ttk.Scrollbar(area, orient="vertical", command=tree.yview)
+            xbar = ttk.Scrollbar(area, orient="horizontal", command=tree.xview)
+            tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+            tree.grid(row=0, column=0, sticky="nsew")
+            ybar.grid(row=0, column=1, sticky="ns")
+            xbar.grid(row=1, column=0, sticky="ew")
+            self._competitor_expanded_trees[model] = tree
+            tree.bind("<Double-1>", lambda _event, name=model, t=tree:
+                      self._show_competitor_price_details(name, tree=t, parent=win))
+            tree.bind("<Return>", lambda _event, name=model, t=tree:
+                      self._show_competitor_price_details(name, tree=t, parent=win))
+        if product is not None:
+            notebook.select(competitor_analysis.PRODUCTS.index(product))
+
+        # В развернутом просмотре используется та же БД и тот же формат строк.
+        board = competitor_analysis.product_price_board(self.conn)
+        for model, tree in self._competitor_expanded_trees.items():
+            self._fill_competitor_tree(tree, self._competitor_expanded_summaries[model],
+                                       board.get(model, []))
+        try:
+            win.state("zoomed")  # Windows: максимальный размер с системной панелью задач.
+        except tk.TclError:
+            win.geometry(f"{win.winfo_screenwidth()}x{win.winfo_screenheight()}+0+0")
+        win.lift()
+        win.focus_set()
+
+    def _fill_competitor_tree(self, tree, summary_var, entries):
+        """Один формат для обычной и увеличенной таблицы; сохраняем выделение."""
+        selected = tree.selection()
+        scroll_pos = tree.yview()
+        tree.delete(*tree.get_children())
+        for record in entries:
+            value = record.get("unit_price")
+            date_text = record.get("purchase_date")
+            quantity = record.get("qty")
+            try:
+                amount = fmt_money(value) if value is not None else "—"
+            except (ValueError, OverflowError):
+                amount = "—"
+            try:
+                count = fmt_qty(quantity) if quantity is not None else "—"
+            except (ValueError, TypeError):
+                count = "—"
+            tree.insert("", "end", iid=str(record["id"]), values=(
+                amount,
+                record.get("platform") or "Не указана",
+                fmt_date(date_text) if date_text else "—",
+                count,
+                record.get("trade_type") or "—",
+            ))
+        if selected:
+            kept = [iid for iid in selected if tree.exists(iid)]
+            if kept:
+                tree.selection_set(kept)
+                tree.focus(kept[0])
+            elif scroll_pos:
+                tree.yview_moveto(scroll_pos[0])
+        elif scroll_pos:
+            tree.yview_moveto(scroll_pos[0])
+        stats = competitor_analysis.price_statistics(entries)
+        summary_var.set(
+            f"Записей: {stats['observations']}  |  С ценой: {stats['priced']}  |  "
+            f"Медиана: {fmt_money(stats['median'])}  |  "
+            f"Минимум: {fmt_money(stats['minimum'])}  |  "
+            f"Максимум: {fmt_money(stats['maximum'])}"
+        )
+
     def refresh_competitors(self):
         board = competitor_analysis.product_price_board(self.conn)
         self._competitor_board_records = {
             int(row["id"]): row for rows in board.values() for row in rows
         }
-        self._competitor_selected_id = None
-        for product, tree in self.competitor_board_trees.items():
-            tree.delete(*tree.get_children())
-            entries = board.get(product, [])
-            for record in entries:
-                value = record.get("unit_price")
-                date_text = record.get("purchase_date")
-                quantity = record.get("qty")
-                try:
-                    amount = fmt_money(value) if value is not None else "—"
-                except (ValueError, OverflowError):
-                    amount = "—"
-                try:
-                    count = fmt_qty(quantity) if quantity is not None else "—"
-                except (ValueError, TypeError):
-                    count = "—"
-                values = (
-                    amount,
-                    record.get("platform") or "Не указана",
-                    fmt_date(date_text) if date_text else "—",
-                    count,
-                    record.get("trade_type") or "—",
-                )
-                tree.insert("", "end", iid=str(record["id"]), values=values)
-            stats = competitor_analysis.price_statistics(entries)
-            self.competitor_board_summaries[product].set(
-                f"Записей: {stats['observations']}  |  С ценой: {stats['priced']}  |  "
-                f"Медиана: {fmt_money(stats['median'])}  |  "
-                f"Минимум: {fmt_money(stats['minimum'])}  |  "
-                f"Максимум: {fmt_money(stats['maximum'])}"
-            )
+        old_selection = self._competitor_selected_id
+        for model, tree in self.competitor_board_trees.items():
+            self._fill_competitor_tree(tree, self.competitor_board_summaries[model],
+                                       board.get(model, []))
+        # Если отредактированная строка ещё существует, сохраняем её выделение.
+        self._competitor_selected_id = (
+            old_selection if old_selection is not None and any(
+                str(old_selection) in tree.selection()
+                for tree in self.competitor_board_trees.values()
+            ) else None
+        )
+        expanded = getattr(self, "_competitor_expanded_window", None)
+        if expanded is not None and expanded.winfo_exists():
+            for model, tree in self._competitor_expanded_trees.items():
+                self._fill_competitor_tree(tree, self._competitor_expanded_summaries[model],
+                                           board.get(model, []))
 
-    def _show_competitor_price_details(self, product):
-        tree = self.competitor_board_trees.get(product)
+    def _show_competitor_price_details(self, product, tree=None, parent=None):
+        if tree is None:
+            tree = self.competitor_board_trees.get(product)
         selected = tree.selection() if tree is not None else ()
         if not selected:
             return
         row = self._competitor_board_records.get(int(selected[0]))
         if row is None:
             return
-        win = tk.Toplevel(self)
+        win = tk.Toplevel(parent or self)
         win.title("Цена закупки — сведения о конкуренте")
         win.geometry(f"{min(750, win.winfo_screenwidth() - 60)}x"
                      f"{min(480, win.winfo_screenheight() - 100)}")
@@ -6015,21 +6193,21 @@ class App(tk.Tk):
         identity = competitor_analysis.competitor_identity(row)
         def open_history():
             win.destroy()
-            self._show_competitor_analysis(initial_key=identity)
+            self._show_competitor_analysis(initial_key=identity, parent=parent)
         ttk.Button(buttons, text="Анализ этого конкурента", command=open_history,
                    state="normal" if identity else "disabled").pack(side="left", padx=(0, 8))
         ttk.Button(buttons, text="Закрыть", command=win.destroy).pack(side="left")
-        win.transient(self)
+        win.transient(parent or self)
         win.lift()
 
-    def _show_competitor_analysis(self, initial_key=None, product_filter=None):
+    def _show_competitor_analysis(self, initial_key=None, product_filter=None, parent=None):
         board = competitor_analysis.product_price_board(self.conn)
         if product_filter is not None:
             if product_filter not in competitor_analysis.PRODUCTS:
                 raise ValueError("Неизвестная модель товара")
             board = {name: (rows if name == product_filter else []) for name, rows in board.items()}
         profiles = competitor_analysis.competitor_profiles(board)
-        win = tk.Toplevel(self)
+        win = tk.Toplevel(parent or self)
         win.title("Анализ конкурентов — " + (product_filter or "все модели"))
         win.geometry(f"{min(1230, win.winfo_screenwidth() - 70)}x"
                      f"{min(730, win.winfo_screenheight() - 110)}")
@@ -6148,21 +6326,23 @@ class App(tk.Tk):
         else:
             name_var.set("Нет сохранённых записей по выбранной модели")
         ttk.Button(main, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(7, 0))
-        win.transient(self)
+        win.transient(parent or self)
         win.lift()
 
     # Ручное добавление, редактирование и удаление — основная схема ввода
     # наблюдений для дальнейшего анализа цен конкурентов.
-    def _add_competitor(self):
+    def _add_competitor(self, parent=None):
         def on_save(data, _id):
             db.insert_competitor_record(self.conn, data)
             self.refresh_competitors()
-        CompetitorDialog(self, on_save)
+        CompetitorDialog(parent or self, on_save)
 
-    def _edit_competitor(self):
-        rid = self._selected_competitor_id()
+    def _edit_competitor(self, rid=None, parent=None):
         if rid is None:
-            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.")
+            rid = self._selected_competitor_id()
+        if rid is None:
+            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.",
+                                parent=parent or self)
             return
         existing = db.fetch_competitor_record_by_id(self.conn, rid)
         if existing is None:
@@ -6170,14 +6350,16 @@ class App(tk.Tk):
         def on_save(data, _id):
             db.update_competitor_record(self.conn, rid, data)
             self.refresh_competitors()
-        CompetitorDialog(self, on_save, existing=existing)
+        CompetitorDialog(parent or self, on_save, existing=existing)
 
-    def _delete_competitor(self):
-        rid = self._selected_competitor_id()
+    def _delete_competitor(self, rid=None, parent=None):
         if rid is None:
-            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.")
+            rid = self._selected_competitor_id()
+        if rid is None:
+            messagebox.showinfo("Выбор записи", "Сначала выберите цену в таблице.",
+                                parent=parent or self)
             return
-        if messagebox.askyesno("Удаление", "Удалить запись?", parent=self):
+        if messagebox.askyesno("Удаление", "Удалить запись?", parent=parent or self):
             db.delete_competitor_record(self.conn, rid)
             self.refresh_competitors()
 
