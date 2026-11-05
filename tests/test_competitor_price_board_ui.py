@@ -53,6 +53,22 @@ def test_competitor_tab_build_refresh_and_detail_windows():
             if isinstance(widget, ttk.Button)
         }
         assert {"Добавить запись", "Редактировать", "Удалить"}.issubset(toolbar_labels)
+        assert "Обновить таблицы" not in toolbar_labels
+        assert "Анализ конкурента" not in toolbar_labels
+        product_buttons = [
+            w for w in app.tab_competitors.winfo_children()
+            if isinstance(w, ttk.Panedwindow)
+        ][0]
+        model_actions = [
+            child for panel in product_buttons.panes()
+            for child in app.nametowidget(panel).winfo_children()
+            if isinstance(child, ttk.Frame)
+            for widget in child.winfo_children()
+            if isinstance(widget, ttk.Button)
+            for child in [widget]
+        ]
+        assert len(model_actions) == 2
+        assert all("анализ конкурентов" in btn.cget("text") for btn in model_actions)
         assert "Записей: 0" in app.competitor_board_summaries[LITE].get()
         # Calls may be repeated while no records are present.
         app.refresh_competitors()
@@ -77,7 +93,7 @@ def test_competitor_tab_build_refresh_and_detail_windows():
         dialogs = [child for child in app.winfo_children() if isinstance(child, tk.Toplevel)]
         assert len(dialogs) == 1
         dialogs[0].destroy()
-        app._show_competitor_analysis(initial_key="inn:1234567890")
+        app._show_competitor_analysis(product_filter=LITE)
         dialogs = [child for child in app.winfo_children() if isinstance(child, tk.Toplevel)]
         assert len(dialogs) == 1
         dialogs[0].destroy()
