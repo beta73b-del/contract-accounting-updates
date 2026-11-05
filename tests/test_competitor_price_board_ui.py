@@ -50,8 +50,8 @@ def test_competitor_tab_build_refresh_and_detail_windows():
         # Колонки обоих разделов должны иметь одинаковый центр по данным и заголовкам.
         for model, tree in app.competitor_board_trees.items():
             for column in tree["columns"]:
-                assert tree.heading(column, "anchor") == "center", (model, column, "header")
-                assert tree.column(column, "anchor") == "center", (model, column, "values")
+                assert str(tree.heading(column, "anchor")) == "center", (model, column, "header")
+                assert str(tree.column(column, "anchor")) == "center", (model, column, "values")
         app.refresh_competitors()
         toolbar_labels = {
             widget.cget("text") for widget in app.tab_competitors.winfo_children()[0].winfo_children()
@@ -114,8 +114,8 @@ def test_competitor_tab_build_refresh_and_detail_windows():
         assert len(detail_trees) == 4, len(detail_trees)
         for tree in detail_trees:
             for column in tree["columns"]:
-                assert tree.heading(column, "anchor") == "center", column
-                assert tree.column(column, "anchor") == "center", column
+                assert str(tree.heading(column, "anchor")) == "center", column
+                assert str(tree.column(column, "anchor")) == "center", column
         dialogs[0].destroy()
         app.refresh_competitors()
     finally:
