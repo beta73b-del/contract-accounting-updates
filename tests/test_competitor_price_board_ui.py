@@ -227,7 +227,8 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
         assert app._competitor_expanded_window is win
         assert notebook.index(notebook.select()) == 1
 
-        app._competitor_selected_id = first_id
+        app.competitor_board_trees[LITE].selection_set(str(first_id))
+        app._remember_competitor_selection(LITE)
         buttons = {
             w.cget("text"): w for w in win.winfo_children()[0].winfo_children()
             if isinstance(w, ttk.Button)
@@ -255,6 +256,7 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
             "SELECT unit_price FROM competitor_records WHERE id=?", (first_id,)
         ).fetchone()[0]) == 1599
         assert str(first_id) in lite_tree.selection()
+        assert app._selected_competitor_id() == first_id
 
         def added_dialog(parent, on_save, existing=None):
             assert parent is win and existing is None
@@ -274,6 +276,7 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
         assert len(lite_tree.get_children()) == 139
         assert len(app.competitor_board_trees[LITE].get_children()) == 139
         assert len(ecp_tree.get_children()) == 2
+        assert app._selected_competitor_id() is None
         buttons["Закрыть просмотр"].invoke()
         assert app._competitor_expanded_window is None
         assert app._competitor_expanded_trees == {}
