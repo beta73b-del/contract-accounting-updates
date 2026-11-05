@@ -19,6 +19,8 @@ LITE, ECP = db.FIXED_PRODUCTS
 
 class CompetitorHarness(tk.Tk):
     _build_competitors_tab = main.App._build_competitors_tab
+    _show_competitor_expanded = main.App._show_competitor_expanded
+    _fill_competitor_tree = main.App._fill_competitor_tree
     _remember_competitor_selection = main.App._remember_competitor_selection
     _selected_competitor_id = main.App._selected_competitor_id
     refresh_competitors = main.App.refresh_competitors
@@ -72,11 +74,15 @@ def test_competitor_tab_build_refresh_and_detail_windows():
             if isinstance(widget, ttk.Button)
             for child in [widget]
         ]
-        assert len(model_actions) == 2
-        assert all("анализ конкурентов" in btn.cget("text") for btn in model_actions)
+        analysis_buttons = [b for b in model_actions if "анализ конкурентов" in b.cget("text")]
+        expanded_buttons = [b for b in model_actions if b.cget("text") == "Развернуть таблицу"]
+        assert len(analysis_buttons) == 2 and len(expanded_buttons) == 2
         with patch.object(app, "_show_competitor_analysis") as analysis:
-            model_actions[0].invoke()
+            analysis_buttons[0].invoke()
             analysis.assert_called_once_with(product_filter=LITE)
+        with patch.object(app, "_show_competitor_expanded") as expanded:
+            expanded_buttons[1].invoke()
+            expanded.assert_called_once_with(ECP)
         assert "Записей: 0" in app.competitor_board_summaries[LITE].get()
         # Calls may be repeated while no records are present.
         app.refresh_competitors()
@@ -172,7 +178,113 @@ def test_manual_add_edit_delete_actions():
         app.destroy()
 
 
+def test_expanded_view_many_rows_and_crud_without_wrong_selection():
+    """Expanded mode uses full screen space; records remain in one SQLite DB."""
+    try:
+        app = CompetitorHarness()
+    except tk.TclError as exc:
+        if sys.platform.startswith("win"):
+            raise
+        print("SKIP: Tk display not available:", exc)
+        return
+    try:
+        first_id = None
+        for i in range(140):
+            rid = db.insert_competitor_record(app.conn, {
+                "competitor": "Тестовая организация", "competitor_inn": "1234567890",
+                "product": LITE, "platform": "РТС-Тендер", "trade_type": "Аукцион",
+                "qty": i + 1, "unit_price": 1250 + i,
+                "purchase_date": "2026-10-15",
+            })
+            if first_id is None:
+                first_id = rid
+        db.insert_competitor_record(app.conn, {
+            "competitor": "Вторая организация", "competitor_inn": "9876543210",
+            "product": ECP, "platform": "ЕЭТП", "trade_type": "Аукцион",
+            "qty": 20, "unit_price": 2300, "purchase_date": "2026-10-16",
+        })
+        app.refresh_competitors()
+        changes_before = app.conn.total_changes
+        app._show_competitor_expanded(LITE)
+        win = app._competitor_expanded_window
+        assert win is not None and win.winfo_exists()
+        assert tuple(map(str, win.resizable())) == ("1", "1")
+        if sys.platform.startswith("win"):
+            assert win.state() == "zoomed", win.state()
+        notebook = app._competitor_expanded_notebook
+        assert notebook.index(notebook.select()) == 0
+        lite_tree = app._competitor_expanded_trees[LITE]
+        ecp_tree = app._competitor_expanded_trees[ECP]
+        assert len(lite_tree.get_children()) == 140
+        assert len(ecp_tree.get_children()) == 1
+        assert lite_tree.grid_info()["sticky"] == "nsew"
+        assert len(lite_tree["columns"]) == 5
+        for tree in (lite_tree, ecp_tree):
+            for column in tree["columns"]:
+                assert str(tree.column(column, "anchor")) == "center"
+        assert app.conn.total_changes == changes_before
+        app._show_competitor_expanded(ECP)
+        assert app._competitor_expanded_window is win
+        assert notebook.index(notebook.select()) == 1
+
+        app._competitor_selected_id = first_id
+        buttons = {
+            w.cget("text"): w for w in win.winfo_children()[0].winfo_children()
+            if isinstance(w, ttk.Button)
+        }
+        assert {"Добавить запись", "Редактировать", "Удалить",
+                "Открыть запись", "Полный экран (F11)", "Закрыть просмотр"} <= buttons.keys()
+        ecp_tree.selection_remove(ecp_tree.selection())
+        with patch.object(main.messagebox, "showinfo") as msg:
+            with patch.object(app, "_edit_competitor") as edit:
+                buttons["Редактировать"].invoke()
+                msg.assert_called_once()
+                edit.assert_not_called()
+
+        notebook.select(0)
+        lite_tree.selection_set(str(first_id))
+        def edited_dialog(parent, on_save, existing=None):
+            assert parent is win and int(existing["id"]) == first_id
+            new = dict(existing)
+            new["unit_price"] = 1599
+            on_save(new, first_id)
+        with patch.object(main, "CompetitorDialog", side_effect=edited_dialog):
+            buttons["Редактировать"].invoke()
+        assert len(lite_tree.get_children()) == 140
+        assert int(app.conn.execute(
+            "SELECT unit_price FROM competitor_records WHERE id=?", (first_id,)
+        ).fetchone()[0]) == 1599
+        assert str(first_id) in lite_tree.selection()
+
+        def added_dialog(parent, on_save, existing=None):
+            assert parent is win and existing is None
+            on_save({
+                "competitor": "Тест Б", "competitor_inn": "5555555555",
+                "product": ECP, "platform": "Сбербанк-АСТ",
+                "trade_type": "Аукцион", "qty": 18,
+                "unit_price": 2000, "purchase_date": "2026-10-17",
+            }, None)
+        with patch.object(main, "CompetitorDialog", side_effect=added_dialog):
+            buttons["Добавить запись"].invoke()
+        assert len(ecp_tree.get_children()) == 2
+        assert len(app.competitor_board_trees[ECP].get_children()) == 2
+
+        with patch.object(main.messagebox, "askyesno", return_value=True):
+            buttons["Удалить"].invoke()
+        assert len(lite_tree.get_children()) == 139
+        assert len(app.competitor_board_trees[LITE].get_children()) == 139
+        assert len(ecp_tree.get_children()) == 2
+        buttons["Закрыть просмотр"].invoke()
+        assert app._competitor_expanded_window is None
+        assert app._competitor_expanded_trees == {}
+        app.refresh_competitors()
+    finally:
+        app.conn.close()
+        app.destroy()
+
+
 if __name__ == "__main__":
     test_competitor_tab_build_refresh_and_detail_windows()
     test_manual_add_edit_delete_actions()
-    print("PASS: competitor Tk price boards and manual CRUD controls")
+    test_expanded_view_many_rows_and_crud_without_wrong_selection()
+    print("PASS: competitor Tk price boards, CRUD and expanded 140-row view")
