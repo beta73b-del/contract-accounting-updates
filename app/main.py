@@ -5871,14 +5871,17 @@ class App(tk.Tk):
         header = ttk.Frame(self.tab_competitors, padding=(10, 8))
         header.pack(fill="x")
         ttk.Label(header, text="Цены закупок конкурентов", font=("TkDefaultFont", 12, "bold")).pack(side="left")
+        ttk.Button(header, text="Добавить запись", command=self._add_competitor).pack(side="left", padx=5)
+        ttk.Button(header, text="Редактировать", command=self._edit_competitor).pack(side="left", padx=5)
+        ttk.Button(header, text="Удалить", command=self._delete_competitor).pack(side="left", padx=5)
         ttk.Button(header, text="Анализ конкурента", command=self._show_competitor_analysis).pack(side="right", padx=4)
         ttk.Button(header, text="Обновить таблицы", command=self.refresh_competitors).pack(side="right", padx=4)
 
         ttk.Label(
             self.tab_competitors,
-            text=("Зафиксированные закупки из истории приложения; не текущие предложения ЕИС. "
-                  "Дважды щёлкните по цене, чтобы увидеть конкурента. "
-                  "Отсутствующие даты и площадки не подставляются автоматически."),
+            text=("Записи вводятся вручную и сохраняются отдельно для каждой закупки. "
+                  "Выберите строку для редактирования или удаления. "
+                  "Двойной щелчок открывает подробности. ЕИС автоматически не загружается."),
             wraplength=1150, justify="left", padding=(12, 0, 12, 7),
         ).pack(fill="x")
 
@@ -6133,8 +6136,8 @@ class App(tk.Tk):
         win.transient(self)
         win.lift()
 
-    # API ручного ввода сохранён для обратной совместимости; на основном экране
-    # эти команды не показываются, поскольку таблицы заполняются при открытии.
+    # Ручное добавление, редактирование и удаление — основная схема ввода
+    # наблюдений для дальнейшего анализа цен конкурентов.
     def _add_competitor(self):
         def on_save(data, _id):
             db.insert_competitor_record(self.conn, data)
