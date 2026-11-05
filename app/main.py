@@ -3057,6 +3057,8 @@ class CompetitorDialog(tk.Toplevel):
                 bind_date_autodots(w, date_var)
             elif key == "platform":
                 w = ttk.Combobox(form, width=33, values=db.PLATFORM_OPTIONS, state="normal")
+            elif key == "product":
+                w = ttk.Combobox(form, width=33, values=db.FIXED_PRODUCTS, state="normal")
             else:
                 w = ttk.Entry(form, width=36)
             w.grid(row=row, column=1, sticky="w", pady=4)
