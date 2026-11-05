@@ -217,7 +217,7 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
         ecp_tree = app._competitor_expanded_trees[ECP]
         assert len(lite_tree.get_children()) == 140
         assert len(ecp_tree.get_children()) == 1
-        assert lite_tree.grid_info()["sticky"] == "nsew"
+        assert set(str(lite_tree.grid_info()["sticky"])) == set("nsew")
         assert len(lite_tree["columns"]) == 5
         for tree in (lite_tree, ecp_tree):
             for column in tree["columns"]:
