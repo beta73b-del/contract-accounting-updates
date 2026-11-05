@@ -5876,8 +5876,7 @@ class App(tk.Tk):
         ttk.Button(header, text="Добавить запись", command=self._add_competitor).pack(side="left", padx=5)
         ttk.Button(header, text="Редактировать", command=self._edit_competitor).pack(side="left", padx=5)
         ttk.Button(header, text="Удалить", command=self._delete_competitor).pack(side="left", padx=5)
-        ttk.Button(header, text="Анализ конкурента", command=self._show_competitor_analysis).pack(side="right", padx=4)
-        ttk.Button(header, text="Обновить таблицы", command=self.refresh_competitors).pack(side="right", padx=4)
+        # Таблицы обновляются автоматически после добавления/изменения/удаления.
 
         ttk.Label(
             self.tab_competitors,
@@ -5896,17 +5895,23 @@ class App(tk.Tk):
         self._competitor_selected_id = None
 
         column_info = [
-            ("unit_price", "Цена за 1 шт., ₽", 180, "e"),
-            ("platform", "Электронная площадка (ЭТП)", 280, "w"),
-            ("purchase_date", "Дата закупки / торгов", 190, "center"),
-            ("qty", "Количество, шт.", 145, "e"),
-            ("trade_type", "Вид торгов", 260, "w"),
+            ("unit_price", "Цена за 1 шт., ₽", 140, "e"),
+            ("platform", "Площадка (ЭТП)", 230, "w"),
+            ("purchase_date", "Дата торгов", 150, "center"),
+            ("qty", "Количество, шт.", 125, "e"),
+            ("trade_type", "Вид торгов", 190, "w"),
         ]
         for product in competitor_analysis.PRODUCTS:
-            panel = ttk.LabelFrame(panes, text=product, padding=7)
+            panel = ttk.LabelFrame(panes, text="История закупок", padding=7)
+            heading = ttk.Frame(panel)
+            heading.pack(fill="x", pady=(0, 4))
+            ttk.Button(
+                heading, text=product + " — анализ конкурентов",
+                command=lambda name=product: self._show_competitor_analysis(product_filter=name),
+            ).pack(side="left", padx=(0, 8))
             summary_var = tk.StringVar(value="Загрузка записей…")
             self.competitor_board_summaries[product] = summary_var
-            ttk.Label(panel, textvariable=summary_var).pack(fill="x", padx=2, pady=(0, 5))
+            ttk.Label(heading, textvariable=summary_var).pack(side="left", fill="x", expand=True)
             table_area = ttk.Frame(panel)
             table_area.pack(fill="both", expand=True)
             table_area.grid_rowconfigure(0, weight=1)
@@ -6014,18 +6019,23 @@ class App(tk.Tk):
         win.transient(self)
         win.lift()
 
-    def _show_competitor_analysis(self, initial_key=None):
+    def _show_competitor_analysis(self, initial_key=None, product_filter=None):
         board = competitor_analysis.product_price_board(self.conn)
+        if product_filter is not None:
+            if product_filter not in competitor_analysis.PRODUCTS:
+                raise ValueError("Неизвестная модель товара")
+            board = {name: (rows if name == product_filter else []) for name, rows in board.items()}
         profiles = competitor_analysis.competitor_profiles(board)
         win = tk.Toplevel(self)
-        win.title("Анализ конкурентов — история цен и площадки")
+        win.title("Анализ конкурентов — " + (product_filter or "все модели"))
         win.geometry(f"{min(1230, win.winfo_screenwidth() - 70)}x"
                      f"{min(730, win.winfo_screenheight() - 110)}")
         main = ttk.Frame(win, padding=10)
         main.pack(fill="both", expand=True)
         ttk.Label(
-            main, text="Статистика основана только на зафиксированных закупках. "
-                       "Типичная цена — медиана цен за единицу, без взвешивания по количеству.",
+            main, text="Анализ выбранной модели по всем конкурентам. "
+                       "Медиана цен за единицу рассчитывается без взвешивания по количеству. "
+                       "Каждая закупка учитывается отдельно.",
             wraplength=1100, justify="left",
         ).pack(fill="x", pady=(0, 7))
 
@@ -6133,7 +6143,7 @@ class App(tk.Tk):
             company_tree.see(str(selected_index))
             update_profile()
         else:
-            name_var.set("Нет сохранённых данных о конкурентах по выбранным моделям")
+            name_var.set("Нет сохранённых записей по выбранной модели")
         ttk.Button(main, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(7, 0))
         win.transient(self)
         win.lift()
