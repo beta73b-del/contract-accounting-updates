@@ -69,6 +69,9 @@ def test_competitor_tab_build_refresh_and_detail_windows():
         ]
         assert len(model_actions) == 2
         assert all("анализ конкурентов" in btn.cget("text") for btn in model_actions)
+        with patch.object(app, "_show_competitor_analysis") as analysis:
+            model_actions[0].invoke()
+            analysis.assert_called_once_with(product_filter=LITE)
         assert "Записей: 0" in app.competitor_board_summaries[LITE].get()
         # Calls may be repeated while no records are present.
         app.refresh_competitors()
