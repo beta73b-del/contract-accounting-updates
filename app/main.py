@@ -5878,13 +5878,16 @@ class App(tk.Tk):
         ttk.Button(header, text="Удалить", command=self._delete_competitor).pack(side="left", padx=5)
         # Таблицы обновляются автоматически после добавления/изменения/удаления.
 
-        ttk.Label(
+        help_label = ttk.Label(
             self.tab_competitors,
             text=("Записи вводятся вручную и сохраняются отдельно для каждой закупки. "
                   "Выберите строку для редактирования или удаления. "
                   "Двойной щелчок открывает подробности. ЕИС автоматически не загружается."),
-            wraplength=1150, justify="left", padding=(12, 0, 12, 7),
-        ).pack(fill="x")
+            wraplength=760, justify="left", padding=(12, 0, 12, 7),
+        )
+        help_label.pack(fill="x")
+        help_label.bind("<Configure>",
+                        lambda event: help_label.configure(wraplength=max(260, event.width - 28)))
 
         panes = ttk.Panedwindow(self.tab_competitors, orient=tk.VERTICAL)
         panes.pack(fill="both", expand=True, padx=10, pady=(0, 8))
@@ -5904,14 +5907,14 @@ class App(tk.Tk):
         for product in competitor_analysis.PRODUCTS:
             panel = ttk.LabelFrame(panes, text="История закупок", padding=7)
             heading = ttk.Frame(panel)
-            heading.pack(fill="x", pady=(0, 4))
+            heading.pack(fill="x", pady=(0, 2))
             ttk.Button(
                 heading, text=product + " — анализ конкурентов",
                 command=lambda name=product: self._show_competitor_analysis(product_filter=name),
-            ).pack(side="left", padx=(0, 8))
+            ).pack(side="left")
             summary_var = tk.StringVar(value="Загрузка записей…")
             self.competitor_board_summaries[product] = summary_var
-            ttk.Label(heading, textvariable=summary_var).pack(side="left", fill="x", expand=True)
+            ttk.Label(panel, textvariable=summary_var).pack(fill="x", padx=2, pady=(0, 5))
             table_area = ttk.Frame(panel)
             table_area.pack(fill="both", expand=True)
             table_area.grid_rowconfigure(0, weight=1)
