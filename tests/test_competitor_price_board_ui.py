@@ -8,6 +8,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 import db
@@ -86,6 +87,56 @@ def test_competitor_tab_build_refresh_and_detail_windows():
         app.destroy()
 
 
+def test_manual_add_edit_delete_actions():
+    try:
+        app = CompetitorHarness()
+    except tk.TclError as exc:
+        if sys.platform.startswith("win"):
+            raise
+        print("SKIP: Tk display not available:", exc)
+        return
+    try:
+        def new_entry(_parent, on_save, existing=None):
+            assert existing is None
+            on_save({
+                "competitor": "Тест", "competitor_inn": "1234567890",
+                "product": LITE, "platform": "РТС-Тендер",
+                "trade_type": "Аукцион", "qty": 150, "unit_price": 1250,
+                "purchase_date": "2026-10-15",
+            }, None)
+
+        with patch.object(main, "CompetitorDialog", side_effect=new_entry):
+            app._add_competitor()
+        rows = db.fetch_competitor_records(app.conn)
+        assert len(rows) == 1 and rows[0]["qty"] == 150
+        rid = int(rows[0]["id"])
+        tree = app.competitor_board_trees[LITE]
+        tree.selection_set(str(rid))
+        app._remember_competitor_selection(LITE)
+
+        def change_entry(_parent, on_save, existing=None):
+            assert int(existing["id"]) == rid
+            data = dict(existing)
+            data["qty"] = 250
+            data["unit_price"] = 1200
+            on_save(data, rid)
+
+        with patch.object(main, "CompetitorDialog", side_effect=change_entry):
+            app._edit_competitor()
+        rows = db.fetch_competitor_records(app.conn)
+        assert len(rows) == 1 and int(rows[0]["id"]) == rid
+        assert rows[0]["qty"] == 250 and rows[0]["unit_price"] == 1200
+        tree.selection_set(str(rid))
+        app._remember_competitor_selection(LITE)
+        with patch.object(main.messagebox, "askyesno", return_value=True):
+            app._delete_competitor()
+        assert len(db.fetch_competitor_records(app.conn)) == 0
+    finally:
+        app.conn.close()
+        app.destroy()
+
+
 if __name__ == "__main__":
     test_competitor_tab_build_refresh_and_detail_windows()
-    print("PASS: competitor Tk price boards and drill-down windows")
+    test_manual_add_edit_delete_actions()
+    print("PASS: competitor Tk price boards and manual CRUD controls")
