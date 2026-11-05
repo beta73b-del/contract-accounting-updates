@@ -5898,11 +5898,11 @@ class App(tk.Tk):
         self._competitor_selected_id = None
 
         column_info = [
-            ("unit_price", "Цена за 1 шт., ₽", 140, "e"),
-            ("platform", "Площадка (ЭТП)", 230, "w"),
+            ("unit_price", "Цена за 1 шт., ₽", 140, "center"),
+            ("platform", "Площадка (ЭТП)", 230, "center"),
             ("purchase_date", "Дата торгов", 150, "center"),
-            ("qty", "Количество, шт.", 125, "e"),
-            ("trade_type", "Вид торгов", 190, "w"),
+            ("qty", "Количество, шт.", 125, "center"),
+            ("trade_type", "Вид торгов", 190, "center"),
         ]
         for product in competitor_analysis.PRODUCTS:
             panel = ttk.LabelFrame(panes, text="История закупок", padding=7)
@@ -6058,7 +6058,7 @@ class App(tk.Tk):
                                 selectmode="browse", height=height)
             for key, heading, width in specs:
                 tree.heading(key, text=heading, anchor="center")
-                tree.column(key, width=width, minwidth=65, anchor="w", stretch=True)
+                tree.column(key, width=width, minwidth=65, anchor="center", stretch=True)
             yscroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
             xscroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
             tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
