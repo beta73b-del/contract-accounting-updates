@@ -37,9 +37,11 @@ def test_competitor_tab_uses_resizable_panes_and_scrollbars():
     block=source[start:end]
     assert "ttk.Panedwindow" in block
     assert 'orient=tk.VERTICAL' in block
-    assert block.count('ttk.Scrollbar')>=3
-    assert 'panes.add(stats_panel, weight=3)' in block
-    assert 'height=6' in block
+    assert 'for product in competitor_analysis.PRODUCTS:' in block
+    assert block.count('ttk.Scrollbar') >= 2
+    assert 'panes.add(panel, weight=1)' in block
+    assert 'height=7' in block
+    assert 'Добавить запись' not in block
 
 if __name__=="__main__":
     for t in [test_ecp_3120_aliases_are_one_product,test_stock_merges_ecp_3120_variants,test_competitor_tab_uses_resizable_panes_and_scrollbars]:

@@ -7,6 +7,12 @@ on:
       - "app/**"
       - "tests/**"
       - ".github/workflows/validate-main.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - ".github/workflows/validate-main.yml"
   workflow_dispatch:
 
 permissions:
