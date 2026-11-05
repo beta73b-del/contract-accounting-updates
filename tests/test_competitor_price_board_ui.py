@@ -23,6 +23,9 @@ class CompetitorHarness(tk.Tk):
     refresh_competitors = main.App.refresh_competitors
     _show_competitor_price_details = main.App._show_competitor_price_details
     _show_competitor_analysis = main.App._show_competitor_analysis
+    _add_competitor = main.App._add_competitor
+    _edit_competitor = main.App._edit_competitor
+    _delete_competitor = main.App._delete_competitor
 
     def __init__(self):
         super().__init__()
@@ -44,6 +47,11 @@ def test_competitor_tab_build_refresh_and_detail_windows():
     try:
         assert list(app.competitor_board_trees) == [LITE, ECP]
         app.refresh_competitors()
+        toolbar_labels = {
+            widget.cget("text") for widget in app.tab_competitors.winfo_children()[0].winfo_children()
+            if isinstance(widget, ttk.Button)
+        }
+        assert {"Добавить запись", "Редактировать", "Удалить"}.issubset(toolbar_labels)
         assert "Записей: 0" in app.competitor_board_summaries[LITE].get()
         # Calls may be repeated while no records are present.
         app.refresh_competitors()
