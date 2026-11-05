@@ -234,7 +234,13 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
             if isinstance(w, ttk.Button)
         }
         assert {"Добавить запись", "Редактировать", "Удалить",
-                "Открыть запись", "Полный экран (F11)", "Закрыть просмотр"} <= buttons.keys()
+                "Открыть запись", "Полный экран (F11)", "Закрыть просмотр",
+                "Анализ модели"} <= buttons.keys()
+        original_fullscreen = bool(win.attributes("-fullscreen"))
+        buttons["Полный экран (F11)"].invoke()
+        assert bool(win.attributes("-fullscreen")) != original_fullscreen
+        buttons["Полный экран (F11)"].invoke()
+        assert bool(win.attributes("-fullscreen")) == original_fullscreen
         ecp_tree.selection_remove(ecp_tree.selection())
         with patch.object(main.messagebox, "showinfo") as msg:
             with patch.object(app, "_edit_competitor") as edit:
@@ -244,6 +250,20 @@ def test_expanded_view_many_rows_and_crud_without_wrong_selection():
 
         notebook.select(0)
         lite_tree.selection_set(str(first_id))
+        buttons["Открыть запись"].invoke()
+        children = [child for child in win.winfo_children()
+                    if isinstance(child, tk.Toplevel)]
+        assert len(children) == 1, children
+        assert "сведения о конкуренте" in children[0].title()
+        children[0].destroy()
+
+        buttons["Анализ модели"].invoke()
+        children = [child for child in win.winfo_children()
+                    if isinstance(child, tk.Toplevel)]
+        assert len(children) == 1, children
+        assert LITE in children[0].title()
+        children[0].destroy()
+
         def edited_dialog(parent, on_save, existing=None):
             assert parent is win and int(existing["id"]) == first_id
             new = dict(existing)
