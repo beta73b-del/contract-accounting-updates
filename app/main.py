@@ -5738,65 +5738,115 @@ class App(tk.Tk):
         return remaining * (value / qty) if qty else 0.0
 
     def _show_stock_movement(self):
+        """Фактическое движение выбранного товара с компактным фильтром периода."""
         sel = self.stock_summary_tree.selection()
         if not sel:
             return
         product = self.stock_summary_tree.item(sel[0], "values")[0]
-        events = db.stock_product_movement(self.conn, product)
-        history = db.fetch_stock_audit(self.conn, product)
 
         win = tk.Toplevel(self)
-        win.title(f"Движение и история товара: {product}")
-        win.geometry("1050x620")
-        ttk.Label(
-            win, text=product,
-            font=("TkDefaultFont", BASE_FONT_SIZE, "bold"), padding=8
-        ).pack(anchor="w")
+        win.title(f"Движение по складу — {product}")
+        win.geometry("1000x600")
+        ttk.Label(win, text=product, font=("TkDefaultFont", BASE_FONT_SIZE, "bold"),
+                  padding=8).pack(anchor="w")
 
-        notebook = ttk.Notebook(win)
-        notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        current_tab = ttk.Frame(notebook)
-        history_tab = ttk.Frame(notebook)
-        notebook.add(current_tab, text="Текущее движение")
-        notebook.add(history_tab, text="История событий")
+        toolbar = ttk.Frame(win, padding=(8, 4))
+        toolbar.pack(fill="x")
+        period = tk.StringVar(value="month")
+        period_label = tk.StringVar()
+        start_var = tk.StringVar(value=date.today().replace(day=1).strftime("%d.%m.%Y"))
+        end_var = tk.StringVar(value=date.today().strftime("%d.%m.%Y"))
+        custom_frame = ttk.Frame(toolbar)
+        buttons = {}
 
         cols = ("date", "type", "qty", "balance", "counterparty", "details")
         labels = ("Дата", "Операция", "Кол-во", "Баланс", "Контрагент", "Основание")
-        tree = ttk.Treeview(current_tab, columns=cols, show="headings")
+        tree = ttk.Treeview(win, columns=cols, show="headings")
         for key, label in zip(cols, labels):
             tree.heading(key, text=label, anchor="center")
-            tree.column(key, width=140 if key not in ("details", "counterparty") else 220, anchor="center")
-        tree.pack(fill="both", expand=True, padx=6, pady=6)
-        for e in events:
-            tree_insert_wrapped(
-                tree, "", "end",
-                values=(
-                    fmt_date(e["date"]), e["type"], fmt_qty(e["qty"]),
-                    fmt_qty(e["balance"]), e["counterparty"], e["details"]
-                ),
+            tree.column(key, width=120 if key not in ("details", "counterparty") else 220,
+                        anchor="center")
+        tree.pack(fill="both", expand=True, padx=8, pady=6)
+        summary_var = tk.StringVar()
+        ttk.Label(win, textvariable=summary_var, padding=(8, 4)).pack(anchor="w")
+
+        def render():
+            today = date.today()
+            mode = period.get()
+            if mode == "month":
+                first, last = today.replace(day=1), today
+            elif mode == "year":
+                first, last = today.replace(month=1, day=1), today
+            else:
+                try:
+                    first = datetime.strptime(start_var.get().strip(), "%d.%m.%Y").date()
+                    last = datetime.strptime(end_var.get().strip(), "%d.%m.%Y").date()
+                except ValueError:
+                    messagebox.showwarning("Период", "Введите даты в формате ДД.ММ.ГГГГ.", parent=win)
+                    return
+                if first > last:
+                    messagebox.showwarning("Период", "Начальная дата позже конечной.", parent=win)
+                    return
+            period_label.set(f"{first:%d.%m.%Y} — {last:%d.%m.%Y}")
+            for item in tree.get_children():
+                tree.delete(item)
+            events = [e for e in db.stock_product_movement(self.conn, product)
+                      if e["type"] in ("Приход", "Реализация")]
+            opening = sum(float(e["qty"] or 0) for e in events
+                          if str(e["date"] or "")[:10] < first.isoformat())
+            incoming = outgoing = 0.0
+            balance = opening
+            for e in events:
+                dt = str(e["date"] or "")[:10]
+                if not first.isoformat() <= dt <= last.isoformat():
+                    continue
+                qty = float(e["qty"] or 0)
+                balance += qty
+                if qty >= 0:
+                    incoming += qty
+                else:
+                    outgoing -= qty
+                tree_insert_wrapped(
+                    tree, "", "end",
+                    values=(fmt_date(e["date"]), e["type"], fmt_qty(qty),
+                            fmt_qty(balance), e["counterparty"], e["details"]),
+                )
+            summary_var.set(
+                f"Начало: {fmt_qty(opening)}   Приход: {fmt_qty(incoming)}   "
+                f"Расход: {fmt_qty(outgoing)}   Конец: {fmt_qty(balance)}"
             )
 
-        hcols = ("datetime", "action", "qty", "contract", "counterparty", "details")
-        hlabels = ("Дата и время", "Событие", "Кол-во", "Контракт", "Контрагент", "Подробности")
-        htree = ttk.Treeview(history_tab, columns=hcols, show="headings")
-        widths = (165, 190, 100, 100, 210, 320)
-        for key, label, width in zip(hcols, hlabels, widths):
-            htree.heading(key, text=label, anchor="center")
-            htree.column(key, width=width, anchor="center" if key != "details" else "w")
-        htree.pack(fill="both", expand=True, padx=6, pady=6)
-        for r in history:
-            dt = str(r["event_at"] or "").replace("T", " ")
-            qty = "—" if r["qty"] is None else fmt_qty(r["qty"])
-            contract = f"#{r['purchase_id']}" if r["purchase_id"] else "—"
-            tree_insert_wrapped(
-                htree, "", "end",
-                values=(
-                    dt, r["action"] or "—", qty, contract,
-                    r["counterparty"] or "—", r["details"] or "—"
-                ),
-            )
+        def set_period(mode):
+            period.set(mode)
+            for key, button in buttons.items():
+                button.configure(state="disabled" if key == mode else "normal")
+            if mode == "custom":
+                custom_frame.pack(side="left", padx=(10, 0))
+            else:
+                custom_frame.pack_forget()
+                render()
 
+        for mode, symbol, hint in (
+            ("month", "▦", "Текущий месяц"),
+            ("year", "▤", "Текущий год"),
+            ("custom", "▣", "Произвольный период"),
+        ):
+            button = ttk.Button(toolbar, text=symbol, width=3,
+                                command=lambda m=mode: set_period(m))
+            button.pack(side="left", padx=(0, 4))
+            buttons[mode] = button
+            # Tkinter не имеет штатных tooltip; пояснение доступно через фокус.
+            button.bind("<FocusIn>", lambda _e, h=hint: period_label.set(h))
+            button.bind("<FocusOut>", lambda _e: render() if period.get() != "custom" else None)
+
+        ttk.Label(toolbar, textvariable=period_label).pack(side="left", padx=(10, 0))
+        ttk.Label(custom_frame, text="С").pack(side="left")
+        ttk.Entry(custom_frame, textvariable=start_var, width=12).pack(side="left", padx=3)
+        ttk.Label(custom_frame, text="по").pack(side="left")
+        ttk.Entry(custom_frame, textvariable=end_var, width=12).pack(side="left", padx=3)
+        ttk.Button(custom_frame, text="✓", width=3, command=render).pack(side="left", padx=3)
         ttk.Button(win, text="Закрыть", command=win.destroy).pack(pady=(0, 8))
+        set_period("month")
 
     def _selected_receipt_id(self):
         sel = self.stock_log_tree.selection()
