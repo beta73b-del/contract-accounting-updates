@@ -1,3 +1,8 @@
+## Web «Контракты ИП»: исследование двух независимых резервных хранилищ — 24.11.2026
+
+- [WEB_DUAL_DESTINATION_BACKUP_RESEARCH_2026-11-24.md](WEB_DUAL_DESTINATION_BACKUP_RESEARCH_2026-11-24.md) — архитектура согласованного снимка действующих источников, локального физически независимого архива и удалённого immutable/append-only хранилища, manifest/SHA-256, проверки SQLite и файлов, retention, очередь после offline, мониторинг и обязательный тест восстановления.
+- Цель: каждые 30 минут при работающем ПК; RPO не гарантия, remote отстаёт без интернета. Приоритет: изолированный proof-of-concept, затем чтение актуального Web Excel/server.ps1 и тесты без изменения рабочих файлов. **Только исследование: программы, базы, VERSION и релизы не изменены.**
+
 ## Web «Контракты ИП»: долговременный реестр внешних решений — 24.11.2026
 
 - [WEB_SOLUTIONS_IMPLEMENTATION_RESEARCH_2026-11-24.md](WEB_SOLUTIONS_IMPLEMENTATION_RESEARCH_2026-11-24.md) — сводная проверка конкретных фрагментов InvenTree, ERPNext, HomeBox, openstock, excel-to-domain-models, а также SQLite, OWASP, openpyxl, Microsoft Excel, PyInstaller, Restic и Paperless-ngx. Сформулированы D01–D12 (алгоритмы и защиты), матрица испытаний и R0–R6 (этапы). Использовать для следующих этапов Web-разработки, сверяя с актуальным кодом.
