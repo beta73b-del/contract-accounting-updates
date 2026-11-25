@@ -49,12 +49,25 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <div class="scroll"><table><thead><tr><th>Товар</th><th>Физически</th><th>Резерв</th><th>Доступно</th><th>Дефицит</th></tr></thead><tbody id="stock"></tbody></table></div>
 </section>
 </div>
+<section class="panel"><h2>Общие расходы и ставки (только тестовые данные)</h2>
+<p class="small">Журнал версий расходов сохраняется в SQLite. Расходы участвуют в расчётах управленческой прибыли выбранного месяца после переноса финансовой карточки. В текущем прототипе итог по контрактам пока не показывается.</p>
+<div class="fields">
+<label>Дата расхода<input id="expenseDate" type="date"></label>
+<label>Сумма, ₽<input id="expenseAmount" value="100.00"></label>
+<label>Комментарий<input id="expenseComment" maxlength="500" placeholder="Назначение расхода"></label>
+</div><button id="expenseSave">Сохранить расход</button><button id="expenseReset">Новый расход</button>
+<div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма</th><th>Комментарий</th><th>Версия</th><th>Действия</th></tr></thead><tbody id="expenseRows"></tbody></table></div>
+<h3>Ставка для будущего года</h3><div class="fields">
+<label>Год (2027–2100)<input id="rateYear" type="number" min="2027" max="2100" value="2027"></label>
+<label>Ставка<select id="rateValue"><option value="5">5%</option><option value="15">15%</option></select></label>
+</div><button id="rateSave">Сохранить ставку</button><p id="rateCurrent" class="small"></p>
+</section>
 <section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Редактировать</th></tr></thead><tbody id="records"></tbody></table></div></section>
 </main>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let key='',records=[],goods=[],activeId='',revision=0;
+let key='',records=[],goods=[],activeId='',revision=0,finance={expenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
 function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
 function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
 function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
@@ -63,13 +76,14 @@ async function request(path,body){
  const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
 }
 async function refresh(){
- const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;goods=r.stock.items;
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;goods=r.stock.items;finance=r.finance||{expenses:[],rates:{}};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration;
  choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
  const st=$('stock');st.replaceChildren();
  for(const x of goods){const tr=document.createElement('tr');[x.product,x.physical,x.reserved,x.available,x.shortage].forEach(y=>td(tr,y));st.append(tr)}
  const table=$('records');table.replaceChildren();
  for(const x of records){const tr=document.createElement('tr');[x.customer,x.contract_number,x.status,x.contract_date].forEach(y=>td(tr,y));const cell=document.createElement('td');const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);cell.append(b);tr.append(cell);table.append(tr)}
+ renderFinance();
 }
 function open(x){activeId=x.id;revision=x.revision;
  for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
@@ -89,6 +103,59 @@ $('save').onclick=async()=>{try{const payload={
  items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
  };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
+
+function renderFinance(){
+ const table=$('expenseRows');table.replaceChildren();
+ for(const e of finance.expenses){
+   const tr=document.createElement('tr');
+   for(const k of ['date','amount','comment','revision'])td(tr,e[k]);
+   const cell=document.createElement('td');
+   const edit=document.createElement('button');edit.textContent='Изменить';
+   edit.onclick=()=>{activeExpenseId=e.id;activeExpenseRevision=e.revision;
+     $('expenseDate').value=e.date;$('expenseAmount').value=e.amount;$('expenseComment').value=e.comment;
+     tell('Открыт тестовый расход, ревизия '+e.revision);
+   };
+   const remove=document.createElement('button');remove.textContent='Удалить';
+   remove.onclick=async()=>{if(!confirm('Удалить тестовый расход?'))return;
+     try{await request('/api/finance',{action:'delete',opId:crypto.randomUUID().replaceAll('-',''),
+         id:e.id,revision:e.revision});resetExpense();await refresh();tell('Расход удалён; событие сохранено в журнале')}
+     catch(err){tell(err.message,true)}
+   };
+   cell.append(edit,remove);tr.append(cell);table.append(tr);
+ }
+ const year=Number($('rateYear').value);
+ const current=finance.rates[String(year)];
+ $('rateCurrent').textContent=year===2026?'Ставка 2026 года: 5%':
+   (current===undefined?'Ставка не задана; оценка налога за год недоступна':'Текущая ставка '+year+': '+current+'%');
+ if(current===5||current===15)$('rateValue').value=String(current);
+}
+function resetExpense(){
+ activeExpenseId='';activeExpenseRevision=0;
+ $('expenseComment').value='';$('expenseAmount').value='100.00';
+ $('expenseDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+}
+$('expenseReset').onclick=()=>{resetExpense();tell('Новый тестовый расход')};
+$('expenseSave').onclick=async()=>{
+ const id=activeExpenseId||crypto.randomUUID().replaceAll('-','');
+ const action=activeExpenseId?'edit':'create';
+ try{
+   await request('/api/finance',{action,opId:crypto.randomUUID().replaceAll('-',''),
+     id,revision:activeExpenseRevision,date:$('expenseDate').value,
+     amount:$('expenseAmount').value,comment:$('expenseComment').value});
+   resetExpense();await refresh();tell('Тестовый расход сохранён в SQLite')
+ }catch(err){tell(err.message,true)}
+};
+$('rateYear').addEventListener('change',renderFinance);
+$('rateSave').onclick=async()=>{
+ const year=Number($('rateYear').value),current=finance.rates[String(year)];
+ try{
+   await request('/api/finance',{action:'rate',opId:crypto.randomUUID().replaceAll('-',''),
+     year,rate:Number($('rateValue').value),previous:current===undefined?null:current});
+   await refresh();tell('Тестовая ставка сохранена')
+ }catch(err){tell(err.message,true)}
+};
+resetExpense();
+
 refresh().catch(e=>tell(e.message,true));
 </script>
 </body></html>
