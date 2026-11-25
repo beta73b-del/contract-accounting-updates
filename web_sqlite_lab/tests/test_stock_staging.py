@@ -85,6 +85,13 @@ class StockStagingTests(unittest.TestCase):
                               capture_output=True,text=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.assertFalse(self.dest.exists())
+    def test_special_filename_hash_character(self):
+        renamed=self.root/'raw#test.sqlite'
+        self.raw.rename(renamed)
+        self.raw=renamed
+        result=build_stock_staging(self.raw,self.dest)
+        self.assertEqual(result['parity'],'PASS')
+        self.assertTrue(self.dest.is_file())
     def test_rejected_balance_mismatch_no_destination(self):
         self.stock['items'][0]['quantity']+=1
         self.save()
