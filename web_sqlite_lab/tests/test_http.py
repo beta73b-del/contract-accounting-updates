@@ -389,5 +389,44 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue((self.db.parent/"backups").is_dir())
 
 
+    def test_10_bootstrap_auto_purges_file_after_30_days(self):
+        from datetime import datetime,timezone,timedelta
+        fid=uuid.uuid4().hex
+        data=b"30 day retention example"
+        url=self.url+"/api/files/upload?"+urlencode({
+            "requestId":uuid.uuid4().hex,"id":fid,"name":"временная копия.txt"})
+        req=urllib.request.Request(url,data=data,method="POST",
+                 headers={"X-Contracts-Key":self.key})
+        with urllib.request.urlopen(req,timeout=8):pass
+        code,removed,_=self.req("/api/files/trash",{
+            "requestId":uuid.uuid4().hex,"id":fid,
+            "revision":1,"reason":"Expired on next app launch"})
+        self.assertEqual(code,200)
+        with closing(sqlite3.connect(self.db)) as db:
+            older=(datetime.now(timezone.utc)-timedelta(days=31)).isoformat()
+            db.execute("UPDATE managed_files SET deleted_at=?,expires_at=? WHERE id=?",
+                (older,older,fid))
+            db.commit()
+        code,status,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        self.assertGreaterEqual(status["files"]["cleanup"]["purgedFiles"],1)
+        self.assertFalse((self.db.parent/"managed_files"/(fid+".bin")).exists())
+        self.assertFalse(any(x["id"]==fid for x in status["files"]["trash"]))
+        with closing(sqlite3.connect(self.db)) as db:
+            self.assertEqual(db.execute(
+                "SELECT state FROM managed_files WHERE id=?",(fid,)).fetchone()[0],"purged")
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM file_events WHERE file_id=?",(fid,)).fetchone()[0],4)
+
+    def test_11_reject_file_upload_with_bad_request_key(self):
+        url=self.url+"/api/files/upload?"+urlencode({
+            "requestId":uuid.uuid4().hex,"id":uuid.uuid4().hex,"name":"forbidden.txt"})
+        req=urllib.request.Request(url,data=b"no",method="POST",
+                                   headers={"X-Contracts-Key":"unauthorized"})
+        with self.assertRaises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(req,timeout=8)
+        self.assertEqual(err.exception.code,403)
+
+
 if __name__=="__main__":
     unittest.main()
