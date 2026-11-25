@@ -63,16 +63,27 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 </div><button id="rateSave">Сохранить ставку</button><p id="rateCurrent" class="small"></p>
 </section>
 <section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Действия</th></tr></thead><tbody id="records"></tbody></table></div></section>
+<section class="panel"><h2>Документы и вложения</h2>
+<p class="small">Файлы приложения защищены внутренней Корзиной. Удалённый файл доступен для восстановления 30 суток; затем содержимое автоматически стирается, история удаления сохраняется. Файлы вне каталогов приложения не перехватываются.</p>
+<div class="fields">
+<label>Выберите файл<input id="documentInput" type="file"></label>
+<label>Связать с контрактом<select id="documentContract"><option value="">Без привязки</option></select></label>
+</div>
+<button id="documentUpload">Добавить документ</button>
+<div class="scroll"><table><thead><tr><th>Имя</th><th>Размер</th><th>Контракт</th><th>Действия</th></tr></thead><tbody id="documentRows"></tbody></table></div>
+</section>
 <section class="panel"><h2>Корзина</h2>
 <p class="small">Удаление не стирает записи из SQLite. Восстановление возвращает тот же ID, товары и сумму. Отгруженные и оплаченные контракты защищены от удаления. Документы физически не удаляются. Очистка Корзины отключена.</p>
 <h3>Контракты</h3><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата удаления</th><th>Действие</th></tr></thead><tbody id="trashContracts"></tbody></table></div>
 <h3>Расходы</h3><div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма</th><th>Комментарий</th><th>Действие</th></tr></thead><tbody id="trashExpenses"></tbody></table></div>
+<h3>Документы · удаляются окончательно через 30 суток</h3>
+<div class="scroll"><table><thead><tr><th>Имя</th><th>Дата удаления</th><th>Срок восстановления</th><th>Действие</th></tr></thead><tbody id="trashDocuments"></tbody></table></div>
 </section>
 </main>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let key='',records=[],trashContracts=[],goods=[],activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
+let key='',records=[],trashContracts=[],goods=[],fileState={active:[],trash:[]},activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
 function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
 function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
 function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
@@ -81,7 +92,7 @@ async function request(path,body){
  const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
 }
 async function refresh(){
- const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration;
  choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
  const st=$('stock');st.replaceChildren();
@@ -106,7 +117,7 @@ async function refresh(){
    };
    cell.append(b,remove);tr.append(cell);table.append(tr);
  }
- renderFinance();renderTrash();
+ renderFinance();renderTrash();renderFiles();
 }
 function open(x){activeId=x.id;revision=x.revision;
  for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
@@ -159,6 +170,71 @@ function renderTrash(){
    cell.append(restore);tr.append(cell);expenses.append(tr);
  }
 }
+function renderFiles(){
+ const select=$('documentContract'),current=select.value;
+ select.replaceChildren();
+ const none=document.createElement('option');none.value='';none.textContent='Без привязки';select.append(none);
+ for(const record of records){
+   const o=document.createElement('option');o.value=record.id;
+   o.textContent='№'+record.contract_number+' · '+record.customer;
+   select.append(o);
+ }
+ if([...select.options].some(x=>x.value===current))select.value=current;
+ const active=$('documentRows');active.replaceChildren();
+ for(const f of fileState.active||[]){
+   const tr=document.createElement('tr');
+   [f.name,f.size,f.contractId||'—'].forEach(x=>td(tr,x));
+   const actions=document.createElement('td');
+   const download=document.createElement('button');download.textContent='Скачать';
+   download.onclick=()=>{window.location.href='/api/files/download?id='+encodeURIComponent(f.id)};
+   const remove=document.createElement('button');remove.textContent='В Корзину';
+   remove.onclick=async()=>{
+      if(!confirm('Переместить документ «'+f.name+'» в Корзину на 30 суток?'))return;
+      try{
+         await request('/api/files/trash',{requestId:crypto.randomUUID().replaceAll('-',''),
+           id:f.id,revision:f.revision,reason:'Удалён пользователем'});
+         await refresh();tell('Документ сохранён в Корзине на 30 суток');
+      }catch(e){tell(e.message,true)}
+   };
+   actions.append(download,remove);tr.append(actions);active.append(tr);
+ }
+ const trash=$('trashDocuments');trash.replaceChildren();
+ for(const f of fileState.trash||[]){
+    const tr=document.createElement('tr');
+    [f.name,f.deletedAt||'',f.expiresAt||''].forEach(x=>td(tr,x));
+    const actions=document.createElement('td');
+    const restore=document.createElement('button');restore.textContent='Восстановить';
+    restore.onclick=async()=>{
+       try{
+          await request('/api/files/restore',{requestId:crypto.randomUUID().replaceAll('-',''),
+            id:f.id,revision:f.revision});
+          await refresh();tell('Файл восстановлен в первоначальном виде');
+       }catch(e){tell(e.message,true)}
+    };
+    actions.append(restore);tr.append(actions);trash.append(tr);
+ }
+}
+$('documentUpload').onclick=async()=>{
+ const input=$('documentInput'),file=input.files?.[0];
+ if(!file){tell('Выберите документ для загрузки',true);return}
+ if(file.size>256*1024*1024){tell('Максимальный размер файла 256 МБ',true);return}
+ const button=$('documentUpload');button.disabled=true;
+ try{
+    const query=new URLSearchParams({
+       requestId:crypto.randomUUID().replaceAll('-',''),
+       id:crypto.randomUUID().replaceAll('-',''),
+       name:file.name,contractId:$('documentContract').value
+    });
+    const r=await fetch('/api/files/upload?'+query.toString(),{
+       method:'POST',headers:{'X-Contracts-Key':key},
+       body:file,cache:'no-store'});
+    const result=await r.json();
+    if(!r.ok)throw Error(result.error||'Не удалось сохранить документ');
+    input.value='';await refresh();tell('Документ '+result.name+' сохранён в защищённом хранилище');
+ }catch(err){tell(err.message,true)}
+ finally{button.disabled=false}
+};
+
 function renderFinance(){
  const table=$('expenseRows');table.replaceChildren();
  for(const e of finance.expenses){
