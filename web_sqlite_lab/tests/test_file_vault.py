@@ -193,6 +193,20 @@ class FileVaultTests(unittest.TestCase):
         self.assertEqual(self.vault._blob(r["id"]).read_bytes(),body)
         restored=self.vault.restore_file(rid(),r["id"],2,T0+timedelta(days=1))
         self.assertEqual(self.vault.get_active(restored["id"])[1].read_bytes(),body)
+    def test_16b_legacy_repeat_delete_does_not_duplicate_backup(self):
+        folder=self.attachments/"nested docs"
+        folder.mkdir()
+        rel="nested docs/подпись.jpg"
+        (folder/"подпись.jpg").write_bytes(b"synthetic digital image")
+        op=rid()
+        first=self.vault.trash_legacy_attachment(op,rel,self.attachments)
+        self.assertEqual(first["name"],rel)
+        second=self.vault.trash_legacy_attachment(op,rel,self.attachments)
+        self.assertEqual(second,first)
+        self.assertEqual(self.store.db.execute(
+             "SELECT COUNT(*) FROM managed_files").fetchone()[0],1)
+        self.assertEqual(self.store.db.execute(
+             "SELECT COUNT(*) FROM file_events").fetchone()[0],2)
     def test_17_symlink_not_followed_when_deleting_legacy_file(self):
         other=self.root/"outside-secret";other.write_bytes(b"SECRET")
         link=self.attachments/"outside"
