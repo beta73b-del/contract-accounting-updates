@@ -94,25 +94,25 @@ class Store:
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA busy_timeout=10000")
             version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise DataError("Неизвестная версия SQLite: отказ от автоматического изменения")
             present = {row[0] for row in self.db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
             base = {"products", "contracts", "contract_lines", "receipts", "shipments", "operations"}
             if version == 0 and present:
                 raise DataError("Неопознанная непустая база без версии: автоматический импорт запрещён")
-            if version in (1, 2):
-                if not base.issubset(present) or (version == 2 and "finance_events" not in present):
+            if version in (1, 2, 3):
+                if not base.issubset(present) or (version >= 2 and "finance_events" not in present) or (version == 3 and not {"contract_trash","contract_lifecycle"}.issubset(present)):
                     raise DataError("В базе отсутствуют обязательные таблицы; исправление без проверки запрещено")
                 if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise DataError("Повреждение базы до миграции")
                 if self.db.execute("PRAGMA foreign_key_check").fetchall():
                     raise DataError("Нарушение связей до миграции")
-            if version == 1:
-                # Snapshot must precede *all* schema and journal-mode writes.
-                # sqlite3 Online Backup includes data still held in WAL files.
+            if version in (1,2):
+                # Online backup before schema changes, including live WAL transactions.
+                label="v2" if version==1 else "v3"
                 self.backup(self.path.parent / "backups" /
-                            ("before-v2-" + uuid.uuid4().hex + ".sqlite"))
+                            ("before-" + label + "-" + uuid.uuid4().hex + ".sqlite"))
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=FULL")
         except BaseException:
@@ -170,10 +170,33 @@ class Store:
             except BaseException:
                 self.db.execute("ROLLBACK")
                 raise
-        if self.db.execute("PRAGMA user_version").fetchone()[0] != 2:
-            raise DataError("SQLite finance migration failed")
-        if self.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='finance_events'").fetchone() is None:
-            raise DataError("Missing finance event table in schema v2")
+        if version in (0,1,2):
+            # A failed migration leaves the preceding version untouched.
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("""CREATE TABLE contract_trash(
+                    contract_id TEXT PRIMARY KEY REFERENCES contracts(id) ON DELETE RESTRICT,
+                    deleted_at TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    deleted_revision INTEGER NOT NULL CHECK(deleted_revision>=2))""")
+                self.db.execute("""CREATE TABLE contract_lifecycle(
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE RESTRICT,
+                    action TEXT NOT NULL CHECK(action IN ('trash','restore')),
+                    request_id TEXT NOT NULL UNIQUE,
+                    changed_at TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK(revision>=2))""")
+                self.db.execute("PRAGMA user_version=3")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        if self.db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            raise DataError("SQLite trash migration failed")
+        required=("finance_events","contract_trash","contract_lifecycle")
+        if any(self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (name,)).fetchone() is None for name in required):
+            raise DataError("Required finance/trash table missing")
         if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise DataError("SQLite integrity failure after migration")
         if self.db.execute("PRAGMA foreign_key_check").fetchall():
@@ -247,6 +270,7 @@ class Store:
             SELECT COALESCE(SUM(l.quantity),0) FROM contract_lines l
             JOIN contracts c ON c.id=l.contract_id
             WHERE c.status='заключен' AND l.product=? AND c.id<>?
+              AND NOT EXISTS(SELECT 1 FROM contract_trash t WHERE t.contract_id=c.id)
         """, (product, exclude_id)).fetchone()
         return int(row[0])
 
@@ -278,6 +302,9 @@ class Store:
             digest, old = self._operation(request_id,payload)
             if old is not None: return old
             existing = self.db.execute("SELECT * FROM contracts WHERE id=?", (cid,)).fetchone()
+            if existing and self.db.execute(
+                    "SELECT 1 FROM contract_trash WHERE contract_id=?", (cid,)).fetchone():
+                raise Conflict("Контракт находится в Корзине. Сначала восстановите его")
             version = int(raw.get("revision", 0))
             if (existing and existing["revision"] != version) or (not existing and version != 0):
                 raise Conflict("Карточка изменена в другом окне")
@@ -332,10 +359,16 @@ class Store:
             self._record_op(request_id,digest,result)
             return result
 
-    def get_contract(self, cid):
+    def get_contract(self, cid, include_deleted=False):
         r=self.db.execute("SELECT * FROM contracts WHERE id=?",(cid,)).fetchone()
         if r is None: raise DataError("Контракт не найден")
+        deleted=self.db.execute(
+            "SELECT deleted_at,reason FROM contract_trash WHERE contract_id=?",(cid,)).fetchone()
+        if deleted and not include_deleted:
+            raise DataError("Контракт находится в Корзине")
         data=dict(r)
+        data["deletedAt"]=deleted["deleted_at"] if deleted else None
+        data["deletedReason"]=deleted["reason"] if deleted else ""
         data["items"]=[dict(x) for x in self.db.execute(
             "SELECT product,quantity,unit_price FROM contract_lines WHERE contract_id=? ORDER BY position",(cid,))]
         for item in data["items"]:
@@ -343,8 +376,61 @@ class Store:
         return data
 
     def list_contracts(self):
-        ids=self.db.execute("SELECT id FROM contracts ORDER BY created_at DESC,id DESC").fetchall()
+        ids=self.db.execute("""SELECT c.id FROM contracts c
+            WHERE NOT EXISTS(SELECT 1 FROM contract_trash t WHERE t.contract_id=c.id)
+            ORDER BY c.created_at DESC,c.id DESC""").fetchall()
         return [self.get_contract(r[0]) for r in ids]
+
+    def list_trashed(self):
+        ids=self.db.execute("""SELECT contract_id FROM contract_trash
+                               ORDER BY deleted_at DESC,contract_id DESC""").fetchall()
+        return [self.get_contract(r[0],include_deleted=True) for r in ids]
+
+    def _trash_request(self,request_id,contract_id,expected_revision,kind,reason=""):
+        if not isinstance(contract_id,str) or not re.fullmatch(r"[a-zA-Z0-9_-]{5,90}",contract_id):
+            raise DataError("Неверный ID контракта")
+        if type(expected_revision)!=int or not 1<=expected_revision<=999999999:
+            raise DataError("Требуется актуальная ревизия контракта")
+        if not isinstance(reason,str) or len(reason)>300:
+            raise DataError("Причина удаления: максимум 300 символов")
+        payload={"kind":kind,"id":contract_id,"expectedRevision":expected_revision,
+                 "reason":reason if kind=="trash" else ""}
+        with self.transaction():
+            digest,old=self._operation(request_id,payload)
+            if old is not None:return old
+            record=self.db.execute("SELECT revision,status FROM contracts WHERE id=?",
+                                   (contract_id,)).fetchone()
+            if record is None:raise DataError("Контракт не найден")
+            if record["revision"]!=expected_revision:
+                raise Conflict("Карточка уже изменена. Обновите страницу")
+            deleted=self.db.execute("SELECT 1 FROM contract_trash WHERE contract_id=?",
+                                    (contract_id,)).fetchone()
+            if kind=="trash":
+                if deleted:raise Conflict("Контракт уже находится в Корзине")
+                if record["status"] in SHIPPED:
+                    raise DataError("Отгруженный или оплаченный контракт запрещено удалять: складская история должна сохраниться")
+            elif not deleted:
+                raise Conflict("Контракт уже восстановлен")
+            now=utcnow()
+            if kind=="trash":
+                self.db.execute("INSERT INTO contract_trash VALUES(?,?,?,?)",
+                                (contract_id,now,reason,expected_revision+1))
+            else:
+                self.db.execute("DELETE FROM contract_trash WHERE contract_id=?",
+                                (contract_id,))
+            self.db.execute("UPDATE contracts SET revision=revision+1,updated_at=? WHERE id=?",
+                            (now,contract_id))
+            self.db.execute("INSERT INTO contract_lifecycle(contract_id,action,request_id,changed_at,revision) VALUES(?,?,?,?,?)",
+                            (contract_id,kind,request_id,now,expected_revision+1))
+            result={"ok":True,"id":contract_id,"revision":expected_revision+1,"action":kind}
+            self._record_op(request_id,digest,result)
+            return result
+
+    def trash_contract(self,request_id,contract_id,expected_revision,reason=""):
+        return self._trash_request(request_id,contract_id,expected_revision,"trash",reason)
+
+    def restore_contract(self,request_id,contract_id,expected_revision):
+        return self._trash_request(request_id,contract_id,expected_revision,"restore")
 
     def stock_summary(self):
         results=[]
@@ -361,7 +447,9 @@ class Store:
         fk=self.db.execute("PRAGMA foreign_key_check").fetchall()
         if integrity!="ok" or fk:
             raise DataError("Ошибка целостности базы данных")
-        return {"integrity":integrity,"foreignKeys":len(fk),"contracts":self.db.execute("SELECT COUNT(*) FROM contracts").fetchone()[0]}
+        return {"integrity":integrity,"foreignKeys":len(fk),
+                "contracts":len(self.list_contracts()),
+                "trashedContracts":self.db.execute("SELECT COUNT(*) FROM contract_trash").fetchone()[0]}
 
     def backup(self, target):
         target=Path(target).resolve()
