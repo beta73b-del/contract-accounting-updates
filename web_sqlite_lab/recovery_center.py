@@ -10,7 +10,7 @@ import shutil
 import uuid
 
 from transfer_package import MAX_BYTES,TransferError,inspect_transfer,restore_new_install,_db_checks
-from backup_policy import AUTO_PATTERN,cross_process_lock
+from backup_policy import AUTO_PATTERN,cross_process_lock,file_sha256
 
 DEVICE=re.compile(r"ContractsIP-backup-[a-f0-9]{32}")
 MANUAL=re.compile(r"complete-[a-f0-9]{32}\.zip")
@@ -69,7 +69,11 @@ def review_copy(copy):
             raise ValueError("archive ID")
     except (ValueError,TypeError,KeyError) as exc:
         raise TransferError("Некорректная дата или ID архива") from exc
-    return {**info,"createdUtc":dt.isoformat()}
+    return {**info,"createdUtc":dt.isoformat(),"archiveSha256":file_sha256(copy)}
+
+def check_selection(info,expected_sha):
+    if expected_sha is not None and info["archiveSha256"]!=expected_sha:
+        raise TransferError("Архив изменился после проверки. Найдите и выберите копию повторно.")
 
 def review_archive(archive):
     with local_snapshot(archive) as copy:
@@ -88,32 +92,33 @@ def scan_archives(folder):
     good.sort(key=lambda x:(x["createdUtc"],x["archiveId"],x["path"]),reverse=True)
     return {"valid":good,"invalid":bad,"recommended":good[0] if good else None}
 
-def restore_archive(archive,target):
+def restore_archive(archive,target,expected_sha=None):
     # Restore from the exact private snapshot that was reviewed. A later
     # cloud change cannot alter the bytes between validation and extraction.
     with local_snapshot(archive) as copy:
         info=review_copy(copy)
+        check_selection(info,expected_sha)
         result=restore_new_install(copy,target)
         if not result.get("appReady") or result["archiveId"]!=info["archiveId"]:
             raise TransferError("Восстановление не подтверждено")
         return result
 
-def restore_first_install(archive,target):
+def restore_first_install(archive,target,expected_sha=None):
     target=Path(target)
     if target.is_symlink() or (target.exists() and (not target.is_dir() or any(target.iterdir()))):
         raise TransferError("Каталог уже содержит данные")
     # Verify before removing even an empty directory.
     with local_snapshot(archive) as copy:
-        review_copy(copy)
+        check_selection(review_copy(copy),expected_sha)
         if target.exists():target.rmdir()
         target.parent.mkdir(parents=True,exist_ok=True)
         return restore_new_install(copy,target)
 
-def restore_separate(archive,base):
+def restore_separate(archive,base,expected_sha=None):
     base=Path(base)
     base.parent.mkdir(parents=True,exist_ok=True)
     target=base.with_name(base.name+"-Recovered-"+uuid.uuid4().hex)
-    result=restore_archive(archive,target)
+    result=restore_archive(archive,target,expected_sha=expected_sha)
     return target,result
 
 def control_dir(base):

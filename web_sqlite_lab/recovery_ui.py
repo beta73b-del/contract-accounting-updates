@@ -83,7 +83,7 @@ def choose_archive(parent,initial_folder=None):
             messagebox.showwarning("Нет исправной копии","Выберите проверенный архив",parent=win);return
         info=rows[selection[0]]
         if messagebox.askyesno("Подтвердите восстановление","Восстановить архив от "+info["createdUtc"]+"?\n"+info["path"]+"\n\nКонтрактов: "+str(info["database"]["counts"].get("contracts",0))+"\nДокументов: "+str(info["documents"]),parent=win):
-            chosen=info["path"];win.destroy()
+            chosen={"path":info["path"],"sha256":info["archiveSha256"]};win.destroy()
     browse=ttk.Button(buttons,text="Выбрать папку Google Drive",command=choose_folder);browse.pack(side="left",padx=3)
     scan=ttk.Button(buttons,text="Найти и проверить архивы",command=start_scan);scan.pack(side="left",padx=3)
     manual=ttk.Button(buttons,text="Выбрать ZIP вручную",command=manual_file);manual.pack(side="left",padx=3)

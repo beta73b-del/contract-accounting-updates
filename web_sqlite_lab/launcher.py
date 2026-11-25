@@ -68,7 +68,7 @@ def main_locked(base,target):
         chosen=choose_archive(root,recovery_folder())
         if not chosen:return False
         try:
-            separate,result=restore_separate(chosen,base)
+            separate,result=restore_separate(chosen["path"],base,expected_sha=chosen["sha256"])
             if allow_activation and messagebox.askyesno("Восстановление проверено",
                  "Сохранена новая проверенная база:\n"+str(separate)+
                  "\n\nСтарая папка не изменена. Сделать восстановленную базу активной при следующем запуске?"):
@@ -85,7 +85,7 @@ def main_locked(base,target):
         chosen=choose_archive(root)
         if not chosen:return False
         try:
-            result=restore_first_install(chosen,target)
+            result=restore_first_install(chosen["path"],target,expected_sha=chosen["sha256"])
             if not result.get("appReady"):raise TransferError("Архив не прошёл проверку")
             messagebox.showinfo("Восстановление завершено",
                 "Полный комплект проверен и установлен. Контракты, склад, расходы и документы доступны после запуска.")
@@ -178,7 +178,7 @@ def main_locked(base,target):
         chosen=choose_archive(root,recovery_folder())
         if not chosen:return
         try:
-            new_target,result=restore_separate(chosen,base)
+            new_target,result=restore_separate(chosen["path"],base,expected_sha=chosen["sha256"])
             if messagebox.askyesno("Копия восстановлена и проверена",
                 "Восстановленная база:\n"+str(new_target)+
                 "\n\nЗавершить текущую программу и открыть восстановленную при следующем запуске?\nСтарые данные сохраняются целиком."):
@@ -223,7 +223,7 @@ def main_locked(base,target):
     root.mainloop()
     return 0
 
-def frozen_smoke():
+def frozen_smoke(expect_restored=False):
     """Headless packaged-artifact HTTP smoke against a synthetic temporary DB."""
     from threading import Thread
     from urllib.request import build_opener, ProxyHandler
@@ -254,7 +254,21 @@ def frozen_smoke():
                 raise RuntimeError("SQLite API healthcheck failed")
             import json
             from sqlite_build_safety import patched_wal_reset
-            health=json.loads(response.read().decode("utf-8"))["integrity"]
+            payload=json.loads(response.read().decode("utf-8"))
+            health=payload["integrity"]
+            if expect_restored:
+                records=payload["records"]
+                stock=payload["stock"]["items"]
+                files=payload["files"]
+                expenses=payload["finance"]["expenses"]
+                if not (len(records)==1 and records[0]["contract_number"]=="42/2026"
+                    and stock[0]["physical"]==20 and stock[0]["reserved"]==7
+                    and len(files["active"])==1 and len(files["trash"])==1
+                    and len(expenses)==1 and expenses[0]["amount"]=="100.40"
+                    and health["integrity"]=="ok" and health["foreignKeys"]==0):
+                    raise RuntimeError("Recovered fixture differs from expected records")
+                if sys.stderr is not None:
+                    print("SQLITE_LAB_PACKAGED_RECOVERY_PASS",file=sys.stderr,flush=True)
             expected="wal" if patched_wal_reset() else "delete"
             actual=health.get("journalMode")
             if actual!=expected:
@@ -281,7 +295,23 @@ def frozen_smoke():
         stop_services()
         store.close()
 
+def frozen_restore_smoke():
+    # QA only: no user data root, always a newly allocated temporary directory.
+    import os
+    from tempfile import TemporaryDirectory
+    from recovery_center import restore_first_install
+    if os.environ.get("CONTRACTS_SQLITE_LAB_TEST")!="1" or len(sys.argv)!=3:
+        raise SystemExit("QA recovery requires test mode and one fixture ZIP")
+    with TemporaryDirectory(prefix="packaged-recovery-") as tmp:
+        target=Path(tmp)/"fresh-install"
+        result=restore_first_install(sys.argv[2],target)
+        if not result.get("appReady"):raise RuntimeError("Restore not confirmed")
+        os.environ["CONTRACTS_SQLITE_LAB_DB"]=str(target/"lab.db")
+        return frozen_smoke(expect_restored=True)
+
 if __name__=="__main__":
+    if len(sys.argv)>1 and sys.argv[1]=="--restore-smoke":
+        raise SystemExit(frozen_restore_smoke())
     if "--smoke-no-console" in sys.argv:
         # Reproduce the no-stdio behavior of a real GUI-frozen Windows app.
         sys.stdout=None

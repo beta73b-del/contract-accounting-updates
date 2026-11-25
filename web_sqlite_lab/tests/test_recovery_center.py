@@ -161,3 +161,17 @@ class RecoveryTests(TestCase):
                 out.writestr(member.filename,data)
             out.writestr("backup-settings.json",b"x")
         with self.assertRaises(TransferError):review_archive(bad)
+
+    def test_different_valid_archive_after_selection_is_rejected(self):
+        verified=review_archive(self.archive)
+        replacement=self.root/"replacement.zip"
+        export_lab(self.store.path,self.source/"attachments",replacement)
+        self.archive.write_bytes(replacement.read_bytes())
+        self.assertTrue(review_archive(self.archive)["valid"])
+        target=self.root/"new"
+        with self.assertRaises(TransferError):
+            restore_archive(self.archive,target,expected_sha=verified["archiveSha256"])
+        self.assertFalse(target.exists())
+        with self.assertRaises(TransferError):
+            restore_first_install(self.archive,target,expected_sha=verified["archiveSha256"])
+        self.assertFalse(target.exists())

@@ -80,6 +80,21 @@ jobs:
           export CONTRACTS_SQLITE_LAB_DB="$RUNNER_TEMP/contracts-sqlite-qa.sqlite"
           ./dist/ContractsIP-SQLiteLab.app/Contents/MacOS/ContractsIP-SQLiteLab --smoke
           test -d dist/ContractsIP-SQLiteLab.app
+      - name: Create independent disaster-recovery fixture
+        run: python web_sqlite_lab/tests/cross_os_fixture.py export recovery-fixture.zip
+      - name: Recover and open actual Windows EXE with verified archived data
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:CONTRACTS_SQLITE_LAB_TEST='1'
+          & ".\dist\ContractsIP-SQLiteLab\ContractsIP-SQLiteLab.exe" --restore-smoke recovery-fixture.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Recover and open actual macOS app with verified archived data
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export CONTRACTS_SQLITE_LAB_TEST=1
+          ./dist/ContractsIP-SQLiteLab.app/Contents/MacOS/ContractsIP-SQLiteLab --restore-smoke recovery-fixture.zip
       - name: Pack macOS test bundle retaining symlinks
         if: runner.os == 'macOS'
         shell: bash
