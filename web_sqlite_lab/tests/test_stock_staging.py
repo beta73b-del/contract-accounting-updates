@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import copy
 import json
-import sqlite3
+from sqlite_runtime import sqlite3
 import os
 from unittest.mock import patch
 import subprocess
