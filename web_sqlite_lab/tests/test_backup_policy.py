@@ -168,8 +168,8 @@ class BackupPolicyTests(unittest.TestCase):
     def test_16_clock_moved_back_does_not_suppress_future_backup_forever(self):
         self.first()
         result=self.policy.run_if_due(START-timedelta(days=1))
-        self.assertEqual(result["status"],"CREATED")
-        self.assertGreaterEqual(len(self.archived()),1)
+        self.assertEqual(result["status"],"CLOCK_MOVED_BACK")
+        self.assertEqual(len(self.archived()),1)
     def test_17_status_is_useful_and_does_not_leak_data(self):
         info=self.policy.status()
         self.assertEqual(info["warning"],"NO_VERIFIED_COPY")
