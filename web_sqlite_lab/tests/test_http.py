@@ -380,8 +380,9 @@ class HTTPTests(unittest.TestCase):
     def test_09_test_db_override_isolates_every_file_path(self):
         # The HTTP server may be started with a temporary DB override, but
         # documents, Trash and exports MUST follow that DB, never source/data.
-        file_ids=[row[0] for row in sqlite3.connect(self.db).execute(
-            "SELECT id FROM managed_files").fetchall()]
+        with closing(sqlite3.connect(self.db)) as con:
+            file_ids=[row[0] for row in con.execute(
+                "SELECT id FROM managed_files").fetchall()]
         for fid in file_ids:
             self.assertTrue((self.db.parent/"managed_files"/(fid+".bin")).is_file())
         self.assertTrue((self.db.parent/"attachments").is_dir())
