@@ -26,70 +26,73 @@ def startup_data_state(folder):
 
 def main():
     import tkinter as tk
-    from tkinter import messagebox,filedialog
+    from tkinter import messagebox
     from platform_paths import lab_data_dir
-    from transfer_package import restore_new_install, TransferError
-
-    target=lab_data_dir(frozen=bool(getattr(sys,"frozen",False)),
+    from recovery_center import active_data_root,installation_lock
+    base=lab_data_dir(frozen=bool(getattr(sys,"frozen",False)),
                         source_root=Path(__file__).resolve().parent)
+    try:
+        with installation_lock(base):
+            return main_locked(base,active_data_root(base))
+    except Exception as error:
+        root=tk.Tk();root.withdraw()
+        messagebox.showerror("Запуск остановлен",str(error),parent=root)
+        root.destroy()
+        return 1
+
+def main_locked(base,target):
+    import tkinter as tk
+    from tkinter import messagebox,filedialog
+    from transfer_package import TransferError
+    from recovery_center import restore_first_install,restore_separate,activate_recovered
+    from recovery_ui import choose_archive
     root=tk.Tk()
     root.title("Контракты ИП — SQLite LAB (тестовая версия)")
-    root.geometry("580x420")
-    root.minsize(490,380)
+    root.geometry("600x470")
+    root.minsize(510,420)
     root.configure(padx=20,pady=15)
     tk.Label(root,text="Контракты ИП · SQLite LAB",font=("Arial",16,"bold")).pack(pady=(5,6))
     tk.Label(root,text="Изолированная тестовая программа.\nРабочая Excel-версия не изменяется.",
              justify="center",wraplength=420).pack(pady=5)
-    def recover_to_independent_folder():
-        """Use a verified archive, preserving the whole old data root."""
-        default=target/"backups"/"automatic"
-        chosen=filedialog.askopenfilename(
-            title="Выберите проверенный полный ZIP",
-            initialdir=str(default if default.is_dir() else target.parent),
-            filetypes=[("Резервный ZIP","*.zip"),("Все файлы","*.*")])
-        if not chosen:return False
-        separate=target.with_name(target.name+"-Recovered-"+uuid.uuid4().hex[:8])
+    def recovery_folder():
         try:
-            result=restore_new_install(chosen,separate)
-            if not result.get("appReady"):
-                raise TransferError("Incomplete restore")
-            messagebox.showinfo("Копия восстановлена отдельно",
-                "Полный комплект проверен. Папка:\n"+str(separate)+"\n\n"
-                "Старые база и документы не заменены. Переключение "
-                "разрешено только после сверки восстановленных данных.")
+            from backup_settings import BackupSettings
+            if target.is_dir():
+                data=BackupSettings(target).read()
+                if data.get("folder"):return data["folder"]
+        except Exception:pass
+        default=target/"backups"/"automatic"
+        return default if default.is_dir() else None
+
+    def recover_to_independent_folder(allow_activation=False):
+        chosen=choose_archive(root,recovery_folder())
+        if not chosen:return False
+        try:
+            separate,result=restore_separate(chosen,base)
+            if allow_activation and messagebox.askyesno("Восстановление проверено",
+                 "Сохранена новая проверенная база:\n"+str(separate)+
+                 "\n\nСтарая папка не изменена. Сделать восстановленную базу активной при следующем запуске?"):
+                activate_recovered(base,separate)
+                messagebox.showinfo("Восстановлено","Запустите приложение заново. Старая папка сохранена:\n"+str(target))
+            else:
+                messagebox.showinfo("Копия восстановлена отдельно","Проверенная папка:\n"+str(separate)+"\nСтарые данные не заменены.")
             return True
-        except Exception:
-            messagebox.showerror("Восстановление не выполнено",
-                "Архив не прошёл полную проверку. Существующие данные не затронуты.")
+        except Exception as error:
+            messagebox.showerror("Восстановление не выполнено","Существующие данные не затронуты.\n"+str(error))
             return False
 
     def import_archive_first_run():
-        """Only for a new, not-yet-created application data directory."""
-        chosen=filedialog.askopenfilename(
-            title="Выберите полный архив Контракты ИП ZIP",
-            filetypes=[("Полный архив ZIP","*.zip"),("Все файлы","*.*")])
-        if not chosen:
-            return False
-        if target.is_symlink() or (target.exists() and any(target.iterdir())):
-            messagebox.showerror("Восстановление отменено",
-                                 "Каталог приложения уже содержит данные. "
-                                 "Нельзя заменять их архивом.")
-            return False
+        chosen=choose_archive(root)
+        if not chosen:return False
         try:
-            if target.exists():
-                target.rmdir()  # Only an EXISTING EMPTY directory.
-            target.parent.mkdir(parents=True,exist_ok=True)
-            result=restore_new_install(chosen,target)
-            if not result.get("appReady"):
-                raise TransferError("Архив не прошёл полную проверку")
+            result=restore_first_install(chosen,target)
+            if not result.get("appReady"):raise TransferError("Архив не прошёл проверку")
             messagebox.showinfo("Восстановление завершено",
-                                "Полный комплект проверен и установлен в новый "
-                                "каталог данных. Рабочая Excel-версия не затронута.")
+                "Полный комплект проверен и установлен. Контракты, склад, расходы и документы доступны после запуска.")
             return True
-        except Exception:
+        except Exception as error:
             messagebox.showerror("Восстановление остановлено",
-                                 "Архив не удалось проверить или развернуть. "
-                                 "Существующие данные не заменялись.")
+                "Существующие данные не заменялись.\n"+str(error))
             return False
 
     state=startup_data_state(target)
@@ -106,14 +109,14 @@ def main():
             "Рабочей базы lab.db нет, но в каталоге приложения остались файлы.\n"
             "Создавать пустую базу поверх этих данных ЗАПРЕЩЕНО.\n\n"
             "Восстановить проверенный архив в отдельную папку?"):
-            recover_to_independent_folder()
+            recover_to_independent_folder(allow_activation=True)
         root.destroy()
         return 1
     if state=="FRESH":
         # Ask BEFORE importing the HTTP server, which would create a new DB.
         if messagebox.askyesno("Первый запуск — восстановление",
              "Новая SQLite-база отсутствует. Восстановить полный архив ZIP "
-             "с другого компьютера (контракты, документы, Корзина)?\n\n"
+             "с Google Drive или другого компьютера (контракты, документы, Корзина)?\n\n"
              "«Нет» — начать с пустой тестовой базы."):
             if not import_archive_first_run():
                 # Do not create an empty DB after a failed/cancelled recovery:
@@ -122,11 +125,7 @@ def main():
                 return 1
 
     try:
-        from server import Handler, HOST, PORT, store, LoopbackHTTPServer, stop_services, configure_backup_folder
-        listener=LoopbackHTTPServer((HOST,PORT),Handler)
-        listener.daemon_threads=False
-        worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
-        worker.start()
+        from server import Handler, HOST, PORT, store, LoopbackHTTPServer, stop_services, configure_backup_folder, cleanup_thread, mutex, run_full_backup
     except Exception:
         # A damaged *existing* DB must not make the recovery UI inaccessible.
         # Restore only to an independent NEW directory; never overwrite the
@@ -135,7 +134,17 @@ def main():
             "Не удалось открыть существующую SQLite-базу или локальный порт.\n"
             "Проверьте, не запущен ли второй экземпляр программы.\n\n"
             "Попробовать восстановить полный ZIP в отдельный каталог?"):
-            recover_to_independent_folder()
+            recover_to_independent_folder(allow_activation=True)
+        root.destroy()
+        return 1
+    try:
+        listener=LoopbackHTTPServer((HOST,PORT),Handler)
+        listener.daemon_threads=False
+        worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
+        worker.start()
+    except Exception:
+        stop_services();store.close()
+        messagebox.showerror("Локальный порт недоступен","Закройте другой экземпляр. Данные не переключались.")
         root.destroy()
         return 1
 
@@ -144,7 +153,7 @@ def main():
     tk.Button(root,text="Открыть тестовую программу",font=("Arial",12),
               command=lambda:webbrowser.open(address),width=32).pack(pady=6)
     closing=False
-    def stop():
+    def stop(activate=None):
         nonlocal closing
         if closing:return
         closing=True
@@ -153,30 +162,38 @@ def main():
             listener.server_close()
             worker.join(timeout=8)
             stop_services()
+            if worker.is_alive() or cleanup_thread.is_alive():
+                raise RuntimeError("Службы не завершились")
             store.close()
+            if activate is not None:
+                activate_recovered(base,activate)
+                messagebox.showinfo("Восстановление готово","Запустите программу заново. Старая папка сохранена:\n"+str(target))
         except Exception:
             messagebox.showerror("Ошибка завершения",
                                  "Не удалось подтвердить освобождение ресурсов. "
                                  "Перед повторным запуском проверьте процессы.")
         finally:
             root.destroy()
-    def restore_separate():
-        """Never overwrite an open/current database: restore to a sibling."""
-        chosen=filedialog.askopenfilename(
-            title="Выберите полный архив ZIP",
-            filetypes=[("ZIP архив","*.zip"),("Все файлы","*.*")])
+    def open_recovery_center():
+        chosen=choose_archive(root,recovery_folder())
         if not chosen:return
-        new_target=target.with_name(target.name+"-Restored-"+uuid.uuid4().hex[:8])
         try:
-            restore_new_install(chosen,new_target)
-            messagebox.showinfo("Новая копия восстановлена",
-                "Все данные проверены и сохранены отдельно:\n"+str(new_target)+
-                "\n\nТекущая база НЕ заменена. Чтобы переключить установку, "
-                "потребуется отдельная проверенная процедура переноса.")
-        except Exception:
-            messagebox.showerror("Импорт не выполнен",
-                                 "Не удалось подтвердить целостность полного архива. "
-                                 "Текущая база и документы не изменялись.")
+            new_target,result=restore_separate(chosen,base)
+            if messagebox.askyesno("Копия восстановлена и проверена",
+                "Восстановленная база:\n"+str(new_target)+
+                "\n\nЗавершить текущую программу и открыть восстановленную при следующем запуске?\nСтарые данные сохраняются целиком."):
+                stop(activate=new_target)
+            else:
+                messagebox.showinfo("Отдельная копия","Текущая база не изменена:\n"+str(new_target))
+        except Exception as error:
+            messagebox.showerror("Восстановление не выполнено",str(error))
+
+    def backup_now():
+        try:
+            with mutex:result=run_full_backup(force=True)
+            messagebox.showinfo("Полная копия","Локальный архив проверен.\nВнешний диск: "+str(result.get("lastSecondaryStatus","не подтверждено")))
+        except Exception as error:
+            messagebox.showerror("Резервирование не выполнено",str(error))
 
     def choose_backup_folder():
         chosen=filedialog.askdirectory(title="Выберите папку Google Drive или внешнего диска",
@@ -192,8 +209,10 @@ def main():
     tk.Button(root,text="Настройки: выбрать папку резервирования",
               command=choose_backup_folder,width=42).pack(pady=4)
 
-    tk.Button(root,text="Восстановить ZIP в отдельную папку",
-              command=restore_separate,width=38).pack(pady=4)
+    tk.Button(root,text="Создать полную резервную копию сейчас",
+              command=backup_now,width=42).pack(pady=4)
+    tk.Button(root,text="Центр резервирования и восстановления",
+              command=open_recovery_center,width=42).pack(pady=4)
     tk.Button(root,text="Завершить работу",font=("Arial",12),
               command=stop,width=32).pack(pady=4)
     root.protocol("WM_DELETE_WINDOW",stop)

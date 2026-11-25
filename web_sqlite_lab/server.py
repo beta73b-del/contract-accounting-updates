@@ -22,6 +22,7 @@ from backup_policy import BackupPolicy
 from backup_settings import BackupSettings
 
 from platform_paths import lab_data_dir
+from recovery_center import active_data_root
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 # PyInstaller keeps bundled resources under _MEIPASS. Never create the DB there.
@@ -31,7 +32,11 @@ PORT = int(os.environ.get("CONTRACTS_SQLITE_LAB_PORT", "8766"))
 if os.environ.get("CONTRACTS_SQLITE_LAB_DB") and not os.environ.get("CONTRACTS_SQLITE_LAB_TEST"):
     raise SystemExit("Override database path is allowed only when CONTRACTS_SQLITE_LAB_TEST=1")
 DATA_DIR = lab_data_dir(frozen=bool(getattr(sys, "frozen", False)), source_root=SOURCE_ROOT)
-DB = Path(os.environ.get("CONTRACTS_SQLITE_LAB_DB", str(DATA_DIR / "lab.db"))).resolve()
+if os.environ.get("CONTRACTS_SQLITE_LAB_DB"):
+    DB=Path(os.environ["CONTRACTS_SQLITE_LAB_DB"]).resolve()
+else:
+    DATA_DIR=active_data_root(DATA_DIR)
+    DB=(DATA_DIR/"lab.db").resolve()
 class LoopbackHTTPServer(ThreadingHTTPServer):
     def server_bind(self):
         # HTTPServer.server_bind performs socket.getfqdn(127.0.0.1):

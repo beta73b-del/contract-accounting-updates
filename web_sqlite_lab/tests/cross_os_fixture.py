@@ -22,7 +22,8 @@ sys.path.insert(0,str(ROOT))
 from store import Store
 from file_vault import FileVault
 from finance_ledger import FinanceLedger
-from transfer_package import export_lab,restore_new_install,inspect_transfer
+from transfer_package import export_lab,inspect_transfer
+from recovery_center import restore_first_install
 
 def identity():
     return uuid.uuid4().hex
@@ -81,7 +82,7 @@ def verify(archive):
         root=Path(dirname)
         installed=root/"NewComputerContractsIPSqliteLab"
         before=inspect_transfer(archive)
-        result=restore_new_install(archive,installed)
+        result=restore_first_install(archive,installed)
         assert result["appReady"] and not result["existingInstallOverwritten"]
         assert not (installed/"database.sqlite").exists()
         assert (installed/"attachments"/"сопроводительные письма"/"Контракт №42.txt").read_bytes()==(

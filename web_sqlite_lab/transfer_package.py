@@ -226,7 +226,10 @@ def inspect_transfer(archive_path):
         if not isinstance(files,list) or not files:raise TransferError("No manifest files")
         listed={}
         for entry in files:
+            if not isinstance(entry,dict):raise TransferError("Invalid manifest entry")
             name=_safe_name(entry.get("path"))
+            if name!=DATA_NAME and not name.startswith(("attachments/","managed_files/")):
+                raise TransferError("Unexpected file outside permitted data folders")
             if name in listed:raise TransferError("Duplicate file in manifest")
             listed[name]=entry
         if set(listed)|{MANIFEST_NAME} != {x.filename for x in members}:
