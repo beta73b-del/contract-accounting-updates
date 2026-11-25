@@ -74,15 +74,49 @@ def _db_checks(db):
         if con.execute("PRAGMA foreign_key_check").fetchall():
             raise TransferError("SQLite foreign_key_check failed")
         version=int(con.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (1,2,3):raise TransferError("Unsupported SQLite schema")
+        if version not in (1,2,3,4):raise TransferError("Unsupported SQLite schema")
         counts={}
-        for table in ("contracts","contract_lines","products","receipts","shipments","operations")+ (("finance_events",) if version >= 2 else ()) + (("contract_trash","contract_lifecycle") if version >= 3 else ()):
+        for table in ("contracts","contract_lines","products","receipts","shipments","operations")+ (("finance_events",) if version >= 2 else ()) + (("contract_trash","contract_lifecycle") if version >= 3 else ()) + (("managed_files","file_events") if version >= 4 else ()):
             row=con.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
             if not row or not row[0]:raise TransferError("Required schema table is absent")
             counts[table]=con.execute('SELECT COUNT(*) FROM "'+table+'"').fetchone()[0]
         return {"schemaVersion":version,"counts":counts}
 
-def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
+def _registered_blobs(db):
+    """Require exact 1:1 mapping between SQLite file registry and ZIP blobs.
+
+    Only active and reversible-trashed blobs are portable. An incomplete
+    purge is not considered a consistent export; retry cleanup first.
+    """
+    with closing(sqlite3.connect(Path(db).resolve().as_uri()+"?mode=ro",uri=True)) as con:
+        if con.execute("PRAGMA user_version").fetchone()[0]<4:
+            return {}
+        rows=con.execute(
+            "SELECT id,blob,state,size_bytes,sha256 FROM managed_files").fetchall()
+    required={}
+    for fid,blob,state,size,digest in rows:
+        if not isinstance(fid,str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,90}",fid) or blob!=fid+".bin":
+            raise TransferError("Unsafe or invalid blob reference in SQLite")
+        if state=="purge_pending":
+            raise TransferError("Incomplete 30-day cleanup; archive cannot be trusted")
+        if state in ("active","trashed"):
+            required["managed_files/"+blob]=(size,digest)
+        elif state!="purged":
+            raise TransferError("Unknown file status in database")
+    return required
+
+def _validate_blob_manifest(db,listed):
+    registered=_registered_blobs(db)
+    seen={name for name in listed if name.startswith("managed_files/")}
+    if seen!=set(registered):
+        raise TransferError("Missing, untracked or expired managed document in archive")
+    for name,(size,digest) in registered.items():
+        item=listed[name]
+        if item.get("size")!=size or item.get("sha256")!=digest:
+            raise TransferError("Managed document differs from SQLite file metadata")
+    return len(registered)
+
+def export_lab(db_path,attachments_dir,archive_path,required_documents=(),managed_dir=None):
     """Create immutable zip; caller must supply actual referenced documents."""
     db=Path(db_path).resolve(strict=True)
     archive=Path(archive_path).resolve()
@@ -90,6 +124,7 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
     if archive.exists():raise FileExistsError("Never overwrite an existing transfer archive")
     if not db.is_file() or not folder.is_dir():raise TransferError("Database/documents missing")
     documents=_files_tree(folder)
+    managed_root=Path(managed_dir) if managed_dir is not None else db.parent/"managed_files"
     doc_names={name[len("attachments/"):] for _,name in documents}
     for doc in required_documents:
         if not isinstance(doc,str):raise TransferError("Invalid required document name")
@@ -105,7 +140,28 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
                 with closing(sqlite3.connect(snap)) as dest:
                     source.backup(dest)
             metadata=_db_checks(snap)
-            files=[(snap,DATA_NAME)]+documents
+            referenced=_registered_blobs(snap)
+            managed=[]
+            if managed_root.is_symlink():
+                raise TransferError("Managed storage symlink is prohibited")
+            if managed_root.is_dir():
+                for path in sorted(managed_root.iterdir()):
+                    if path.is_symlink() or not path.is_file():
+                        raise TransferError("Unexpected managed storage entry")
+                    filename="managed_files/"+path.name
+                    if filename not in referenced:
+                        raise TransferError("Untracked managed blob: abort to avoid silent data loss")
+                    size,digest=referenced[filename]
+                    if path.stat().st_size!=size or _sha_file(path)!=digest:
+                        raise TransferError("Managed document is missing or corrupted")
+                    managed.append((path,filename))
+            elif referenced:
+                raise TransferError("Required managed documents directory is missing")
+            if {p for _,p in managed}!=set(referenced):
+                raise TransferError("Not all managed documents are present")
+            files=[(snap,DATA_NAME)]+documents+managed
+            if len(files)+1>MAX_FILES:
+                raise TransferError("Too many archived files")
             if sum(path.stat().st_size for path,_ in files)>MAX_BYTES:
                 raise TransferError("Transfer size limit exceeded")
             seen=set();manifest_files=[]
@@ -115,6 +171,7 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
                 if normalized in seen:raise TransferError("Cross-platform filename collision")
                 seen.add(normalized)
                 manifest_files.append({"path":name,"size":p.stat().st_size,"sha256":_sha_file(p)})
+            _validate_blob_manifest(snap,{x["path"]:x for x in manifest_files})
             manifest={"format":FORMAT,"createdUtc":datetime.now(timezone.utc).isoformat(),
                       "archiveId":uuid.uuid4().hex,"database":metadata,
                       "requiredDocuments":sorted(set(required_documents)),
@@ -192,10 +249,12 @@ def inspect_transfer(archive_path):
                         for part in iter(lambda:source.read(1024*1024),b""):h.update(part)
                 if h.hexdigest()!=entry["sha256"]:raise TransferError("Hash mismatch")
             db_metadata=_db_checks(db)
+            blob_count=_validate_blob_manifest(db,listed)
         if db_metadata != manifest.get("database"):
             raise TransferError("SQLite row counts/schema changed")
         return {"valid":True,"archiveId":manifest["archiveId"],
                 "files":len(files),"documents":len(files)-1,
+                "managedBlobs":blob_count,
                 "database":db_metadata,"createdUtc":manifest["createdUtc"]}
 
 def restore_to_empty(archive_path,target_dir):
@@ -238,5 +297,33 @@ def restore_to_empty(archive_path,target_dir):
         return {**preflight,"restoredToEmpty":True}
     except BaseException:
         # Only a destination created exclusively by this process is removed.
+        shutil.rmtree(target,ignore_errors=True)
+        raise
+
+def restore_new_install(archive_path, target_dir):
+    """Restore a complete, already-verified archive as a NEW app user-data root.
+
+    For the *other* Windows/Mac computer, target must not exist. The installed
+    application then reads target/lab.db and target/managed_files normally.
+    No existing application database or documents are replaced.
+    """
+    result=restore_to_empty(archive_path,target_dir)
+    target=Path(target_dir).resolve()
+    source=target/DATA_NAME
+    dest=target/"lab.db"
+    try:
+        if dest.exists():
+            raise FileExistsError("New installation already has a database")
+        source.rename(dest)
+        # The restorer guarantees exact ZIP hashes. Confirm the renamed DB
+        # still has the expected schema and all managed-file references.
+        if _db_checks(dest)!=result["database"]:
+            raise TransferError("Restored application database differs from archive")
+        _registered_blobs(dest)
+        (target/"attachments").mkdir(exist_ok=True)
+        (target/"managed_files").mkdir(exist_ok=True)
+        return {**result,"appReady":True,"existingInstallOverwritten":False}
+    except BaseException:
+        # This entire directory was exclusively created by restore_to_empty.
         shutil.rmtree(target,ignore_errors=True)
         raise
