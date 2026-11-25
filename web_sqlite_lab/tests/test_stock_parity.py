@@ -3,6 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
 import unittest
+import sys
+import subprocess
 from stock_projection import project,StockError
 from stock_parity_audit import audit
 
@@ -65,6 +67,16 @@ class StockAuditTests(unittest.TestCase):
         r=audit(self.root)
         self.assertEqual(r["result"],"FAIL")
         self.assertEqual(r["fieldMismatchCounts"],{"quantity":1})
+    def test_cli_returns_failure_for_mismatched_stock(self):
+        self.data["stock"]["items"][-1]["cents"]+=1
+        self.write()
+        script=Path(__file__).resolve().parent.parent/"stock_parity_audit.py"
+        proc=subprocess.run([sys.executable,str(script),str(self.root)],
+                            capture_output=True,text=True,timeout=15)
+        self.assertEqual(proc.returncode,2)
+        result=json.loads(proc.stdout)
+        self.assertEqual(result["result"],"FAIL")
+        self.assertNotIn("Synthetic model",proc.stdout)
     def test_report_never_overwritten(self):
         audit(self.root,self.root/"report.json")
         with self.assertRaises(FileExistsError):
