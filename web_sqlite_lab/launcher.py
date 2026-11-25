@@ -219,6 +219,18 @@ def frozen_smoke():
         with opener.open(f"http://127.0.0.1:{port}/api/bootstrap",timeout=4) as response:
             if response.status!=200:
                 raise RuntimeError("SQLite API healthcheck failed")
+            import json
+            from sqlite_build_safety import patched_wal_reset
+            health=json.loads(response.read().decode("utf-8"))["integrity"]
+            expected="wal" if patched_wal_reset() else "delete"
+            actual=health.get("journalMode")
+            if actual!=expected:
+                raise RuntimeError("Bundled SQLite unsafe journal mode: expected "+
+                                   expected+", got "+str(actual))
+            if sys.stderr is not None:
+                print("SQLITE_LAB_SMOKE_JOURNAL="+str(actual)+
+                      ";version="+health.get("sqliteVersion","unknown"),
+                      file=sys.stderr,flush=True)
         if sys.stderr is not None:
             print("SQLITE_LAB_SMOKE_PASS",file=sys.stderr,flush=True)
         return 0
