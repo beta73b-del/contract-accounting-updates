@@ -25,7 +25,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <header><strong>Контракты ИП — SQLite</strong><small>ИЗОЛИРОВАННАЯ ТЕСТОВАЯ ВЕРСИЯ · порт 8766 · действующая Excel-версия не изменяется</small></header>
 <main>
 <div class="notice"><b>Лаборатория, не рабочая система.</b> Используйте исключительно искусственные записи. Не импортируйте реальные контракты и документы. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
-<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Создать проверенный снимок SQLite</button><div id="message" aria-live="polite" class="status"></div></div>
+<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Создать проверенный снимок SQLite</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="message" aria-live="polite" class="status"></div></div>
 <div class="columns">
 <section class="panel"><h2>Тестовая карточка контракта</h2><div class="fields">
 <label>Заказчик<input id="customer" value="Тестовый заказчик"></label>
@@ -137,6 +137,15 @@ $('save').onclick=async()=>{try{const payload={
  items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
  };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
+$('exportAll').onclick=async()=>{
+ const button=$('exportAll');button.disabled=true;
+ try{
+   const result=await request('/api/export',{});
+   tell('Готов полный проверенный ZIP: '+result.files+' файлов, '+result.managedBlobs+' файлов хранилища. Сохраните архив в защищённом месте.');
+   window.location.href=result.download;
+ }catch(err){tell(err.message,true)}
+ finally{button.disabled=false}
+};
 
 function renderTrash(){
  const rows=$('trashContracts');rows.replaceChildren();
