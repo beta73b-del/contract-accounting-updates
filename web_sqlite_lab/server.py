@@ -121,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "finance":finance_ledger.payload(),
                                 "files":{"active":file_vault.list_files("active"),
                                          "trash":file_vault.list_files("trashed"),
+                                         "legacy":file_vault.list_legacy(DB.parent/"attachments"),
                                          "retentionDays":RETENTION_DAYS,
                                          "cleanup":cleanup},
                                 "integrity":store.verify(),"migration":"NOT RUN"});return
@@ -147,6 +148,28 @@ class Handler(BaseHTTPRequestHandler):
             except (FileNotFoundError,TransferError):
                 self.reply(404,{"error":"Архив отсутствует либо не прошёл проверку"})
             return
+        if path=="/api/files/legacy-download":
+            params=parse_qs(urlsplit(self.path).query)
+            names=params.get("path",[])
+            if len(names)!=1:
+                self.reply(400,{"error":"Укажите относительный путь документа"});return
+            try:
+                with mutex:
+                    file_path=file_vault.legacy_path(names[0],DB.parent/"attachments")
+                    with file_path.open("rb") as stream:
+                        self.send_response(200)
+                        self.send_header("Content-Type","application/octet-stream")
+                        self.send_header("Content-Disposition",
+                            "attachment; filename*=UTF-8''"+quote(file_path.name,safe=""))
+                        self.send_header("Content-Length",str(file_path.stat().st_size))
+                        self.send_header("Cache-Control","no-store")
+                        self.send_header("X-Content-Type-Options","nosniff")
+                        self.end_headers()
+                        while chunk:=stream.read(1024*1024):
+                            self.wfile.write(chunk)
+            except DataError as exc:
+                self.reply(404,{"error":str(exc)})
+            return
         if path=="/api/files/download":
             parsed=parse_qs(urlsplit(self.path).query)
             file_ids=parsed.get("id",[])
@@ -159,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_response(200)
                         self.send_header("Content-Type","application/octet-stream")
                         self.send_header("Content-Disposition",
-                            "attachment; filename*=UTF-8''"+quote(meta["name"],safe=""))
+                            "attachment; filename*=UTF-8''"+quote(meta["name"].rsplit("/",1)[-1],safe=""))
                         self.send_header("Content-Length",str(meta["size"]))
                         self.send_header("Cache-Control","no-store")
                         self.send_header("X-Content-Type-Options","nosniff")
@@ -214,6 +237,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=="/api/restore":
                     result=store.restore_contract(raw.get("requestId"),raw.get("id"),
                                                   raw.get("expectedRevision"))
+                elif path=="/api/files/legacy-trash":
+                    result=file_vault.trash_legacy_attachment(
+                        raw.get("requestId"),raw.get("relativePath"),
+                        DB.parent/"attachments",raw.get("contractId"))
                 elif path=="/api/files/trash":
                     result=file_vault.trash_file(
                         raw.get("requestId"),raw.get("id"),
