@@ -101,6 +101,7 @@ try {
   await evaluate("document.querySelector('#trashExpenses button').click()");
   check(await until(()=>evaluate("document.getElementById('trashExpenses').rows.length===0 && document.getElementById('expenseRows').rows.length===1")),'Expense restored with its original amount and date');
   check(await evaluate("document.getElementById('exportAll').textContent.includes('ZIP')"),'Complete cross-PC archive button available');
+  check(await evaluate("document.getElementById('backupStatus').textContent.includes('14 суток')"),'Automatic backups show 14-day retention and recovery directory');
   check(await evaluate("(()=>{const input=document.getElementById('documentInput');const data=new DataTransfer();data.items.add(new File(['%PDF-1.4 synthetic'],'Сертификат 3120.pdf',{type:'application/pdf'}));input.files=data.files;return input.files.length===1})()"),'Document chooser accepts synthetic PDF');
   await evaluate("document.getElementById('documentUpload').click()");
   check(await until(()=>evaluate("document.getElementById('documentRows').rows.length===1")),'File saved to managed storage and shown in documents');
