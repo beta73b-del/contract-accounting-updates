@@ -1,6 +1,7 @@
 """Synthetic-only SQLite lab regression. Never imports or opens the working Excel file."""
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -142,7 +143,7 @@ class StoreTests(unittest.TestCase):
         proof=self.s.backup(target)
         self.assertEqual(len(proof["sha256"]),64)
         self.assertEqual(self.s.verify()["foreignKeys"],0)
-        with sqlite3.connect(target) as db:
+        with closing(sqlite3.connect(target)) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0],"ok")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM contracts").fetchone()[0],1)
         with self.assertRaises(DataError):self.s.backup(target)
