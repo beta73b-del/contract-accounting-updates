@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
 from pathlib import Path
 from secrets import token_urlsafe
-from threading import RLock
+from threading import RLock, Event, Thread
 from urllib.parse import urlsplit, parse_qs, quote
 import json
 import os
@@ -47,6 +47,30 @@ file_vault = FileVault(store, DB.parent / 'managed_files')
 finance_ledger = FinanceLedger(store)
 mutex = RLock()
 nonce = token_urlsafe(32)
+cleanup_stop = Event()
+
+def _cleanup_worker():
+    # At most one-hour delay after each 30-day deadline while the app stays open.
+    # The initial browser bootstrap also triggers cleanup immediately. SQLite
+    # writes share the same mutex as user operations.
+    while not cleanup_stop.wait(3600):
+        with mutex:
+            try:
+                file_vault.purge_expired()
+            except (DataError, OSError):
+                # Never delete unverified bytes or crash the application.
+                # Keep the original document and retry at the next interval.
+                if sys.stderr is not None:
+                    print("Managed file retention check failed; data left intact",
+                          file=sys.stderr)
+
+cleanup_thread=Thread(target=_cleanup_worker,daemon=True,
+                      name="ManagedFiles30DayRetention")
+cleanup_thread.start()
+
+def stop_services():
+    cleanup_stop.set()
+    cleanup_thread.join(timeout=3)
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "ContractsSQLiteLab/0.1"
@@ -229,4 +253,4 @@ if __name__=="__main__":
     server=LoopbackHTTPServer((HOST,PORT),Handler)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
-    finally:server.server_close();store.close()
+    finally:server.server_close();stop_services();store.close()
