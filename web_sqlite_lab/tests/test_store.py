@@ -66,6 +66,16 @@ class StoreTests(unittest.TestCase):
         y=self.s.save_contract("save-0004",r)
         self.assertEqual(y["contract_date"],"2026-11-18")
 
+    def test_date_not_lost_when_changing_signed_contract_to_shipped(self):
+        self.s.receipt("receipt-date-preserve","Рутокен Lite 1010",10,"1000.00")
+        draft=self.s.save_contract("save-date-draft",contract("datepreserve"))
+        signed=self.s.save_contract("save-date-signed",contract("datepreserve","заключен",revision=draft["revision"]))
+        self.assertTrue(signed["contract_date"])
+        # Simulate a stale UI that does not send the previous signed date.
+        shipped=self.s.save_contract("save-date-shipped",contract("datepreserve","Отправлен",revision=signed["revision"]))
+        self.assertEqual(shipped["contract_date"],signed["contract_date"])
+        self.assertEqual(self.s.db.execute("SELECT COUNT(*) FROM shipments").fetchone()[0],1)
+
     def test_07_reserve_and_shortage(self):
         self.s.receipt("rcpt-0004","Рутокен Lite 1010",2,"1200")
         self.s.save_contract("save-0005",contract("reserve","заключен",qty=5))
