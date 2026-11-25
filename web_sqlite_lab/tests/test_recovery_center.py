@@ -24,7 +24,7 @@ def uid():return uuid.uuid4().hex
 class RecoveryTests(TestCase):
     def setUp(self):
         self.tmp=TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        self.root=Path(self.tmp.name)
+        self.root=Path(self.tmp.name).resolve()
         self.source=self.root/"Old computer";self.source.mkdir()
         (self.source/"attachments").mkdir()
         (self.source/"attachments"/"Контракт.txt").write_bytes(b"legacy file")
@@ -104,7 +104,7 @@ class RecoveryTests(TestCase):
         os.utime(second,(1,1))
         result=scan_archives(self.cloud)
         self.assertEqual(len(result["valid"]),2)
-        self.assertEqual(result["recommended"]["path"],str(second))
+        self.assertTrue(Path(result["recommended"]["path"]).samefile(second))
 
     def test_existing_database_not_overwritten_and_activation(self):
         base=self.root/"Installed";base.mkdir()
