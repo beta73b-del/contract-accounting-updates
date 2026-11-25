@@ -85,6 +85,13 @@ class StockStagingTests(unittest.TestCase):
                               capture_output=True,text=True,timeout=15)
         self.assertNotEqual(result.returncode,0)
         self.assertFalse(self.dest.exists())
+    def test_cyrillic_and_spaces_in_source_filename(self):
+        renamed=self.root/'Склад тест №1.sqlite'
+        self.raw.rename(renamed)
+        self.raw=renamed
+        result=build_stock_staging(self.raw,self.dest)
+        self.assertEqual(result['events'],2)
+        self.assertTrue(self.dest.is_file())
     def test_special_filename_hash_character(self):
         renamed=self.root/'raw#test.sqlite'
         self.raw.rename(renamed)
