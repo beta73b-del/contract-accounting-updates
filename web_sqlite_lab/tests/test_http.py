@@ -266,7 +266,7 @@ class HTTPTests(unittest.TestCase):
         status,e,_=self.req("/api/finance",{"action":"delete","opId":uuid.uuid4().hex,
                                           "id":expid,"revision":1})
         self.assertEqual(status,200)
-        self.assertEqual(e["deletedExpenses"][0]["revision"],2)
+        self.assertEqual(next(x["revision"] for x in e["deletedExpenses"] if x["id"]==expid),2)
         status,e,_=self.req("/api/finance",{"action":"restore","opId":uuid.uuid4().hex,
                                           "id":expid,"revision":2})
         self.assertEqual(status,200)
