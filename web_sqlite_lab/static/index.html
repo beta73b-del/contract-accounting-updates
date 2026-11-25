@@ -87,7 +87,7 @@ $('save').onclick=async()=>{try{const payload={
  customer:$('customer').value,platform:$('platform').value,contractNumber:$('contractNumber').value,
  contractDate:$('contractDate').value,signBy:'',fulfillBy:'',handoverDate:$('handoverDate').value,paymentDue:'',
  items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
- };const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
+ };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
 refresh().catch(e=>tell(e.message,true));
 </script>
