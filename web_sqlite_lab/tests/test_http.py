@@ -255,7 +255,10 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status,400)
         code,boot,_=self.req("/api/bootstrap")
         self.assertEqual(code,200)
-        self.assertEqual(next(x["physical"] for x in boot["stock"]["items"] if x["product"]==product),4)
+        initial_physical=next(x["physical"] for x in pre["stock"]["items"] if x["product"]==product)
+        final_physical=next(x["physical"] for x in boot["stock"]["items"] if x["product"]==product)
+        self.assertEqual(final_physical,initial_physical-6,
+                         "Shipment must deduct only this contract, despite prior integration tests")
         expid=uuid.uuid4().hex
         create={"action":"create","opId":uuid.uuid4().hex,"id":expid,
                 "revision":0,"date":"2026-11-24","amount":"11.57","comment":"Synthetic"}
