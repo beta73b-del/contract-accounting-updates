@@ -135,6 +135,11 @@ def frozen_smoke():
     from threading import Thread
     from urllib.request import build_opener, ProxyHandler
     from server import Handler,HOST,store,LoopbackHTTPServer,stop_services
+    from sqlite_build_safety import report
+    if sys.stderr is not None:
+        import json
+        print("SQLITE_RUNTIME="+json.dumps(report(),sort_keys=True),
+              file=sys.stderr,flush=True)
     opener=build_opener(ProxyHandler({}))
     if sys.stderr is not None:
         print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
