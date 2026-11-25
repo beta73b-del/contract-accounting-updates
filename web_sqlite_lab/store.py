@@ -94,23 +94,23 @@ class Store:
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA busy_timeout=10000")
             version = self.db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise DataError("Неизвестная версия SQLite: отказ от автоматического изменения")
             present = {row[0] for row in self.db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
             base = {"products", "contracts", "contract_lines", "receipts", "shipments", "operations"}
             if version == 0 and present:
                 raise DataError("Неопознанная непустая база без версии: автоматический импорт запрещён")
-            if version in (1, 2, 3):
-                if not base.issubset(present) or (version >= 2 and "finance_events" not in present) or (version == 3 and not {"contract_trash","contract_lifecycle"}.issubset(present)):
+            if version in (1, 2, 3, 4):
+                if not base.issubset(present) or (version >= 2 and "finance_events" not in present) or (version >= 3 and not {"contract_trash","contract_lifecycle"}.issubset(present)) or (version == 4 and not {"managed_files","file_events"}.issubset(present)):
                     raise DataError("В базе отсутствуют обязательные таблицы; исправление без проверки запрещено")
                 if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise DataError("Повреждение базы до миграции")
                 if self.db.execute("PRAGMA foreign_key_check").fetchall():
                     raise DataError("Нарушение связей до миграции")
-            if version in (1,2):
+            if version in (1,2,3):
                 # Online backup before schema changes, including live WAL transactions.
-                label="v2" if version==1 else "v3"
+                label={1:"v2",2:"v3",3:"v4"}[version]
                 self.backup(self.path.parent / "backups" /
                             ("before-" + label + "-" + uuid.uuid4().hex + ".sqlite"))
             self.db.execute("PRAGMA journal_mode=WAL")
@@ -191,9 +191,45 @@ class Store:
             except BaseException:
                 self.db.execute("ROLLBACK")
                 raise
-        if self.db.execute("PRAGMA user_version").fetchone()[0] != 3:
-            raise DataError("SQLite trash migration failed")
-        required=("finance_events","contract_trash","contract_lifecycle")
+        if version in (0,1,2,3):
+            # Managed documents: logical deletion preserves bytes for 30 days.
+            # A separate file_events journal survives actual blob expiry.
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("""CREATE TABLE managed_files(
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    blob TEXT NOT NULL UNIQUE,
+                    contract_id TEXT REFERENCES contracts(id) ON DELETE RESTRICT,
+                    size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+                    sha256 TEXT NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'active'
+                      CHECK(state IN ('active','trashed','purge_pending','purged')),
+                    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>=1),
+                    created_at TEXT NOT NULL,
+                    deleted_at TEXT,
+                    expires_at TEXT,
+                    purged_at TEXT,
+                    reason TEXT NOT NULL DEFAULT ''
+                )""")
+                self.db.execute("""CREATE TABLE file_events(
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id TEXT NOT NULL REFERENCES managed_files(id) ON DELETE RESTRICT,
+                    request_id TEXT NOT NULL UNIQUE,
+                    action TEXT NOT NULL
+                       CHECK(action IN ('create','trash','restore','expire','purge')),
+                    happened_at TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK(revision>=1)
+                )""")
+                self.db.execute("CREATE INDEX idx_managed_files_state_expiry ON managed_files(state,expires_at)")
+                self.db.execute("PRAGMA user_version=4")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        if self.db.execute("PRAGMA user_version").fetchone()[0] != 4:
+            raise DataError("SQLite managed-file migration failed")
+        required=("finance_events","contract_trash","contract_lifecycle","managed_files","file_events")
         if any(self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                 (name,)).fetchone() is None for name in required):
             raise DataError("Required finance/trash table missing")
