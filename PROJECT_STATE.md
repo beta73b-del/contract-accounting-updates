@@ -1,3 +1,7 @@
+### SQLite 3.54.1: итоговая проверка сборок (25.11.2026)
+
+После предыдущей записи Mac Apple Silicon runner завершил тесты: [Build CI 45678362509](https://github.com/beta73b-del/contract-accounting-updates/actions/runs/45678362509) — **все три QA-платформы SUCCESS**: Windows x64 EXE, macOS Intel .app, macOS Apple Silicon .app. Во всех логах фактически упакованного бинарника `SQLITE_RUNTIME.sqliteVersion=3.54.1`, `walResetFixed=true`. На каждой платформе 206 тестов (205 PASS, 1 SKIP); Windows Chrome 25/25 PASS. Старая системная 3.45.1 теперь не используется основными SQLite Lab-модулями. Изменения только в feature-ветке; `VERSION`, рабочая Excel-база и пользовательские данные не менялись.
+
 ## Новая Web/SQLite Lab — обновление SQLite до 3.54.1, 25.11.2026
 
 - **Область:** только `feature/web-sqlite-parallel-prototype/web_sqlite_lab`, а не старое Tkinter «Учет заключенных контрактов» и не рабочее Excel/Web на 8765. `VERSION`, рабочая база, реальные документы и релизы НЕ менялись.
