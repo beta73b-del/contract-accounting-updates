@@ -243,6 +243,9 @@ class Store:
             contract_id TEXT NOT NULL, position INTEGER NOT NULL,
             PRIMARY KEY(contract_id,position),
             FOREIGN KEY(contract_id,position) REFERENCES contract_lines(contract_id,position) ON DELETE CASCADE)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS contract_import_financial(
+            contract_id TEXT PRIMARY KEY REFERENCES contracts(id) ON DELETE RESTRICT,
+            details_json TEXT NOT NULL)""")
         if self.db.execute("PRAGMA user_version").fetchone()[0] != 4:
             raise DataError("SQLite managed-file migration failed")
         required=("finance_events","contract_trash","contract_lifecycle","managed_files","file_events")
@@ -360,6 +363,10 @@ class Store:
             version = int(raw.get("revision", 0))
             if (existing and existing["revision"] != version) or (not existing and version != 0):
                 raise Conflict("Карточка изменена в другом окне")
+            if existing:
+                imported=self.db.execute("SELECT details_json FROM contract_import_financial WHERE contract_id=?",(cid,)).fetchone()
+                if imported and json.loads(imported[0]).get("issues"):
+                    raise DataError("Карточка импортирована с финансовыми замечаниями. Редактирование заблокировано до отдельной сверки.")
             prev_status = existing["status"] if existing else ""
             if prev_status in SHIPPED and status not in SHIPPED:
                 raise DataError("Возврат на предыдущий этап требует отдельной складской операции (не реализовано)")
@@ -412,6 +419,8 @@ class Store:
                 [(cid,i+1,l["product"],l["quantity"],l["unit_price"]) for i,l in enumerate(lines)])
             self.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",
                 [(cid,i+1) for i,l in enumerate(lines) if l.get("price_missing")])
+            # Remove superseded import-only metadata when a verified card is edited.
+            self.db.execute("DELETE FROM contract_import_financial WHERE contract_id=?",(cid,))
             result=self.get_contract(cid)
             self._record_op(request_id,digest,result)
             return result
@@ -436,6 +445,8 @@ class Store:
                 item["unitPrice"]=""
                 item["priceMissing"]=True
             else:item["unitPrice"]=amount(v)
+        imported=self.db.execute("SELECT details_json FROM contract_import_financial WHERE contract_id=?",(cid,)).fetchone()
+        if imported:data["importFinancial"]=json.loads(imported[0])
         return data
 
     def list_contracts(self):

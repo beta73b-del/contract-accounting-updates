@@ -46,31 +46,57 @@ def textfield(obj,keys,label,limit):
     if not isinstance(value,str) or len(value)>limit:raise MigrationError("Некорректное текстовое поле: "+label)
     return value
 
+def money_values(obj,keys,issues,label):
+    """Collect only exact, supported monetary values. Original values remain raw."""
+    valid=[]
+    for k in keys:
+        if k not in obj or obj[k] is None or (isinstance(obj[k],str) and not obj[k].strip()):continue
+        try:valid.append(money(decimal_text(obj[k])))
+        except ValueError:issues.append(label+": недопустимый денежный формат "+k)
+    if len(set(valid))>1:
+        issues.append(label+": разные денежные значения")
+        return None
+    return valid[0] if valid else None
+
 def source_lines(r):
     raw=pick(r,("items","positions"),"позиции")
     if raw is None:
-        # Explicit single-line legacy shape, not derived from contract total.
         if all(k in r for k in ("product","quantity")):raw=[r]
         else:raise MigrationError("Неизвестный формат товарных позиций; требуется карта полей")
     if not isinstance(raw,list) or not raw:raise MigrationError("Нет товарных позиций")
-    out=[];derived=[]
+    out=[];derived=[];issues=[];source_totals=[]
+    declared=money_values(r,("amount",),issues,"Сумма контракта")
     for pos,x in enumerate(raw,1):
         if not isinstance(x,dict):raise MigrationError("Некорректная позиция")
         qty=pick(x,("quantity","qty"),"количество")
-        prices=[money(decimal_text(x[k])) for k in ("unitPrice","price") if k in x and x[k] is not None and str(x[k]).strip()]
-        if len(set(prices))>1:raise MigrationError("Противоречивые цены позиции "+str(pos))
-        value=amount(prices[0]) if prices else ""
-        if not prices:
-            totals=[x[k] for k in ("lineTotal","total","amount") if k in x and x[k] is not None and str(x[k]).strip()]
-            if len(raw)==1 and r.get("amount") is not None and str(r["amount"]).strip():totals.append(r["amount"])
-            cents=[money(decimal_text(v)) for v in totals]
-            if len(set(cents))>1:raise MigrationError("Противоречивые суммы позиции "+str(pos))
-            if cents and cents[0]>0:
-                if not re.fullmatch(r"[1-9]\d{0,6}",str(qty)) or cents[0]%int(qty):
-                    raise MigrationError("Не удаётся точно вычислить цену позиции "+str(pos)+" из суммы и количества")
-                value=amount(cents[0]//int(qty));derived.append(pos)
-        out.append({"product":pick(x,("product","name"),"товар"),"quantity":qty,"unitPrice":value})
-    return normalized_lines(out,allow_missing_price=True),derived
+        label="Позиция "+str(pos)
+        if not re.fullmatch(r"[1-9]\d{0,6}",str(qty)):
+            raise MigrationError(label+": некорректное количество")
+        q=int(qty)
+        before=len(issues)
+        price=money_values(x,("unitPrice","price"),issues,label+" цена")
+        price_ambiguous=len(issues)!=before
+        before=len(issues)
+        line_total=money_values(x,("lineTotal","total","amount"),issues,label+" сумма")
+        total_ambiguous=len(issues)!=before
+        if len(raw)==1 and declared is not None:
+            if line_total is None and not total_ambiguous:line_total=declared
+            elif line_total is not None and line_total!=declared:
+                issues.append(label+": сумма строки и контракта различаются")
+        if price is None and not price_ambiguous and not total_ambiguous and line_total is not None and line_total>0:
+            if line_total%q==0:
+                price=line_total//q;derived.append(pos)
+            else:issues.append(label+": сумма не делится на количество до копейки; исходная сумма сохранена")
+        if price is not None and price*q>90_000_000_000_000:
+            issues.append(label+": произведение превышает предел; исходная цена сохранена в архиве")
+            price=None
+        if price is not None and line_total is not None and price*q!=line_total:
+            issues.append(label+": цена × количество не равно исходной сумме")
+        if price is None and not (len(issues)>before) and line_total is not None and line_total>0:
+            issues.append(label+": цена не определена")
+        source_totals.append(line_total)
+        out.append({"product":pick(x,("product","name"),"товар"),"quantity":qty,"unitPrice":amount(price) if price is not None else ""})
+    return normalized_lines(out,allow_missing_price=True),derived,issues,declared,source_totals
 
 def normalize_contract(r):
     if not isinstance(r,dict):raise MigrationError("Некорректная карточка")
@@ -81,16 +107,32 @@ def normalize_contract(r):
     if status not in STATUSES:raise MigrationError("Неизвестный статус контракта: "+str(status))
     dates={k:validate_date(textfield(r,(k,),k,10)) for k in
         ("contractDate","signBy","fulfillBy","handoverDate","paymentDue")}
-    lines,derived=source_lines(r)
+    lines,derived,issues,declared,source_totals=source_lines(r)
     missing=[i for i,l in enumerate(lines,1) if l.get("price_missing")]
-    total=sum(x["line_total"] for x in lines)
-    if r.get("amount") not in (None,"") and money(decimal_text(r["amount"]))!=total:
-        raise MigrationError("Сумма контракта не равна сумме его позиций")
+    calculated=sum(x["line_total"] for x in lines)
+    if declared is not None and declared!=calculated:
+        issues.append("Исходная сумма контракта отличается от суммы известных цен")
+    if declared is not None:
+        total=declared
+    elif all(t is not None for t in source_totals):
+        total=sum(source_totals)
+    elif not missing:
+        total=calculated
+    else:total=None
+    # Missing prices on non-drafts cannot safely be changed via current editor.
+    if missing and status not in ("формирование","подписать до","на подписи"):
+        issues.append("Цена не заполнена в действующем или завершённом контракте")
+    if total is None:issues.append("Сумма контракта не определена")
+    financial={"sourceAmount":amount(declared) if declared is not None else None,
+        "preservedAmount":amount(total) if total is not None else None,
+        "calculatedAmount":amount(calculated) if not missing else None,
+        "lineAmounts":[amount(t) if t is not None else None for t in source_totals],
+        "issues":issues,"missingPricePositions":missing,"derivedPricePositions":derived}
     return {"id":cid,"status":status,
         "customer":textfield(r,("customer",),"заказчик",500),
         "platform":textfield(r,("platform",),"площадка",120),
         "number":textfield(r,("contractNumber",),"номер",100),
-        "dates":dates,"lines":lines,"total":total,"missingPrices":missing,"derivedPrices":derived}
+        "dates":dates,"lines":lines,"total":total,"missingPrices":missing,"derivedPrices":derived,"financial":financial}
 
 def read_api():
     opener=build_opener(ProxyHandler({}))
@@ -227,6 +269,7 @@ def build_trial_archive(snapshot_dir,archive_path):
                         [(cid,i,l["product"],l["quantity"],l["unit_price"]) for i,l in enumerate(r["lines"],1)])
                     store.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",[(cid,i) for i in r["missingPrices"]])
                     store.db.execute("INSERT INTO excel_import_raw_contracts VALUES(?,?)",(cid,json.dumps(source,ensure_ascii=False)))
+                    store.db.execute("INSERT INTO contract_import_financial VALUES(?,?)",(cid,json.dumps(r["financial"],ensure_ascii=False)))
                     phase=phases.get(cid,{})
                     if r["status"]=="заключен" and phase.get("phase")!="reserved":
                         raise MigrationError("Статус заключённого контракта не совпадает с резервом")
@@ -260,6 +303,8 @@ def build_trial_archive(snapshot_dir,archive_path):
                 x=got[r["id"]];d=r["dates"]
                 if (x["status"],x["customer"],x["platform"],x["contract_number"],x["contract_date"],x["sign_by"],x["fulfill_by"],x["handover_date"],x["payment_due"])!=(r["status"],r["customer"],r["platform"],r["number"],d["contractDate"],d["signBy"],d["fulfillBy"],d["handoverDate"],d["paymentDue"]):raise MigrationError("Реквизиты контракта не совпали")
                 if [(l["product"],l["quantity"],money(l["unitPrice"]),bool(l.get("priceMissing"))) for l in x["items"]]!=[(l["product"],l["quantity"],l["unit_price"],bool(l.get("price_missing"))) for l in r["lines"]]:raise MigrationError("Позиции контракта не совпали")
+            for r in records:
+                if got[r["id"]].get("importFinancial")!=r["financial"]:raise MigrationError("Исходные суммы или замечания не сохранились")
             mapping,finance=finance_baseline(store,raw["finance"])
             vault=FileVault(store);docs=0;unlinked=[]
             for entry in manifest["files"]:
@@ -275,8 +320,9 @@ def build_trial_archive(snapshot_dir,archive_path):
                 docs+=1
             store.verify()
             report={"status":"TRIAL_BASELINE_PARTIAL","sourceManifestSha256":checksum(src/"manifest.json"),
-                "activeContracts":len(records),"contractKopecks":sum(r["total"] for r in records),
-                "contractKopecksComplete":not any(r["missingPrices"] for r in records),
+                "activeContracts":len(records),"contractKopecks":sum(r["total"] for r in records if r["total"] is not None),
+                "contractKopecksComplete":all(r["total"] is not None for r in records),
+                "financialWarnings":[{"id":r["id"],"contractNumber":r["number"],**r["financial"]} for r in records if r["financial"]["issues"]],
                 "missingPricePositions":[{"id":r["id"],"positions":r["missingPrices"]} for r in records if r["missingPrices"]],
                 "derivedPricePositions":[{"id":r["id"],"positions":r["derivedPrices"]} for r in records if r["derivedPrices"]],
                 "products":len(inv),"stockEventsPreserved":len(raw["stock"]["events"]),"documents":docs,
@@ -284,7 +330,7 @@ def build_trial_archive(snapshot_dir,archive_path):
                 "unlinkedDocumentsPreserved":unlinked,"historicalShippedWithoutEvent":legacy_shipped,
                 "deletedProductsPreservedAsZeroStock":archived_deleted,"deletedExcelRowsPreserved":checks["deletedRowsInExcel"],
                 "finance":finance,"expenseIdMapping":mapping,
-                "checks":{"contractIdsFieldsItems":"PASS","stockBalancesReservesCost":"PASS","currentExpensesRates":"PASS","documentHashes":"PASS","sqliteIntegrity":"PASS"},
+                "checks":{"contractIdsFieldsItems":"PASS","sourceMoneyPreservation":"PASS","financialArithmetic":"WARN" if any(r["financial"]["issues"] for r in records) else "PASS","stockBalancesReservesCost":"PASS","currentExpensesRates":"PASS","documentHashes":"PASS","sqliteIntegrity":"PASS"},
                 "notVerified":["full Excel field/UI parity","monthly/annual financial and tax forecasts","historical stock UI and corrections","deleted contract normalization","drafts/notes/competitors UI","source COM snapshot transaction","real user installation"],
                 "limitations":["Original historical stock events preserved, not re-applied; receipts history not normalized.",
                     "Current expenses imported as opening records; original financial history/revisions preserved in raw sources.",

@@ -115,7 +115,7 @@ async function refresh(){
  const table=$('records');table.replaceChildren();
  for(const x of records){
    const tr=document.createElement('tr');
-   [x.customer,x.contract_number,x.status,x.contract_date].forEach(y=>td(tr,y));
+   [x.customer,x.contract_number,x.status+(x.importFinancial?.issues?.length?" ⚠ Сверка суммы":""),x.contract_date].forEach(y=>td(tr,y));
    const cell=document.createElement('td');
    const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);
    const remove=document.createElement('button');remove.textContent='В Корзину';
@@ -137,9 +137,12 @@ async function refresh(){
 function open(x){activeId=x.id;revision=x.revision;
  for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
  if(x.items[0]){$('product').value=x.items[0].product;$('qty').value=x.items[0].quantity;$('price').value=x.items[0].unitPrice}
- tell('Открыт черновик '+x.id+', ревизия '+revision);
+ const f=x.importFinancial;const blocked=Boolean(f?.issues?.length)||x.items.length>1;$('save').disabled=blocked;
+ if(f?.issues?.length)tell('Сумма из Excel: '+(f.preservedAmount??'не определена')+' ₽. '+f.issues.join('; ')+'. Только просмотр до сверки.',true);
+ else if(x.items.length>1)tell('Многопозиционная карточка: только просмотр до поддержки редактирования всех строк.',true);
+ else tell('Открыт черновик '+x.id+', ревизия '+revision+(f?.preservedAmount!=null?' · сумма Excel '+f.preservedAmount+' ₽':''));
 }
-function reset(){activeId='';revision=0;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
+function reset(){activeId='';revision=0;$('save').disabled=false;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
 $('status').addEventListener('change',()=>{if($('status').value==='заключен'&&!$('contractDate').value){const d=new Date();$('contractDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)}});
 $('new').onclick=reset;
 $('refresh').onclick=()=>refresh().catch(e=>tell(e.message,true));

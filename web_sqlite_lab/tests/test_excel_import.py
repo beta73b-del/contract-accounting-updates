@@ -70,10 +70,21 @@ class ExcelImportTests(unittest.TestCase):
         self.capture()
         with self.assertRaises(ValueError):build_trial_archive(self.snap,self.archive)
         self.assertFalse(self.archive.exists())
-    def test_inconsistent_contract_total_blocks_archive(self):
+    def test_inconsistent_contract_total_preserved(self):
         self.payload["records"][0]["amount"]="1.00";self.capture()
-        with self.assertRaises(MigrationError):build_trial_archive(self.snap,self.archive)
-        self.assertFalse(self.archive.exists())
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["checks"]["financialArithmetic"],"WARN")
+        self.assertEqual(report["financialWarnings"][0]["sourceAmount"],"1.00")
+        self.assertEqual(report["financialWarnings"][0]["calculatedAmount"],"10500.00")
+        target=self.root/"different";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            self.assertEqual(db.get_contract(self.cid)["importFinancial"]["preservedAmount"],"1.00")
+            from store import DataError
+            raw=dict(self.payload["records"][0],revision=1)
+            with self.assertRaisesRegex(DataError,"финансовыми замечаниями"):
+                db.save_contract("test-edit-001",raw)
+        finally:db.close()
     def test_no_overwrite(self):
         self.capture();self.archive.write_bytes(b"keep")
         with self.assertRaises(MigrationError):build_trial_archive(self.snap,self.archive)
@@ -102,12 +113,33 @@ class ExcelImportTests(unittest.TestCase):
         self.capture()
         report=build_trial_archive(self.snap,self.archive)
         self.assertEqual(report["derivedPricePositions"],[{"id":self.cid,"positions":[1]}])
-    def test_blank_price_fraction_rejected_with_contract(self):
+    def test_blank_price_fraction_preserved(self):
         self.payload["records"][0]["items"][0]["unitPrice"]=""
         self.payload["records"][0]["amount"]="10500.01"
         self.capture()
-        with self.assertRaisesRegex(MigrationError,"Контракт 0000042"):build_trial_archive(self.snap,self.archive)
-        self.assertFalse(self.archive.exists())
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["financialWarnings"][0]["preservedAmount"],"10500.01")
+        self.assertTrue(report["contractKopecksComplete"])
+        target=self.root/"fraction";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            item=db.get_contract(self.cid)
+            self.assertEqual(item["items"][0]["unitPrice"],"")
+            self.assertEqual(item["importFinancial"]["preservedAmount"],"10500.01")
+            self.assertEqual(len(db.list_contracts()),2)
+        finally:db.close()
+    def test_invalid_price_and_conflicting_aliases_do_not_abort(self):
+        self.payload["records"][0]["items"][0].update({"unitPrice":"1.2345","price":"1500.00","lineTotal":"10500.01"})
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["activeContracts"],2)
+        self.assertEqual(report["checks"]["financialArithmetic"],"WARN")
+    def test_malformed_amount_preserved_in_original(self):
+        self.payload["records"][0]["amount"]="ошибка Excel"
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["activeContracts"],2)
+        self.assertEqual(report["checks"]["financialArithmetic"],"WARN")
     def test_zero_price_is_not_missing(self):
         self.payload["records"][0]["items"][0]["unitPrice"]="0"
         self.payload["records"][0]["amount"]="0"
