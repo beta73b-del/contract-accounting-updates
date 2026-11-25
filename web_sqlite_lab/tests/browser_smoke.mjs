@@ -74,6 +74,13 @@ try {
   await evaluate("document.getElementById('save').click()");
   check(await until(()=>evaluate("document.getElementById('records').textContent.includes('заключен')")),'Conclusion persisted via SQLite API');
   check(await evaluate("document.getElementById('health').textContent.includes('контрактов: 1')"),'UI count reconciled');
+  check(await evaluate("document.querySelector('#records button:nth-of-type(2)')?.textContent==='В Корзину'"),'Soft-delete button present');
+  await evaluate("window.confirm=()=>true");
+  await evaluate("document.querySelector('#records button:nth-of-type(2)').click()");
+  check(await until(()=>evaluate("document.getElementById('trashContracts').rows.length===1 && document.getElementById('records').rows.length===0")),'Contract moved into app Trash without physical deletion');
+  await evaluate("document.querySelector('#trashContracts button').click()");
+  check(await until(()=>evaluate("document.getElementById('trashContracts').rows.length===0 && document.getElementById('records').rows.length===1")),'Contract restored from app Trash');
+
   await set('expenseDate','2026-11-24');
   await set('expenseAmount','125.01');
   await set('expenseComment','Synthetic test expense');
@@ -90,6 +97,10 @@ try {
   await evaluate("window.confirm=()=>true");
   await evaluate("document.querySelectorAll('#expenseRows button')[1].click()");
   check(await until(()=>evaluate("document.getElementById('expenseRows').rows.length===0")),'Finance expense deleted with preserved ledger history');
+  check(await until(()=>evaluate("document.getElementById('trashExpenses').rows.length===1")),'Deleted expense remains in Trash');
+  await evaluate("document.querySelector('#trashExpenses button').click()");
+  check(await until(()=>evaluate("document.getElementById('trashExpenses').rows.length===0 && document.getElementById('expenseRows').rows.length===1")),'Expense restored with its original amount and date');
+
 
   console.log('SQLITE_BROWSER_SMOKE '+checks+'/'+checks+' PASS');
 }finally{
