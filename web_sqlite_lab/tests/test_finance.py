@@ -1,5 +1,6 @@
 """Financial forecast and ledger tests on synthetic data; no user files."""
 from pathlib import Path
+from contextlib import closing
 from tempfile import TemporaryDirectory
 import sqlite3
 import unittest
@@ -130,7 +131,7 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(len(self.ledger.events()),0)
     def test_migration_v1_verified_backup(self):
         self.store.close()
-        with sqlite3.connect(self.db) as c:
+        with closing(sqlite3.connect(self.db)) as c:
             c.execute("DROP TABLE finance_events")
             c.execute("PRAGMA user_version=1")
         self.store=Store(self.db)
@@ -138,7 +139,7 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],2)
         backups=list((self.db.parent/"backups").glob("before-v2-*.sqlite"))
         self.assertEqual(len(backups),1)
-        with sqlite3.connect(backups[0]) as c:
+        with closing(sqlite3.connect(backups[0])) as c:
             self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0],1)
             self.assertEqual(c.execute("PRAGMA integrity_check").fetchone()[0],"ok")
     def test_schema_integrity(self):
