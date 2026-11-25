@@ -68,7 +68,7 @@ def main():
                 return 1
 
     try:
-        from server import Handler, HOST, PORT, store, LoopbackHTTPServer
+        from server import Handler, HOST, PORT, store, LoopbackHTTPServer, stop_services
         listener=LoopbackHTTPServer((HOST,PORT),Handler)
         listener.daemon_threads=False
         worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
@@ -92,6 +92,7 @@ def main():
             listener.shutdown()
             listener.server_close()
             worker.join(timeout=8)
+            stop_services()
             store.close()
         except Exception:
             messagebox.showerror("Ошибка завершения",
@@ -133,7 +134,7 @@ def frozen_smoke():
     """Headless packaged-artifact HTTP smoke against a synthetic temporary DB."""
     from threading import Thread
     from urllib.request import build_opener, ProxyHandler
-    from server import Handler,HOST,store,LoopbackHTTPServer
+    from server import Handler,HOST,store,LoopbackHTTPServer,stop_services
     opener=build_opener(ProxyHandler({}))
     if sys.stderr is not None:
         print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
@@ -167,6 +168,7 @@ def frozen_smoke():
             stopper.join(timeout=3)
         listener.server_close()
         worker.join(timeout=3)
+        stop_services()
         store.close()
 
 if __name__=="__main__":
