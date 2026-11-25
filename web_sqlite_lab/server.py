@@ -34,7 +34,11 @@ nonce = token_urlsafe(32)
 class Handler(BaseHTTPRequestHandler):
     server_version = "ContractsSQLiteLab/0.1"
     def log_message(self, fmt, *args):
-        print("%s %s" % (self.log_date_time_string(), fmt % args), file=sys.stderr)
+        # PyInstaller --windowed may set sys.stderr to None; logging must not
+        # abort an HTTP response or leave the browser waiting indefinitely.
+        stream=getattr(sys,"stderr",None)
+        if stream is not None:
+            print("%s %s" % (self.log_date_time_string(), fmt % args), file=stream)
 
     def trusted_host(self):
         # Reject DNS rebinding: another origin must not read /api/bootstrap
