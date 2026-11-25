@@ -320,6 +320,9 @@ class Store:
                 raise DataError("Сначала заключите контракт, затем подтвердите отгрузку")
             if status=="заключен" and prev_status!="заключен" and not dates["contractDate"]:
                 dates["contractDate"]=moscow_today()
+            if existing and status in SHIPPED and existing["contract_date"] and not dates["contractDate"]:
+                # A status change must not silently erase the signed contract date.
+                dates["contractDate"]=existing["contract_date"]
             old_lines = self.db.execute("SELECT product,quantity,unit_price FROM contract_lines WHERE contract_id=? ORDER BY position",(cid,)).fetchall()
             if prev_status in SHIPPED and [(x["product"],x["quantity"],x["unit_price"]) for x in old_lines] != [
                 (x["product"],x["quantity"],x["unit_price"]) for x in lines]:
