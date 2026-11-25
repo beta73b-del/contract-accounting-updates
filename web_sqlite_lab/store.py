@@ -15,7 +15,7 @@ from sqlite_build_safety import patched_wal_reset
 import json
 import os
 import re
-import sqlite3
+from sqlite_runtime import sqlite3
 import uuid
 
 MOSCOW = timezone(timedelta(hours=3))
