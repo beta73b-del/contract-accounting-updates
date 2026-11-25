@@ -197,7 +197,9 @@ class BackupPolicyTests(unittest.TestCase):
             self.policy.run_if_due(datetime(2026,11,25,12))
     def test_21_true_wal_online_backup_is_consistent(self):
         self.store.receipt(key(),"Рутокен Lite 1010",3,"1222.22")
-        self.assertEqual(self.store.db.execute("PRAGMA journal_mode").fetchone()[0],"wal")
+        from sqlite_build_safety import patched_wal_reset
+        expected="wal" if patched_wal_reset() else "delete"
+        self.assertEqual(self.store.db.execute("PRAGMA journal_mode").fetchone()[0],expected)
         out=self.first()
         restore=self.root/"wal_restore"
         restore_new_install(out["archive"],restore)
