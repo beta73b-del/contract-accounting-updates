@@ -78,6 +78,8 @@ def normalized_lines(raw):
             raise DataError("Количество должно быть положительным целым числом")
         qty = int(quantity)
         price = money(row.get("unitPrice"), required=True)
+        if price * qty > MONEY_LIMIT:
+            raise DataError("Стоимость товарной строки превышает предел")
         lines.append({"product": product, "quantity": qty, "unit_price": price, "line_total": price * qty})
     return lines
 
@@ -174,12 +176,17 @@ class Store:
             raise DataError("Неверное количество прихода")
         count = int(qty)
         cost = money(unit_cost)
+        if count * cost > MONEY_LIMIT:
+            raise DataError("Стоимость прихода превышает предел")
         payload = {"kind": "receipt", "product": product.strip(), "qty": count, "cost": cost}
         with self.transaction():
             digest, old = self._operation(request_id, payload)
             if old is not None: return old
             item = self.db.execute("SELECT physical_qty FROM products WHERE name=?", (product.strip(),)).fetchone()
             if not item: raise DataError("Товар отсутствует в справочнике")
+            current = self._stock(product.strip())
+            if current["physical_qty"] + count > 1_000_000_000 or current["inventory_cost"] + count * cost > MONEY_LIMIT:
+                raise DataError("Слишком большой остаток или стоимость товара")
             self.db.execute("UPDATE products SET physical_qty=physical_qty+?, inventory_cost=inventory_cost+? WHERE name=?",
                             (count, count * cost, product.strip()))
             self.db.execute("INSERT INTO receipts VALUES(?,?,?,?,?)", (request_id, product.strip(), count, cost, utcnow()))
@@ -213,10 +220,13 @@ class Store:
         if not isinstance(contract_number,str) or len(contract_number)>100: raise DataError("Номер контракта слишком длинный")
         dates = {key: validate_date(raw.get(key, "")) for key in
                  ("contractDate", "signBy", "fulfillBy", "handoverDate", "paymentDue")}
-        if status == "Вручен" and not dates["handoverDate"]:
+        if status in ("Вручен", "Оплачен") and not dates["handoverDate"]:
             raise DataError("При вручении укажите фактическую дату")
         lines = normalized_lines(raw.get("items"))
+        if sum(x["line_total"] for x in lines) > MONEY_LIMIT:
+            raise DataError("Общая сумма контракта слишком велика")
         payload = {"kind":"contract","id":cid,"status":status, "customer":customer,
+                   "paymentConfirmed":raw.get("paymentConfirmed") is True,
                    "platform":platform, "number":contract_number, "dates":dates,
                    "lines":lines, "revision":raw.get("revision",0)}
         with self.transaction():
@@ -229,6 +239,9 @@ class Store:
             prev_status = existing["status"] if existing else ""
             if prev_status in SHIPPED and status not in SHIPPED:
                 raise DataError("Возврат на предыдущий этап требует отдельной складской операции (не реализовано)")
+            if status == "Оплачен" and prev_status != "Оплачен":
+                if prev_status != "Вручен" or raw.get("paymentConfirmed") is not True:
+                    raise DataError("Оплату можно подтвердить только после вручения и фактического поступления всей суммы")
             if prev_status == "Оплачен" and status != "Оплачен":
                 raise DataError("Отмена оплаты пока не реализована")
             if prev_status not in SHIPPED and status in SHIPPED and prev_status not in ("заключен","Отправлен"):
