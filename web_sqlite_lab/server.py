@@ -40,10 +40,10 @@ class LoopbackHTTPServer(ThreadingHTTPServer):
         self.server_port = self.server_address[1]
 
 store = Store(DB)
-file_vault = FileVault(store, DATA_DIR / 'managed_files')
+file_vault = FileVault(store, DB.parent / 'managed_files')
 # Only app-owned files are managed. Legacy documents remain untouched until
 # a user invokes an explicit protected delete through the vault.
-(DATA_DIR / 'attachments').mkdir(parents=True,exist_ok=True)
+(DB.parent / 'attachments').mkdir(parents=True,exist_ok=True)
 finance_ledger = FinanceLedger(store)
 mutex = RLock()
 nonce = token_urlsafe(32)
@@ -105,7 +105,7 @@ class Handler(BaseHTTPRequestHandler):
             names=params.get("name",[])
             if len(names)!=1 or not re.fullmatch(r"complete-[0-9a-f]{32}\.zip",names[0]):
                 self.reply(400,{"error":"Неверное имя архивного файла"});return
-            dest=DATA_DIR/"backups"/names[0]
+            dest=DB.parent/"backups"/names[0]
             try:
                 with mutex:
                     inspect_transfer(dest)
@@ -207,8 +207,8 @@ class Handler(BaseHTTPRequestHandler):
                     # Trash, plus legacy attachments and a consistent SQLite
                     # online snapshot. No overwrite, no export on SHA failure.
                     file_vault.purge_expired()
-                    target=DATA_DIR/"backups"/("complete-"+uuid.uuid4().hex+".zip")
-                    info=export_lab(DB,DATA_DIR/"attachments",target,
+                    target=DB.parent/"backups"/("complete-"+uuid.uuid4().hex+".zip")
+                    info=export_lab(DB,DB.parent/"attachments",target,
                                     managed_dir=file_vault.root)
                     result={**info,"download":"/api/export/download?name="+target.name}
                 elif path=="/api/verify":
