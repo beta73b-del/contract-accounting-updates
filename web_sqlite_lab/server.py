@@ -9,6 +9,7 @@ from threading import RLock
 from urllib.parse import urlsplit, parse_qs, quote
 import json
 import os
+import re
 import sys
 import uuid
 
@@ -16,6 +17,7 @@ from store import Store, DataError, Conflict, moscow_today
 from finance_ledger import FinanceLedger, FinanceError
 from finance_engine import forecast
 from file_vault import FileVault, MAX_FILE_BYTES, RETENTION_DAYS
+from transfer_package import export_lab, inspect_transfer, TransferError
 
 from platform_paths import lab_data_dir
 
@@ -98,6 +100,29 @@ class Handler(BaseHTTPRequestHandler):
                                          "retentionDays":RETENTION_DAYS,
                                          "cleanup":cleanup},
                                 "integrity":store.verify(),"migration":"NOT RUN"});return
+        if path=="/api/export/download":
+            params=parse_qs(urlsplit(self.path).query)
+            names=params.get("name",[])
+            if len(names)!=1 or not re.fullmatch(r"complete-[0-9a-f]{32}\.zip",names[0]):
+                self.reply(400,{"error":"Неверное имя архивного файла"});return
+            dest=DATA_DIR/"backups"/names[0]
+            try:
+                with mutex:
+                    inspect_transfer(dest)
+                    with dest.open("rb") as stream:
+                        self.send_response(200)
+                        self.send_header("Content-Type","application/zip")
+                        self.send_header("Content-Disposition",
+                                         'attachment; filename="'+names[0]+'"')
+                        self.send_header("Content-Length",str(dest.stat().st_size))
+                        self.send_header("Cache-Control","no-store")
+                        self.send_header("X-Content-Type-Options","nosniff")
+                        self.end_headers()
+                        while chunk:=stream.read(1024*1024):
+                            self.wfile.write(chunk)
+            except (FileNotFoundError,TransferError):
+                self.reply(404,{"error":"Архив отсутствует либо не прошёл проверку"})
+            return
         if path=="/api/files/download":
             parsed=parse_qs(urlsplit(self.path).query)
             file_ids=parsed.get("id",[])
@@ -177,12 +202,21 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=="/api/backup":
                     target=DB.parent/"backups"/("lab-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:8]+".db")
                     result=store.backup(target)
+                elif path=="/api/export":
+                    # Bundle ALL app-managed files including those in 30-day
+                    # Trash, plus legacy attachments and a consistent SQLite
+                    # online snapshot. No overwrite, no export on SHA failure.
+                    file_vault.purge_expired()
+                    target=DATA_DIR/"backups"/("complete-"+uuid.uuid4().hex+".zip")
+                    info=export_lab(DB,DATA_DIR/"attachments",target,
+                                    managed_dir=file_vault.root)
+                    result={**info,"download":"/api/export/download?name="+target.name}
                 elif path=="/api/verify":
                     result=store.verify()
                 else:
                     self.reply(404,{"error":"Маршрут отсутствует"});return
             self.reply(200,result)
-        except (DataError, FinanceError, ValueError, KeyError, TypeError) as exc:
+        except (DataError, FinanceError, TransferError, ValueError, KeyError, TypeError) as exc:
             self.reply(409 if isinstance(exc,Conflict) else 400,{"error":str(exc)})
         except (UnicodeError,json.JSONDecodeError):
             self.reply(400,{"error":"Некорректный JSON"})
