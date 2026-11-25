@@ -1,7 +1,7 @@
 // Real headless-Chrome UI smoke using synthetic SQLite database and random local ports.
 // Never touches the production Excel app, its documents, or port 8765.
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -76,10 +76,20 @@ try {
   check(await evaluate("document.getElementById('health').textContent.includes('контрактов: 1')"),'UI count reconciled');
   console.log('SQLITE_BROWSER_SMOKE '+checks+'/'+checks+' PASS');
 }finally{
-  try{ws?.close()}catch{}try{chrome?.kill()}catch{}
-  try{app.kill()}catch{}
-  await sleep(400);
-  try{rmSync(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200})}catch(e){
-    console.error('CLEANUP WARNING:',e.message);
+  try{ws?.close()}catch{}
+  // On Windows Chrome headless spawns children; only terminate the test-owned PID tree.
+  for(const proc of [chrome,app]){
+    if(!proc?.pid)continue;
+    if(process.platform==='win32'){
+      try{execFileSync('taskkill.exe',['/PID',String(proc.pid),'/T','/F'],{stdio:'ignore',timeout:5000})}catch{}
+    }
+    try{proc.kill()}catch{}
   }
+  await sleep(1000);
+  let cleaned=false;
+  for(let i=0;i<7;i++){
+    try{rmSync(profile,{recursive:true,force:true,maxRetries:4,retryDelay:250});cleaned=true;break}
+    catch(e){if(i===6)console.error('CLEANUP WARNING:',e.message);else await sleep(650)}
+  }
+  if(cleaned)console.log('PASS test-owned browser profile cleaned');
 }
