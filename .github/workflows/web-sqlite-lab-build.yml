@@ -40,6 +40,15 @@ jobs:
           python -m unittest discover -s web_sqlite_lab/tests -p "test_*.py" -v
         env:
           PYTHONPATH: web_sqlite_lab
+      - name: Browser E2E on a throwaway SQLite database
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $chrome='C:\Program Files\Google\Chrome\Application\chrome.exe'
+          if (-not (Test-Path $chrome)) { throw 'Chrome unavailable; UI E2E cannot be counted as passed' }
+          $env:CHROME_PATH=$chrome
+          $env:PYTHON='python'
+          node web_sqlite_lab/tests/browser_smoke.mjs
       - name: Build self-contained GUI preview
         run: >
           pyinstaller --noconfirm --clean --onedir --windowed
