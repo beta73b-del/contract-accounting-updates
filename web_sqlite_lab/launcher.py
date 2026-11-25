@@ -5,20 +5,68 @@ No production workbook is read. No remote network is opened.
 """
 from __future__ import annotations
 from threading import Thread
+from pathlib import Path
 import sys
+import uuid
 import webbrowser
 
 def main():
     import tkinter as tk
-    from tkinter import messagebox
+    from tkinter import messagebox,filedialog
+    from platform_paths import lab_data_dir
+    from transfer_package import restore_new_install, TransferError
+
+    target=lab_data_dir(frozen=bool(getattr(sys,"frozen",False)),
+                        source_root=Path(__file__).resolve().parent)
     root=tk.Tk()
     root.title("Контракты ИП — SQLite LAB (тестовая версия)")
-    root.geometry("470x260")
-    root.minsize(410,230)
+    root.geometry("540x360")
+    root.minsize(490,310)
     root.configure(padx=20,pady=15)
     tk.Label(root,text="Контракты ИП · SQLite LAB",font=("Arial",16,"bold")).pack(pady=(5,6))
     tk.Label(root,text="Изолированная тестовая программа.\nРабочая Excel-версия не изменяется.",
              justify="center",wraplength=420).pack(pady=5)
+    def import_archive_first_run():
+        """Only for a new, not-yet-created application data directory."""
+        chosen=filedialog.askopenfilename(
+            title="Выберите полный архив Контракты ИП ZIP",
+            filetypes=[("Полный архив ZIP","*.zip"),("Все файлы","*.*")])
+        if not chosen:
+            return False
+        if target.is_symlink() or (target.exists() and any(target.iterdir())):
+            messagebox.showerror("Восстановление отменено",
+                                 "Каталог приложения уже содержит данные. "
+                                 "Нельзя заменять их архивом.")
+            return False
+        try:
+            if target.exists():
+                target.rmdir()  # Only an EXISTING EMPTY directory.
+            target.parent.mkdir(parents=True,exist_ok=True)
+            result=restore_new_install(chosen,target)
+            if not result.get("appReady"):
+                raise TransferError("Архив не прошёл полную проверку")
+            messagebox.showinfo("Восстановление завершено",
+                                "Полный комплект проверен и установлен в новый "
+                                "каталог данных. Рабочая Excel-версия не затронута.")
+            return True
+        except Exception:
+            messagebox.showerror("Восстановление остановлено",
+                                 "Архив не удалось проверить или развернуть. "
+                                 "Существующие данные не заменялись.")
+            return False
+
+    if not (target/"lab.db").exists():
+        # Ask BEFORE importing the HTTP server, which would create a new DB.
+        if messagebox.askyesno("Первый запуск — восстановление",
+             "Новая SQLite-база отсутствует. Восстановить полный архив ZIP "
+             "с другого компьютера (контракты, документы, Корзина)?\n\n"
+             "«Нет» — начать с пустой тестовой базы."):
+            if not import_archive_first_run():
+                # Do not create an empty DB after a failed/cancelled recovery:
+                # user should be able to retry without risking replacement.
+                root.destroy()
+                return 1
+
     try:
         from server import Handler, HOST, PORT, store, LoopbackHTTPServer
         listener=LoopbackHTTPServer((HOST,PORT),Handler)
@@ -51,6 +99,26 @@ def main():
                                  "Перед повторным запуском проверьте процессы.")
         finally:
             root.destroy()
+    def restore_separate():
+        """Never overwrite an open/current database: restore to a sibling."""
+        chosen=filedialog.askopenfilename(
+            title="Выберите полный архив ZIP",
+            filetypes=[("ZIP архив","*.zip"),("Все файлы","*.*")])
+        if not chosen:return
+        new_target=target.with_name(target.name+"-Restored-"+uuid.uuid4().hex[:8])
+        try:
+            restore_new_install(chosen,new_target)
+            messagebox.showinfo("Новая копия восстановлена",
+                "Все данные проверены и сохранены отдельно:\n"+str(new_target)+
+                "\n\nТекущая база НЕ заменена. Чтобы переключить установку, "
+                "потребуется отдельная проверенная процедура переноса.")
+        except Exception:
+            messagebox.showerror("Импорт не выполнен",
+                                 "Не удалось подтвердить целостность полного архива. "
+                                 "Текущая база и документы не изменялись.")
+
+    tk.Button(root,text="Восстановить ZIP в отдельную папку",
+              command=restore_separate,width=38).pack(pady=4)
     tk.Button(root,text="Завершить работу",font=("Arial",12),
               command=stop,width=32).pack(pady=4)
     root.protocol("WM_DELETE_WINDOW",stop)
