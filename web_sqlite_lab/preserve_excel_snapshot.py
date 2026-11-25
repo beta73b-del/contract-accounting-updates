@@ -11,6 +11,7 @@ from urllib.request import urlopen
 from datetime import datetime, timezone
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -73,9 +74,18 @@ def snapshot(source, destination, api="http://localhost:8765/api/bootstrap", max
         for obj in folders:
             identity=obj.get("id")
             raw=obj.get("path")
-            if not isinstance(identity,str) or not identity.isalnum() or not isinstance(raw,str):
+            if not isinstance(identity,str) or not re.fullmatch(r"[A-Za-z0-9_-]{5,128}",identity) or not isinstance(raw,str):
                 raise ValueError("Invalid linked document folder reference")
-            root=Path(raw).resolve()
+            docs_root=(source.parent/"Документы").resolve()
+            if raw.startswith("docs:"):
+                relative=raw[5:].replace("\\","/")
+                if not relative or relative.startswith("/") or ".." in Path(relative).parts:
+                    raise ValueError("Invalid portable document folder")
+                root=(docs_root/relative).resolve()
+            else:
+                root=Path(raw).resolve()
+            if not root.is_relative_to(docs_root):
+                raise ValueError("Linked document folder outside source documents root")
             if not root.is_dir():
                 warnings.append({"contractId":identity,"error":"MISSING_DOCUMENT_FOLDER"})
                 continue
