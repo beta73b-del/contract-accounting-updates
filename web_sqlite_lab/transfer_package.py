@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import unicodedata
 import uuid
 import zipfile
 
@@ -44,6 +45,14 @@ def _safe_name(name):
         raise TransferError("Unsafe archive entry")
     if re.match(r"^[A-Za-z]:",name):
         raise TransferError("Windows drive path not permitted")
+    # Archive must be usable on both NTFS and APFS: reject aliases/ADS,
+    # trailing Windows dot/space and reserved device basenames.
+    for segment in name.split("/"):
+        if segment.endswith((" ", ".")) or any(x in segment for x in '<>:"|?*'):
+            raise TransferError("Windows-incompatible archive filename")
+        stem=segment.split(".",1)[0]
+        if re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])",stem):
+            raise TransferError("Reserved Windows device filename")
     return name
 
 def _files_tree(folder):
@@ -59,7 +68,7 @@ def _files_tree(folder):
     return entries
 
 def _db_checks(db):
-    with closing(sqlite3.connect(f"file:{Path(db).resolve().as_posix()}?mode=ro",uri=True)) as con:
+    with closing(sqlite3.connect(Path(db).resolve().as_uri()+"?mode=ro",uri=True)) as con:
         if con.execute("PRAGMA integrity_check").fetchone()[0]!="ok":
             raise TransferError("SQLite integrity_check failed")
         if con.execute("PRAGMA foreign_key_check").fetchall():
@@ -92,7 +101,7 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
     try:
         with TemporaryDirectory(prefix="contracts-export-") as temp:
             snap=Path(temp)/DATA_NAME
-            with closing(sqlite3.connect(f"file:{db.as_posix()}?mode=ro",uri=True)) as source:
+            with closing(sqlite3.connect(db.as_uri()+"?mode=ro",uri=True)) as source:
                 with closing(sqlite3.connect(snap)) as dest:
                     source.backup(dest)
             metadata=_db_checks(snap)
@@ -102,8 +111,9 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
             seen=set();manifest_files=[]
             for p,name in files:
                 _safe_name(name)
-                if name.casefold() in seen:raise TransferError("Case-insensitive path collision")
-                seen.add(name.casefold())
+                normalized=unicodedata.normalize("NFC",name).casefold()
+                if normalized in seen:raise TransferError("Cross-platform filename collision")
+                seen.add(normalized)
                 manifest_files.append({"path":name,"size":p.stat().st_size,"sha256":_sha_file(p)})
             manifest={"format":FORMAT,"createdUtc":datetime.now(timezone.utc).isoformat(),
                       "archiveId":uuid.uuid4().hex,"database":metadata,
@@ -118,10 +128,12 @@ def export_lab(db_path,attachments_dir,archive_path,required_documents=()):
             with os.fdopen(fd,"wb") as out,open(stage,"rb") as source:
                 shutil.copyfileobj(source,out,1024*1024)
                 out.flush();os.fsync(out.fileno())
+            # Do not leave a published ZIP that fails its own manifest check.
+            # If a document changed during compression, this check rejects it.
+            return inspect_transfer(archive)
         except BaseException:
             archive.unlink(missing_ok=True)
             raise
-        return inspect_transfer(archive)
     finally:
         stage.unlink(missing_ok=True)
 
@@ -133,8 +145,8 @@ def inspect_transfer(archive_path):
         names=set();total=0
         for item in members:
             name=_safe_name(item.filename)
-            folded=name.casefold()
-            if folded in names:raise TransferError("Duplicate archive entry or case collision")
+            folded=unicodedata.normalize("NFC",name).casefold()
+            if folded in names:raise TransferError("Duplicate or cross-platform name collision")
             names.add(folded)
             if item.is_dir():raise TransferError("Directories are not permitted in archive")
             mode=(item.external_attr>>16)&0xffff
@@ -193,29 +205,38 @@ def restore_to_empty(archive_path,target_dir):
     rollback are separate, not implemented here.
     """
     preflight=inspect_transfer(archive_path)
-    target=Path(target_dir).resolve()
-    if target.exists():raise FileExistsError("Existing user data cannot be replaced")
-    if not target.parent.is_dir():raise TransferError("Destination parent must exist")
-    stage=target.with_name(target.name+".restoring-"+uuid.uuid4().hex)
-    stage.mkdir()
+    requested=Path(target_dir)
+    if requested.is_symlink():
+        raise TransferError("Destination symlink is prohibited")
+    target=requested.resolve()
+    if not target.parent.is_dir():
+        raise TransferError("Destination parent must exist")
+    # Create destination exclusively *before* extraction. On POSIX,
+    # Path.rename(stage, target) could otherwise replace a directory
+    # another process created after a final exists() check.
+    target.mkdir(mode=0o700)
     try:
         with zipfile.ZipFile(archive_path,"r") as zf:
             manifest=json.loads(zf.read(MANIFEST_NAME))
             for entry in manifest["files"]:
                 rel=_safe_name(entry["path"])
-                out=stage/rel
-                if not out.resolve().is_relative_to(stage.resolve()):
-                    raise TransferError("Destination path escapes staging")
+                out=target/rel
+                if not out.resolve().is_relative_to(target):
+                    raise TransferError("Destination path escapes target")
                 out.parent.mkdir(parents=True,exist_ok=True)
                 with zf.open(rel) as src,open(out,"xb") as dest:
                     shutil.copyfileobj(src,dest,1024*1024)
                 if _sha_file(out)!=entry["sha256"]:
                     raise TransferError("Restore SHA mismatch")
-        if _db_checks(stage/DATA_NAME)!=preflight["database"]:
+        if _db_checks(target/DATA_NAME)!=preflight["database"]:
             raise TransferError("Restore database mismatch")
-        if target.exists():raise FileExistsError("Target appeared during restore")
-        stage.rename(target)
+        # A marker signals completed, fully verified transfer-only staging.
+        # No active application is switched to this directory by this code.
+        (target/".transfer-verified.json").write_text(
+            json.dumps({"archiveId":preflight["archiveId"],"verified":True},
+                       sort_keys=True),encoding="utf-8")
         return {**preflight,"restoredToEmpty":True}
     except BaseException:
-        shutil.rmtree(stage,ignore_errors=True)
+        # Only a destination created exclusively by this process is removed.
+        shutil.rmtree(target,ignore_errors=True)
         raise
