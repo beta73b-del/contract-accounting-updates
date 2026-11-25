@@ -7,7 +7,7 @@ See official SQLite WAL documentation. This does not patch sqlite3 itself.
 from __future__ import annotations
 import argparse
 import json
-import sqlite3
+from sqlite_runtime import sqlite3, SQLITE_REQUIRED_TEXT, require_engine
 
 def patched_wal_reset(version=None):
     if version is None:version=sqlite3.sqlite_version_info
@@ -19,11 +19,14 @@ def patched_wal_reset(version=None):
 
 def report():
     version=sqlite3.sqlite_version
+    exact=version==SQLITE_REQUIRED_TEXT and require_engine()==SQLITE_REQUIRED_TEXT
     return {"sqliteVersion":version,
+            "expectedVersion":SQLITE_REQUIRED_TEXT,
+            "driver":"pysqlite3.dbapi2",
             "walResetFixed":patched_wal_reset(),
-            "releaseReadyForWAL":patched_wal_reset(),
-            "note":("Patched runtime" if patched_wal_reset() else
-                    "Unpatched WAL-reset risk; production release blocked")}
+            "releaseReadyForWAL":bool(exact and patched_wal_reset()),
+            "note":("Bundled verified SQLite 3.54.1" if exact and patched_wal_reset() else
+                    "Runtime is not approved for release")}
 
 def main(argv=None):
     parser=argparse.ArgumentParser()
