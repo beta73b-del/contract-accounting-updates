@@ -136,7 +136,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(code,200)
         dest=Path(backup["file"])
         self.assertTrue(dest.exists())
-        self.assertTrue(str(dest).startswith(str(self.db.parent)))
+        self.assertTrue(dest.resolve().is_relative_to(self.db.parent.resolve()))
         self.assertEqual(len(backup["sha256"]),64)
 
 
