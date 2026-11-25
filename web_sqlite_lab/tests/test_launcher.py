@@ -17,10 +17,15 @@ class LauncherTests(unittest.TestCase):
                        CONTRACTS_SQLITE_LAB_DB=str(db),
                        PYTHONDONTWRITEBYTECODE="1")
             flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
-            proc=subprocess.run([sys.executable,str(ROOT/"launcher.py"),"--smoke"],
-                                env=env,cwd=ROOT,stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,timeout=20,creationflags=flags)
-            self.assertEqual(proc.returncode,0,"Headless launcher check failed")
+            try:
+                proc=subprocess.run([sys.executable,str(ROOT/"launcher.py"),"--smoke"],
+                                    env=env,cwd=ROOT,stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,timeout=20,creationflags=flags)
+            except subprocess.TimeoutExpired as exc:
+                partial=(exc.stderr or b"")[-1600:].decode("utf-8","replace")
+                self.fail("Headless launcher timed out. Diagnostic tail: "+partial)
+            self.assertEqual(proc.returncode,0,
+                             "Headless launcher failed: "+proc.stderr[-1600:].decode("utf-8","replace"))
             self.assertTrue(db.is_file())
             self.assertFalse((ROOT/"data"/"contracts-real.xlsx").exists())
 if __name__=="__main__":unittest.main()
