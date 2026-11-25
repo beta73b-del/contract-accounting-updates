@@ -28,4 +28,20 @@ class LauncherTests(unittest.TestCase):
                              "Headless launcher failed: "+proc.stderr[-1600:].decode("utf-8","replace"))
             self.assertTrue(db.is_file())
             self.assertFalse((ROOT/"data"/"contracts-real.xlsx").exists())
+    def test_frozen_gui_without_stdout_or_stderr_still_serves_http(self):
+        with TemporaryDirectory(prefix="contracts-noconsole-") as temp:
+            db=Path(temp)/"synthetic.sqlite"
+            env=os.environ.copy()
+            env.update(CONTRACTS_SQLITE_LAB_TEST="1",
+                       CONTRACTS_SQLITE_LAB_DB=str(db),
+                       PYTHONDONTWRITEBYTECODE="1")
+            flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+            try:
+                proc=subprocess.run([sys.executable,str(ROOT/"launcher.py"),"--smoke-no-console"],
+                                    env=env,cwd=ROOT,stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,timeout=20,creationflags=flags)
+            except subprocess.TimeoutExpired:
+                self.fail("Headless GUI simulation hung without stderr")
+            self.assertEqual(proc.returncode,0,proc.stderr[-800:].decode("utf-8","replace"))
+            self.assertTrue(db.is_file())
 if __name__=="__main__":unittest.main()
