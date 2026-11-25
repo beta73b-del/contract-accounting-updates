@@ -1,0 +1,85 @@
+name: SQLite LAB - verify Windows Mac complete archive round-trip
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/web-sqlite-parallel-prototype]
+    paths:
+      - 'web_sqlite_lab/**'
+      - '.github/workflows/web-sqlite-cross-os-transfer.yml'
+permissions:
+  contents: read
+concurrency:
+  group: sqlite-lab-transfer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Export complete synthetic Windows data bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force staging | Out-Null
+          python web_sqlite_lab/tests/cross_os_fixture.py export staging/full-transfer.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-windows-complete-archive
+          path: staging/full-transfer.zip
+          retention-days: 3
+          if-no-files-found: error
+  macos-receives-windows:
+    needs: windows-export
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-windows-complete-archive
+          path: downloaded
+      - name: Verify SHA SQLite docs and 30-day Trash on fresh macOS install
+        run: python web_sqlite_lab/tests/cross_os_fixture.py verify downloaded/full-transfer.zip
+  macos-export:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Export complete synthetic macOS data bundle
+        run: |
+          mkdir -p staging
+          python web_sqlite_lab/tests/cross_os_fixture.py export staging/full-transfer.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-macos-complete-archive
+          path: staging/full-transfer.zip
+          retention-days: 3
+          if-no-files-found: error
+  windows-receives-macos:
+    needs: macos-export
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-macos-complete-archive
+          path: downloaded
+      - name: Verify SHA SQLite docs and 30-day Trash on fresh Windows install
+        shell: pwsh
+        run: |
+          python web_sqlite_lab/tests/cross_os_fixture.py verify downloaded/full-transfer.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
