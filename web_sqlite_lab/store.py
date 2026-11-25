@@ -114,7 +114,14 @@ class Store:
                 label={1:"v2",2:"v3",3:"v4"}[version]
                 self.backup(self.path.parent / "backups" /
                             ("before-" + label + "-" + uuid.uuid4().hex + ".sqlite"))
-            self.db.execute("PRAGMA journal_mode=WAL")
+            # SQLite before 3.51.3 (except patched backports) has the
+            # rare WAL-reset corruption bug. Avoid WAL entirely on such
+            # runtimes; this single-user local app can use rollback journaling.
+            # A future production build MUST still bundle patched SQLite.
+            wanted = "WAL" if patched_wal_reset() else "DELETE"
+            actual = str(self.db.execute("PRAGMA journal_mode="+wanted).fetchone()[0]).upper()
+            if actual != wanted:
+                raise DataError("SQLite could not enter the required safe journal mode")
             self.db.execute("PRAGMA synchronous=FULL")
         except BaseException:
             self.db.close()
