@@ -12,6 +12,8 @@ import sys
 import uuid
 
 from store import Store, DataError, Conflict, moscow_today
+from finance_ledger import FinanceLedger, FinanceError
+from finance_engine import forecast
 
 BASE = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
@@ -20,6 +22,7 @@ DB = Path(os.environ.get("CONTRACTS_SQLITE_LAB_DB", str(BASE / "data" / "lab.db"
 if os.environ.get("CONTRACTS_SQLITE_LAB_DB") and not os.environ.get("CONTRACTS_SQLITE_LAB_TEST"):
     raise SystemExit("Override database path is allowed only when CONTRACTS_SQLITE_LAB_TEST=1")
 store = Store(DB)
+finance_ledger = FinanceLedger(store)
 mutex = RLock()
 nonce = token_urlsafe(32)
 
@@ -53,6 +56,7 @@ class Handler(BaseHTTPRequestHandler):
             with mutex:
                 self.reply(200,{"lab":True,"storage":"SQLite","nonce":nonce,"today":moscow_today(),
                                 "records":store.list_contracts(),"stock":{"items":store.stock_summary()},
+                                "finance":finance_ledger.payload(),
                                 "integrity":store.verify(),"migration":"NOT RUN"});return
         self.reply(404,{"error":"Маршрут отсутствует"})
 
@@ -76,6 +80,8 @@ class Handler(BaseHTTPRequestHandler):
                     result=store.receipt(raw.get("requestId"),raw.get("product"),raw.get("qty"),raw.get("unitCost"))
                 elif path=="/api/record":
                     result=store.save_contract(raw.get("requestId"),raw.get("record"))
+                elif path=="/api/finance":
+                    result=finance_ledger.mutate(raw)
                 elif path=="/api/backup":
                     target=DB.parent/"backups"/("lab-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:8]+".db")
                     result=store.backup(target)
@@ -84,7 +90,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.reply(404,{"error":"Маршрут отсутствует"});return
             self.reply(200,result)
-        except (DataError, ValueError, KeyError, TypeError) as exc:
+        except (DataError, FinanceError, ValueError, KeyError, TypeError) as exc:
             self.reply(409 if isinstance(exc,Conflict) else 400,{"error":str(exc)})
         except (UnicodeError,json.JSONDecodeError):
             self.reply(400,{"error":"Некорректный JSON"})
