@@ -40,6 +40,8 @@ def _sha_file(path):
 def _safe_name(name):
     if not isinstance(name,str) or not name or len(name)>800 or "\\" in name or "\x00" in name:
         raise TransferError("Invalid archive entry")
+    if any(ord(ch)<32 or ord(ch)==127 for ch in name):
+        raise TransferError("Control characters are not valid in portable filenames")
     p=PurePosixPath(name)
     if p.is_absolute() or name.startswith("/") or any(x in ("",".","..") for x in name.split("/")):
         raise TransferError("Unsafe archive entry")
