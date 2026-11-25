@@ -59,3 +59,13 @@ python server.py
 
 Команда Windows: `python -m unittest discover -s tests -p 'test_*.py' -v`.
 Один ранний прогон выявил WinError 32 в резервировании из-за незакрытого SQLite destination (исправлено). Второй выявил незакрытый тестовый SQLite handle (исправлено). После исправлений достигнуто **20/20 Python unittest PASS на Windows Python 3.14.7** (включая HTTP API, CSRF/Origin, подтверждение оплаты и SQLite online backup) и **10/10 Chrome headless browser smoke PASS** (реальные действия с формой, приходом, заключением и автодатой в отдельной временной БД). Профиль тестового Chrome после финального прогона удалён. В ходе текущего этапа штатный lab-сервер также был запущен на localhost:8766: HTTP 200, integrity_check=ok, 0 реальных контрактов. Действующий Excel-сервер localhost:8765 проверен отдельно: HTTP 200, 10 контрактов; рабочие данные не изменялись. Ручная работа в обычном браузере пользователя и macOS ещё не подтверждена.
+
+## Реализация этапов ТЗ после стартового прототипа
+
+Подробный проверенный статус: [IMPLEMENTATION_TEST_REPORT_2026-11-25.md](IMPLEMENTATION_TEST_REPORT_2026-11-25.md).
+
+- R1: `source_audit.py` запускается **только на закрытом snapshot**, сверяет SHA256/схему, Excel ID и статусы против raw API SQLite; отдельный приватный отчет, не раскрывающий имена заказчиков.
+- R2: `staging_import.py` создаёт новую raw staging SQLite из сохранённой Excel-книги и JSON, включая формулы, кэш, листы и типы ячеек; эта БД **не подходит для запуска приложения как рабочей**. Без `openpyxl>=3.1` невозможно читать исходные XLSX; библиотека нужна только для инструментов R1/R2 и CI, не для основного SQLite сервера.
+- R5: `transfer_package.py`: `export_lab(db, attachments, zip, required_documents)`, `inspect_transfer(zip)`, `restore_to_empty(zip, destination)`. Только лабораторная модель SQLite schema v1; **нет** восстановления поверх существующей БД и автоматического cutover.
+- R6: `.github/workflows/web-sqlite-lab-ci.yml` предназначен для матрицы Windows/macOS/Linux Python 3.11 (синтетические тесты); фактический запуск workflow пока **не подтвержден**. Это не .app/EXE сборка.
+- На реальном Windows-ПК: Python **40 тестов, 39 PASS/1 SKIP** и headless Chrome **10/10 PASS**, compileall PASS. Снимок актуальной Excel: 6 листов, 601 занятая ячейка, 176 формул, 10 raw API-карточек. Одна связанная папка документов отсутствует; поэтому статус миграции PARTIAL. Полной проверки всех кнопок/формул нет.
