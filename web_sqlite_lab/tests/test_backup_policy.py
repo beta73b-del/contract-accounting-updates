@@ -187,7 +187,7 @@ class BackupPolicyTests(unittest.TestCase):
         self.assertEqual(self.policy.status()["automaticCopies"],0)
         self.assertIsNone(self.policy.status()["lastVerifiedUtc"])
     def test_19_policy_never_deletes_other_named_zips(self):
-        old=self.policy.backups/"complete-"+key()+".zip"
+        old=self.policy.backups/("complete-"+key()+".zip")
         old.write_bytes(b"manual archive")
         self.first()
         self.policy.run_if_due(START+timedelta(days=16))
