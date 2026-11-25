@@ -36,15 +36,15 @@ def _now(value=None):
         raise DataError("Дата должна содержать часовой пояс")
     return value.astimezone(timezone.utc)
 
-def _name(name):
+def _name(name,allow_relative=False):
     try:
         _safe_name(name)
     except TransferError as exc:
         raise DataError("Недопустимое имя документа") from exc
     # Permit a normalized virtual relative path for legacy attachments.
     # Physical data is always stored as an opaque ID.bin, never under name.
-    if len(name)>800 or name in ("manifest.json","database.sqlite"):
-        raise DataError("Имя документа должно быть допустимым относительным путём")
+    if len(name)>800 or ("/" in name and not allow_relative) or name in ("manifest.json","database.sqlite"):
+        raise DataError("Имя документа должно быть допустимым именем файла")
     return name
 
 def _id(value, what="идентификатор"):
@@ -115,7 +115,7 @@ class FileVault:
             raise DataError("Документ находится в Корзине или срок хранения истёк")
         return self._public(row),self._check_blob(row)
 
-    def add_stream(self, request_id, file_id, name, stream, size, contract_id=None):
+    def add_stream(self, request_id, file_id, name, stream, size, contract_id=None,allow_relative=False):
         """Store an uploaded stream without trusting client file paths or MIME.
 
         Uploads must use unique IDs. Repeated identical operations return the
@@ -123,7 +123,7 @@ class FileVault:
         """
         _id(request_id,"ID операции")
         _id(file_id,"ID документа")
-        name=_name(name)
+        name=_name(name,allow_relative=allow_relative)
         if isinstance(size,bool) or type(size)!=int or not (0<=size<=MAX_FILE_BYTES):
             raise DataError("Файл превышает 256 МБ или неверно указан размер")
         if contract_id in (None,""):
@@ -326,7 +326,7 @@ class FileVault:
         trash_op=sha256(("trash:"+request_id).encode("utf-8")).hexdigest()
         with src.open("rb") as stream:
             item=self.add_stream(copy_op,file_id,relative_path,
-                                 stream,src.stat().st_size,contract_id)
+                                 stream,src.stat().st_size,contract_id,allow_relative=True)
         if item["state"]=="trashed":
             trashed=item
         else:
