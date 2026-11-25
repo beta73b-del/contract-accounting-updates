@@ -11,7 +11,7 @@ import unittest
 from openpyxl import Workbook
 from preserve_excel_snapshot import snapshot
 from source_audit import audit,AuditError
-from staging_import import import_snapshot
+from staging_import import import_snapshot,ImportErrorSafe
 
 class StagingTests(unittest.TestCase):
     def setUp(self):
@@ -90,7 +90,7 @@ class StagingTests(unittest.TestCase):
         ws=self.wb.active;ws.title="Контракты";ws["A2"]="00000001";ws["M2"]="Вручен"
         self.wb.save(self.xlsx);self.wb.close()
         self.make_snapshot()
-        with self.assertRaises(ImportError):
+        with self.assertRaises(ImportErrorSafe):
             import_snapshot(self.snap,self.db)
         self.assertFalse(self.db.exists())
 if __name__=="__main__":unittest.main()
