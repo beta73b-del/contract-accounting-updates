@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from pathlib import Path
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -89,13 +90,34 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=10, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.execute("PRAGMA busy_timeout=10000")
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("PRAGMA synchronous=FULL")
-        version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
-            raise DataError("Неизвестная версия SQLite: отказ от автоматического изменения")
+        try:
+            self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA busy_timeout=10000")
+            version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1, 2):
+                raise DataError("Неизвестная версия SQLite: отказ от автоматического изменения")
+            present = {row[0] for row in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+            base = {"products", "contracts", "contract_lines", "receipts", "shipments", "operations"}
+            if version == 0 and present:
+                raise DataError("Неопознанная непустая база без версии: автоматический импорт запрещён")
+            if version in (1, 2):
+                if not base.issubset(present) or (version == 2 and "finance_events" not in present):
+                    raise DataError("В базе отсутствуют обязательные таблицы; исправление без проверки запрещено")
+                if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise DataError("Повреждение базы до миграции")
+                if self.db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise DataError("Нарушение связей до миграции")
+            if version == 1:
+                # Snapshot must precede *all* schema and journal-mode writes.
+                # sqlite3 Online Backup includes data still held in WAL files.
+                self.backup(self.path.parent / "backups" /
+                            ("before-v2-" + uuid.uuid4().hex + ".sqlite"))
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("PRAGMA synchronous=FULL")
+        except BaseException:
+            self.db.close()
+            raise
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS products(
                 name TEXT PRIMARY KEY, physical_qty INTEGER NOT NULL DEFAULT 0 CHECK(physical_qty>=0),
@@ -135,9 +157,6 @@ class Store:
         if version == 0:
             self.db.execute("PRAGMA user_version=1")
         if version in (0, 1):
-            if version == 1:
-                # Preserve the exact pre-migration database; never overwrite a previous backup.
-                self.backup(self.path.parent / "backups" / ("before-v2-" + uuid.uuid4().hex + ".sqlite"))
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 self.db.execute("""
@@ -360,7 +379,12 @@ class Store:
                 if destination.execute("PRAGMA foreign_key_check").fetchall():
                     raise DataError("Нарушены внешние ключи")
             digest=sha256(tmp.read_bytes()).hexdigest()
-            tmp.rename(target)
+            # os.link publishes only if target is absent, even when another
+            # process creates target between the check and this step.
+            # Hard links on the same volume are supported by NTFS/APFS/ext4;
+            # unsupported file systems fail closed without overwriting data.
+            os.link(tmp, target)
+            tmp.unlink()
             return {"file":str(target),"sha256":digest,"bytes":target.stat().st_size}
         finally:
             if tmp.exists(): tmp.unlink()
