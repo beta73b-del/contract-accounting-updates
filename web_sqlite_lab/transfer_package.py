@@ -65,9 +65,9 @@ def _db_checks(db):
         if con.execute("PRAGMA foreign_key_check").fetchall():
             raise TransferError("SQLite foreign_key_check failed")
         version=int(con.execute("PRAGMA user_version").fetchone()[0])
-        if version!=1:raise TransferError("Unsupported SQLite schema")
+        if version not in (1,2):raise TransferError("Unsupported SQLite schema")
         counts={}
-        for table in ("contracts","contract_lines","products","receipts","shipments","operations"):
+        for table in ("contracts","contract_lines","products","receipts","shipments","operations")+ (("finance_events",) if version >= 2 else ()):
             row=con.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
             if not row or not row[0]:raise TransferError("Required schema table is absent")
             counts[table]=con.execute('SELECT COUNT(*) FROM "'+table+'"').fetchone()[0]
