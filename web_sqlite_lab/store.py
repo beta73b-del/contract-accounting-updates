@@ -94,7 +94,7 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             raise DataError("Неизвестная версия SQLite: отказ от автоматического изменения")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS products(
@@ -132,7 +132,33 @@ class Store:
                 outcome_json TEXT NOT NULL
             );
         """)
-        self.db.execute("PRAGMA user_version=1")
+        if version == 0:
+            self.db.execute("PRAGMA user_version=1")
+        if version in (0, 1):
+            if version == 1:
+                # Preserve the exact pre-migration database; never overwrite a previous backup.
+                self.backup(self.path.parent / "backups" / ("before-v2-" + uuid.uuid4().hex + ".sqlite"))
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("""
+                    CREATE TABLE IF NOT EXISTS finance_events(
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        op_id TEXT NOT NULL UNIQUE,
+                        payload_json TEXT NOT NULL
+                    )""")
+                self.db.execute("PRAGMA user_version=2")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        if self.db.execute("PRAGMA user_version").fetchone()[0] != 2:
+            raise DataError("SQLite finance migration failed")
+        if self.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='finance_events'").fetchone() is None:
+            raise DataError("Missing finance event table in schema v2")
+        if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise DataError("SQLite integrity failure after migration")
+        if self.db.execute("PRAGMA foreign_key_check").fetchall():
+            raise DataError("SQLite foreign key failure after migration")
 
     def close(self):
         self.db.close()
