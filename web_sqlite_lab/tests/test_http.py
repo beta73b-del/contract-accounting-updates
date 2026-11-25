@@ -278,7 +278,7 @@ class HTTPTests(unittest.TestCase):
         status,backup,_=self.req("/api/backup",{})
         self.assertEqual(status,200)
         with closing(sqlite3.connect(backup["file"])) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],4)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM contract_lifecycle").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM contracts WHERE id=?",(cid,)).fetchone()[0],1)
 
@@ -376,6 +376,16 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(set((self.db.parent/"backups").glob("complete-*.zip")),prior)
         finally:
             blob.write_bytes(body)
+
+    def test_09_test_db_override_isolates_every_file_path(self):
+        # The HTTP server may be started with a temporary DB override, but
+        # documents, Trash and exports MUST follow that DB, never source/data.
+        file_ids=[row[0] for row in sqlite3.connect(self.db).execute(
+            "SELECT id FROM managed_files").fetchall()]
+        for fid in file_ids:
+            self.assertTrue((self.db.parent/"managed_files"/(fid+".bin")).is_file())
+        self.assertTrue((self.db.parent/"attachments").is_dir())
+        self.assertTrue((self.db.parent/"backups").is_dir())
 
 
 if __name__=="__main__":
