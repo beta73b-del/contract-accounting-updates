@@ -36,6 +36,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("%s %s" % (self.log_date_time_string(), fmt % args), file=sys.stderr)
 
+    def trusted_host(self):
+        # Reject DNS rebinding: another origin must not read /api/bootstrap
+        # (which includes the session nonce and potentially contract data).
+        host=self.headers.get("Host","")
+        return host in (f"localhost:{PORT}",f"127.0.0.1:{PORT}")
+
     def reply(self, status, obj):
         body=json.dumps(obj,ensure_ascii=False,separators=(",",":")).encode("utf-8")
         self.send_response(status)
@@ -47,6 +53,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.trusted_host():
+            self.reply(403,{"error":"Недопустимое имя локального сервера"});return
         path=urlsplit(self.path).path
         if path == "/":
             html=(BASE / "static" / "index.html").read_bytes()
@@ -66,6 +74,8 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(404,{"error":"Маршрут отсутствует"})
 
     def do_POST(self):
+        if not self.trusted_host():
+            self.reply(403,{"error":"Недопустимое имя локального сервера"});return
         origin=self.headers.get("Origin")
         if origin and origin not in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
             self.reply(403,{"error":"Недопустимый Origin"});return
