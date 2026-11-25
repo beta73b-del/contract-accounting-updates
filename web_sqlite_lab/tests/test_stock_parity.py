@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
 import unittest
-from stock_projection import project
+from stock_projection import project,StockError
 from stock_parity_audit import audit
 
 class StockAuditTests(unittest.TestCase):
@@ -47,6 +47,24 @@ class StockAuditTests(unittest.TestCase):
         self.data["stock"]["phases"]["synthetic-contract"]="shipped"
         self.write()
         self.assertEqual(audit(self.root)["phaseMismatches"],1)
+    def test_duplicate_reference_product_rejected(self):
+        self.data["stock"]["items"].append(dict(self.data["stock"]["items"][0]))
+        self.write()
+        with self.assertRaises(StockError):audit(self.root)
+    def test_orphan_receipt_correction_rejected(self):
+        self.data["stock"]["events"].append({
+            "id":"correction-not-linked","kind":"editReceipt", "target":"missing-receipt",
+            "correctedQuantity":4,"correctedCents":4000,"lines":[],"needs":[],"contractId":"",
+            "date":"2026-11-25","phase":""
+        })
+        self.write()
+        with self.assertRaises(StockError):audit(self.root)
+    def test_type_mismatch_is_not_hidden_by_python_boolean_equality(self):
+        self.data["stock"]["items"][0]["quantity"]=True
+        self.write()
+        r=audit(self.root)
+        self.assertEqual(r["result"],"FAIL")
+        self.assertEqual(r["fieldMismatchCounts"],{"quantity":1})
     def test_report_never_overwritten(self):
         audit(self.root,self.root/"report.json")
         with self.assertRaises(FileExistsError):
