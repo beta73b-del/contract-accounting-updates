@@ -76,10 +76,14 @@ def frozen_smoke():
     try:
         worker.start()
         port=listener.server_address[1]
+        if sys.stderr is not None:
+            print("SQLITE_LAB_SMOKE_HTTP_GET",file=sys.stderr,flush=True)
         with opener.open(f"http://127.0.0.1:{port}/",timeout=4) as response:
             page=response.read()
             if response.status!=200 or b"SQLite" not in page:
                 raise RuntimeError("Bundled app resource healthcheck failed")
+        if sys.stderr is not None:
+            print("SQLITE_LAB_SMOKE_API_GET",file=sys.stderr,flush=True)
         with opener.open(f"http://127.0.0.1:{port}/api/bootstrap",timeout=4) as response:
             if response.status!=200:
                 raise RuntimeError("SQLite API healthcheck failed")
@@ -87,9 +91,16 @@ def frozen_smoke():
             print("SQLITE_LAB_SMOKE_PASS",file=sys.stderr,flush=True)
         return 0
     finally:
-        listener.shutdown()
+        # BaseServer.shutdown() can block indefinitely if serve_forever() has
+        # failed or has not entered its polling loop (observed on macOS CI).
+        # Never allow this cleanup to turn an HTTP failure into an opaque
+        # subprocess timeout. Stop only if the thread remains alive.
+        if worker.is_alive():
+            stopper=Thread(target=listener.shutdown,daemon=True)
+            stopper.start()
+            stopper.join(timeout=3)
         listener.server_close()
-        worker.join(timeout=5)
+        worker.join(timeout=3)
         store.close()
 
 if __name__=="__main__":
