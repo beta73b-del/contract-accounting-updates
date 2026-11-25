@@ -225,6 +225,38 @@ class FileVaultTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM managed_files").fetchone()[0],1)
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM file_events").fetchone()[0],4)
         self.assertFalse(self.vault._blob(f["id"]).exists())
+    def test_18b_migrate_existing_v3_with_trashed_contract_before_v4_backup(self):
+        self.store.add_product("Тест Рутокен")
+        cid=rid()
+        original=self.store.save_contract(rid(),{
+           "id":cid,"revision":0,"status":"формирование",
+           "customer":"QA","platform":"Тест ЭТП","contractNumber":"old-v3",
+           "contractDate":"","signBy":"","fulfillBy":"",
+           "handoverDate":"","paymentDue":"",
+           "items":[{"product":"Тест Рутокен","quantity":"1","unitPrice":"100.00"}]
+        })
+        self.store.trash_contract(rid(),cid,original["revision"])
+        self.store.close()
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("DROP TABLE managed_files")
+            db.execute("DROP TABLE file_events")
+            db.execute("PRAGMA user_version=3")
+            db.commit()
+        self.store=Store(self.db)
+        self.vault=FileVault(self.store)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],4)
+        self.assertEqual(len(self.store.list_trashed()),1)
+        self.assertEqual(self.store.list_trashed()[0]["contract_number"],"old-v3")
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM contract_lifecycle").fetchone()[0],1)
+        backups=list((self.root/"backups").glob("before-v4-*.sqlite"))
+        self.assertEqual(len(backups),1)
+        with closing(sqlite3.connect(backups[0])) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertIsNone(db.execute(
+                "SELECT name FROM sqlite_master WHERE name='managed_files'").fetchone())
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM contract_trash").fetchone()[0],1)
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0],"ok")
+
     def test_19_invalid_timezone_rejected(self):
         f=self.add()
         with self.assertRaises(DataError):self.vault.trash_file(rid(),f["id"],1,now="2026-11-25T12:00:00")
