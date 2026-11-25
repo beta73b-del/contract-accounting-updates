@@ -26,7 +26,7 @@ def _json(value):
 
 
 def _source_connection(path):
-    return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    return sqlite3.connect(path.as_uri()+"?mode=ro", uri=True)
 
 
 def _validate_stock(stock):
