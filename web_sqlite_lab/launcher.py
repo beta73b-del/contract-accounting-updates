@@ -66,20 +66,23 @@ def frozen_smoke():
     """Headless packaged-artifact HTTP smoke against a synthetic temporary DB."""
     from http.server import ThreadingHTTPServer
     from threading import Thread
-    from urllib.request import urlopen
+    from urllib.request import build_opener, ProxyHandler
     from server import Handler,HOST,store
+    opener=build_opener(ProxyHandler({}))
+    print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
     listener=ThreadingHTTPServer((HOST,0),Handler)
     worker=Thread(target=listener.serve_forever,daemon=True)
     try:
         worker.start()
         port=listener.server_address[1]
-        with urlopen(f"http://localhost:{port}/",timeout=10) as response:
+        with opener.open(f"http://127.0.0.1:{port}/",timeout=4) as response:
             page=response.read()
             if response.status!=200 or b"SQLite" not in page:
                 raise RuntimeError("Bundled app resource healthcheck failed")
-        with urlopen(f"http://localhost:{port}/api/bootstrap",timeout=10) as response:
+        with opener.open(f"http://127.0.0.1:{port}/api/bootstrap",timeout=4) as response:
             if response.status!=200:
                 raise RuntimeError("SQLite API healthcheck failed")
+        print("SQLITE_LAB_SMOKE_PASS",file=sys.stderr,flush=True)
         return 0
     finally:
         listener.shutdown()
