@@ -40,7 +40,10 @@ class Handler(BaseHTTPRequestHandler):
         # Reject DNS rebinding: another origin must not read /api/bootstrap
         # (which includes the session nonce and potentially contract data).
         host=self.headers.get("Host","")
-        return host in (f"localhost:{PORT}",f"127.0.0.1:{PORT}")
+        # Headless packaged smoke intentionally binds an ephemeral port.
+        # Use the listener's *actual* port, never the default PORT constant.
+        port=self.server.server_port
+        return host in (f"localhost:{port}",f"127.0.0.1:{port}")
 
     def reply(self, status, obj):
         body=json.dumps(obj,ensure_ascii=False,separators=(",",":")).encode("utf-8")
@@ -77,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted_host():
             self.reply(403,{"error":"Недопустимое имя локального сервера"});return
         origin=self.headers.get("Origin")
-        if origin and origin not in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+        if origin and origin not in (f"http://localhost:{self.server.server_port}", f"http://127.0.0.1:{self.server.server_port}"):
             self.reply(403,{"error":"Недопустимый Origin"});return
         if self.headers.get("X-Contracts-Key")!=nonce:
             self.reply(403,{"error":"Неверный защитный ключ"});return
