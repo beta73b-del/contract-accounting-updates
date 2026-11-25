@@ -77,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=="/api/record":
                     result=store.save_contract(raw.get("requestId"),raw.get("record"))
                 elif path=="/api/backup":
-                    target=BASE/"data"/"backups"/("lab-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:8]+".db")
+                    target=DB.parent/"backups"/("lab-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:8]+".db")
                     result=store.backup(target)
                 elif path=="/api/verify":
                     result=store.verify()
