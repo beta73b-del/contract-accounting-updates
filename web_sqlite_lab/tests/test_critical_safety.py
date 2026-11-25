@@ -32,7 +32,7 @@ class CriticalSafety(unittest.TestCase):
         with self.assertRaises(DataError):Store(self.db)
         with closing(sqlite3.connect(self.db)) as con:
             self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],77)
-    def test_corrupted_v2_schema_must_not_autorepair(self):
+    def test_corrupted_v3_schema_must_not_autorepair(self):
         store=Store(self.db)
         store.close()
         with closing(sqlite3.connect(self.db)) as con:
@@ -42,12 +42,14 @@ class CriticalSafety(unittest.TestCase):
         with self.assertRaises(DataError):Store(self.db)
         with closing(sqlite3.connect(self.db)) as con:
             self.assertIsNone(con.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
-            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],3)
     def test_v1_backup_before_any_mutating_schema_statement(self):
         store=Store(self.db)
         store.close()
         with closing(sqlite3.connect(self.db)) as con:
             con.execute("DROP TABLE finance_events")
+            con.execute("DROP TABLE contract_trash")
+            con.execute("DROP TABLE contract_lifecycle")
             con.execute("PRAGMA user_version=1")
             con.execute("CREATE TABLE sentinel(value TEXT)")
             con.execute("INSERT INTO sentinel VALUES('preserved')")
@@ -61,7 +63,7 @@ class CriticalSafety(unittest.TestCase):
             self.assertIsNone(backup.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
             self.assertEqual(backup.execute("SELECT value FROM sentinel").fetchone()[0],"preserved")
         with closing(sqlite3.connect(self.db)) as updated:
-            self.assertEqual(updated.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(updated.execute("PRAGMA user_version").fetchone()[0],3)
             self.assertIsNotNone(updated.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
     def test_backup_does_not_overwrite_concurrently_created_target(self):
         store=Store(self.db)
