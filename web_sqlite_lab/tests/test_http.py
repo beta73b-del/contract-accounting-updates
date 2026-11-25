@@ -3,6 +3,7 @@ from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
+import sqlite3
 import os
 import socket
 import subprocess
@@ -137,6 +138,43 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(dest.exists())
         self.assertTrue(str(dest).startswith(str(self.db.parent)))
         self.assertEqual(len(backup["sha256"]),64)
+
+
+    def test_04_finance_api_crud_rate_and_revision(self):
+        exp_id=uuid.uuid4().hex
+        create={"action":"create","opId":uuid.uuid4().hex,"id":exp_id,
+                "revision":0,"date":"2026-11-24","amount":"150.01","comment":"Synthetic logistics"}
+        status,added,_=self.req("/api/finance",create)
+        self.assertEqual(status,200)
+        self.assertTrue(any(x["id"]==exp_id for x in added["expenses"]))
+        replay_status,replay,_=self.req("/api/finance",create)
+        self.assertEqual(replay_status,200)
+        self.assertEqual(replay,added)
+        edit=dict(create,action="edit",opId=uuid.uuid4().hex,revision=1,amount="175.99")
+        status,edited,_=self.req("/api/finance",edit)
+        self.assertEqual(status,200)
+        self.assertEqual(next(x for x in edited["expenses"] if x["id"]==exp_id)["revision"],2)
+        status,error,_=self.req("/api/finance",dict(edit,opId=uuid.uuid4().hex,revision=1))
+        self.assertEqual(status,400)
+        self.assertIn("измен",error["error"])
+        rate={"action":"rate","opId":uuid.uuid4().hex,"year":2027,"rate":15,"previous":None}
+        status,changed,_=self.req("/api/finance",rate)
+        self.assertEqual(status,200)
+        self.assertEqual(changed["rates"]["2027"],15)
+        code,boot,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        self.assertEqual(boot["finance"]["rates"]["2027"],15)
+        remove={"action":"delete","opId":uuid.uuid4().hex,"id":exp_id,"revision":2}
+        status,removed,_=self.req("/api/finance",remove)
+        self.assertEqual(status,200)
+        self.assertFalse(any(x["id"]==exp_id for x in removed["expenses"]))
+        # The immutable event journal is part of the sqlite archive.
+        code,archive,_=self.req("/api/backup",{})
+        self.assertEqual(code,200)
+        with closing(sqlite3.connect(archive["file"])) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_events").fetchone()[0],4)
+
 
 if __name__=="__main__":
     unittest.main()
