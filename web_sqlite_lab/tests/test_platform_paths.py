@@ -8,7 +8,7 @@ class PlatformPathTests(unittest.TestCase):
     def test_development_does_not_touch_appdata(self):
         with TemporaryDirectory() as temp:
             root=Path(temp)/"source"
-            expect=root/"data"
+            expect=root.resolve()/"data"
             self.assertEqual(lab_data_dir(frozen=False,source_root=root,
                                           platform="darwin",home=Path(temp)),expect)
             self.assertFalse(expect.exists())
