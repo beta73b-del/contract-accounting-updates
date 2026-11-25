@@ -16,6 +16,8 @@ class BackupSettingsTests(TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)
         self.data=self.root/"data";self.data.mkdir()
+        (self.data/"attachments").mkdir()
+        (self.data/"managed_files").mkdir()
         self.cloud=self.root/"Google Drive"/"Мой диск";self.cloud.mkdir(parents=True)
         self.cfg=BackupSettings(self.data)
         self.store=Store(self.data/"lab.db")
