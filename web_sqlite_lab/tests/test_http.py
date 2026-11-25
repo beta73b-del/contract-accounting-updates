@@ -201,5 +201,81 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_events").fetchone()[0],4)
 
 
+    def test_05_trash_restore_guards_and_expense_recovery(self):
+        product="Рутокен Lite 1010"
+        status,_,_=self.req("/api/product",{"name":product})
+        self.assertEqual(status,200)
+        status,_,_=self.req("/api/receipt",{"requestId":"receipt-trash-http",
+             "product":product,"qty":10,"unitCost":"1000.00"})
+        self.assertEqual(status,200)
+        cid="trash-http-"+uuid.uuid4().hex
+        draft={"id":cid,"revision":0,"status":"формирование",
+               "customer":"Тестовый заказчик","platform":"Тест","contractNumber":"001",
+               "contractDate":"","signBy":"","fulfillBy":"","handoverDate":"","paymentDue":"",
+               "items":[{"product":product,"quantity":"6","unitPrice":"1300.00"}]}
+        status,first,_=self.req("/api/record",{"requestId":"save-"+uuid.uuid4().hex,"record":draft})
+        self.assertEqual(status,200)
+        draft["status"]="заключен";draft["revision"]=first["revision"]
+        status,signed,_=self.req("/api/record",{"requestId":"save-"+uuid.uuid4().hex,"record":draft})
+        self.assertEqual(status,200)
+        code,pre,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        row=next(x for x in pre["stock"]["items"] if x["product"]==product)
+        self.assertEqual(row["reserved"],6)
+        remove={"requestId":"trash-"+uuid.uuid4().hex,"id":cid,
+                "expectedRevision":signed["revision"],"reason":"Ошибка"}
+        status,deleted,_=self.req("/api/trash",remove)
+        self.assertEqual(status,200)
+        self.assertEqual(deleted["action"],"trash")
+        status,repeat,_=self.req("/api/trash",remove)
+        self.assertEqual((status,repeat),(200,deleted))
+        status,boot,_=self.req("/api/bootstrap")
+        self.assertEqual(status,200)
+        self.assertFalse(any(x["id"]==cid for x in boot["records"]))
+        self.assertTrue(any(x["id"]==cid for x in boot["trash"]["contracts"]))
+        self.assertEqual(next(x["reserved"] for x in boot["stock"]["items"] if x["product"]==product),0)
+        status,error,_=self.req("/api/restore",{"requestId":"restore-stale-"+uuid.uuid4().hex,
+                              "id":cid,"expectedRevision":signed["revision"]})
+        self.assertEqual(status,409)
+        status,restored,_=self.req("/api/restore",{
+               "requestId":"restore-"+uuid.uuid4().hex,"id":cid,
+               "expectedRevision":deleted["revision"]})
+        self.assertEqual(status,200)
+        status,after,_=self.req("/api/bootstrap")
+        self.assertEqual(status,200)
+        self.assertTrue(any(x["id"]==cid for x in after["records"]))
+        self.assertEqual(len(after["trash"]["contracts"]),0)
+        self.assertEqual(next(x["reserved"] for x in after["stock"]["items"] if x["product"]==product),6)
+        draft["status"]="Отправлен";draft["revision"]=restored["revision"]
+        status,shipped,_=self.req("/api/record",{"requestId":"ship-"+uuid.uuid4().hex,"record":draft})
+        self.assertEqual(status,200)
+        status,error,_=self.req("/api/trash",{
+               "requestId":"trash-forbidden-"+uuid.uuid4().hex,
+               "id":cid,"expectedRevision":shipped["revision"]})
+        self.assertEqual(status,400)
+        code,boot,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        self.assertEqual(next(x["physical"] for x in boot["stock"]["items"] if x["product"]==product),4)
+        expid=uuid.uuid4().hex
+        create={"action":"create","opId":uuid.uuid4().hex,"id":expid,
+                "revision":0,"date":"2026-11-24","amount":"11.57","comment":"Synthetic"}
+        status,e,_=self.req("/api/finance",create);self.assertEqual(status,200)
+        status,e,_=self.req("/api/finance",{"action":"delete","opId":uuid.uuid4().hex,
+                                          "id":expid,"revision":1})
+        self.assertEqual(status,200)
+        self.assertEqual(e["deletedExpenses"][0]["revision"],2)
+        status,e,_=self.req("/api/finance",{"action":"restore","opId":uuid.uuid4().hex,
+                                          "id":expid,"revision":2})
+        self.assertEqual(status,200)
+        self.assertEqual(e["expenses"][0]["amount"],"11.57")
+        self.assertEqual(e["deletedExpenses"],[])
+        status,backup,_=self.req("/api/backup",{})
+        self.assertEqual(status,200)
+        with closing(sqlite3.connect(backup["file"])) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM contract_lifecycle").fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM contracts WHERE id=?",(cid,)).fetchone()[0],1)
+
+
 if __name__=="__main__":
     unittest.main()
