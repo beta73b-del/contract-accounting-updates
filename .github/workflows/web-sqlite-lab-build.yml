@@ -1,4 +1,8 @@
 name: Build isolated SQLite LAB for Windows / macOS (unsigned QA artifacts)
+concurrency:
+  group: sqlite-lab-build-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
