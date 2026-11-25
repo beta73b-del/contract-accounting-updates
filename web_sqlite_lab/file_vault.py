@@ -313,11 +313,15 @@ class FileVault:
             node=node/component
             if node.is_symlink():
                 raise DataError("Символьные ссылки во вложениях запрещены")
-        if not src.is_file() or not src.resolve().is_relative_to(base):
-            raise DataError("Файл вложения отсутствует")
         # Deterministic IDs make a repeated delete request idempotent even
         # if the original file was already removed after successful copying.
         file_id=sha256((request_id+"\\0"+relative_path).encode("utf-8")).hexdigest()[:32]
+        prior=self.store.db.execute("SELECT * FROM managed_files WHERE id=?",
+                                    (file_id,)).fetchone()
+        if prior is not None and prior["state"] in ("trashed","purged") and not src.exists():
+            return self._public(prior)
+        if not src.is_file() or not src.resolve().is_relative_to(base):
+            raise DataError("Файл вложения отсутствует")
         copy_op=sha256(("copy:"+request_id).encode("utf-8")).hexdigest()
         trash_op=sha256(("trash:"+request_id).encode("utf-8")).hexdigest()
         with src.open("rb") as stream:
