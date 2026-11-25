@@ -25,7 +25,9 @@ class SQLiteRecoveryTests(TestCase):
         except sqlite3.Error:pass
         self.temp.cleanup()
     def test_01_wal_and_integrity_and_foreign_keys(self):
-        self.assertEqual(self.store.db.execute("PRAGMA journal_mode").fetchone()[0],"wal")
+        from sqlite_build_safety import patched_wal_reset
+        expected="wal" if patched_wal_reset() else "delete"
+        self.assertEqual(self.store.db.execute("PRAGMA journal_mode").fetchone()[0],expected)
         self.assertEqual(self.store.db.execute("PRAGMA foreign_keys").fetchone()[0],1)
         self.assertEqual(self.store.db.execute("PRAGMA integrity_check").fetchone()[0],"ok")
         self.assertEqual(self.store.db.execute("PRAGMA foreign_key_check").fetchall(),[])
