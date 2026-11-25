@@ -207,6 +207,24 @@ function renderFiles(){
    };
    actions.append(download,remove);tr.append(actions);active.append(tr);
  }
+ for(const f of fileState.legacy||[]){
+   const tr=document.createElement('tr');
+   ['[Исходная папка] '+f.path,f.size,'—'].forEach(x=>td(tr,x));
+   const actions=document.createElement('td');
+   const download=document.createElement('button');download.textContent='Скачать';
+   download.onclick=()=>{window.location.href='/api/files/legacy-download?path='+encodeURIComponent(f.path)};
+   const remove=document.createElement('button');remove.textContent='В Корзину';
+   remove.onclick=async()=>{
+     if(!confirm('Защитить удаляемый файл «'+f.path+'» в Корзине на 30 суток?'))return;
+     try{
+       await request('/api/files/legacy-trash',{
+         requestId:crypto.randomUUID().replaceAll('-',''),
+         relativePath:f.path});
+       await refresh();tell('Исходный документ перенесён в защищённую Корзину');
+     }catch(e){tell(e.message,true)}
+   };
+   actions.append(download,remove);tr.append(actions);active.append(tr);
+ }
  const trash=$('trashDocuments');trash.replaceChildren();
  for(const f of fileState.trash||[]){
     const tr=document.createElement('tr');
