@@ -64,9 +64,9 @@ def reservation_differences(inv,phases,records,replay):
     """Check attribution, not merely the sum, before allowing stock mutations."""
     warnings=[];totals=defaultdict(int);active_ids={r["id"] for r in records}
     for r in records:
-        cid=r["id"];phase=phases.get(cid);reserved=r["status"]=="заключен"
-        if (phase=="reserved")!=reserved:
-            warnings.append({"kind":"reservationPhase","id":cid,"excelPhase":phase,"sqliteStatus":r["status"]})
+        cid=r["id"];phase=phases.get(cid);reserved=phase=="reserved"
+        if reserved and r["status"] in ("Отправлен","Вручен","Оплачен"):
+            warnings.append({"kind":"reservationOnShipped","id":cid})
         if phase=="shipped" and r["status"] not in ("Отправлен","Вручен","Оплачен"):
             warnings.append({"kind":"shipmentPhase","id":cid,"excelPhase":phase,"sqliteStatus":r["status"]})
         if reserved:

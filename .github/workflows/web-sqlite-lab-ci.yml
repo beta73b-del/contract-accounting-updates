@@ -24,6 +24,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: sqlite-lab-generic-source
+          path: web_sqlite_lab/
+          retention-days: 7
+          if-no-files-found: error
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}

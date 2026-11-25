@@ -24,7 +24,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <body>
 <header><strong>Контракты ИП — SQLite</strong><small>ИЗОЛИРОВАННАЯ ТЕСТОВАЯ ВЕРСИЯ · порт 8766 · действующая Excel-версия не изменяется</small></header>
 <main>
-<div class="notice"><b>Лаборатория, не рабочая система.</b> Используйте исключительно искусственные записи. Не импортируйте реальные контракты и документы. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
+<div class="notice"><b>Лаборатория, не рабочая система.</b> Разрешён только изолированный тестовый импорт копии данных. Excel остаётся основной системой. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
 <div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Снимок одной базы SQLite (без документов)</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="backupStatus" class="status" aria-live="polite">Автоматическое резервирование: проверка…</div><details><summary>Настройки резервного хранилища</summary><p>Выберите существующую папку Google Drive через окно запуска приложения (Проводник / Finder) или вставьте абсолютный путь. Рабочая SQLite остаётся локальной.</p><label>Путь к внешнему хранилищу<input id="backupFolder" type="text" placeholder="Абсолютный путь к папке Google Drive"></label><button id="saveBackupFolder">Сохранить путь</button><button id="clearBackupFolder">Отключить внешнюю копию</button><button id="fullBackupNow">Создать полную копию сейчас</button><p>VERIFIED означает проверку ZIP через выбранный диск, а не подтверждение синхронизации Google.</p></details><div id="message" aria-live="polite" class="status"></div></div>
 <div class="columns">
 <section class="panel"><h2>Тестовая карточка контракта</h2><div class="fields">
@@ -37,7 +37,10 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <label>Товар<select id="product"></select></label>
 <label>Количество<input id="qty" type="number" min="1" step="1" value="1"></label>
 <label>Цена, ₽<input id="price" value="1500.00" inputmode="decimal"></label>
-</div><p class="small">Перевод в «Отправлен» списывает физический остаток однократно. Возвраты, корректировки прихода, налоги и документы пока не реализованы.</p>
+<label>Сумма позиции, ₽ (если цена не указана)<input id="lineAmount" inputmode="decimal"></label>
+<label>Подписать до<input id="signBy" type="date"></label><label>Исполнить до<input id="fulfillBy" type="date"></label><label>Срок оплаты<input id="paymentDue" type="date"></label>
+<label id="reserveLabel" hidden><input id="stockReserve" type="checkbox" checked style="width:auto"> Резервировать товар</label>
+</div><div id="extraItems"></div><button id="addLine" type="button">Добавить позицию</button><p class="small">Перевод в «Отправлен» списывает физический остаток однократно. Возвраты, корректировки прихода, налоги и документы пока не реализованы.</p>
 <button id="save">Сохранить тестовый контракт</button><button id="new">Новая карточка</button>
 </section>
 <section class="panel"><h2>Тестовый склад</h2><label>Новый товар<input id="newProduct" placeholder="Название товара"></label>
@@ -62,7 +65,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <label>Ставка<select id="rateValue"><option value="5">5%</option><option value="15">15%</option></select></label>
 </div><button id="rateSave">Сохранить ставку</button><p id="rateCurrent" class="small"></p>
 </section>
-<section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Действия</th></tr></thead><tbody id="records"></tbody></table></div></section>
+<section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Сумма, ₽</th><th>Действия</th></tr></thead><tbody id="records"></tbody></table></div></section>
 <section class="panel"><h2>Документы и вложения</h2>
 <p class="small">Файлы приложения защищены внутренней Корзиной. Удалённый файл доступен для восстановления 30 суток; затем содержимое автоматически стирается, история удаления сохраняется. Файлы вне каталогов приложения не перехватываются.</p>
 <div class="fields">
@@ -83,7 +86,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let stockImportLocked=false;let key='',records=[],trashContracts=[],goods=[],fileState={active:[],trash:[]},activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
+let stockImportLocked=false,explicitReservation=false;let key='',records=[],trashContracts=[],goods=[],fileState={active:[],trash:[]},activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
 function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
 function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
 function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
@@ -92,7 +95,7 @@ async function request(path,body){
  const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
 }
 async function refresh(){
- const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());stockImportLocked=Boolean(r.integrity.stockImportLocked);$('receipt').disabled=stockImportLocked;$('addProduct').disabled=stockImportLocked;if(stockImportLocked)$('save').disabled=true;key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());stockImportLocked=Boolean(r.integrity.stockImportLocked);explicitReservation=Boolean(r.integrity.explicitReservation);$("reserveLabel").hidden=!explicitReservation;$('receipt').disabled=stockImportLocked;$('addProduct').disabled=stockImportLocked;if(stockImportLocked)$('save').disabled=true;key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration+(stockImportLocked?' · СКЛАД: ТОЛЬКО ПРОСМОТР ДО СВЕРКИ РЕЗЕРВОВ':'')+
    (r.integrity.walResetFixed?'':' · ВНИМАНИЕ: SQLite '+r.integrity.sqliteVersion+' без патча WAL-reset, журнал '+r.integrity.journalMode+'; нужен патч перед рабочим релизом');
  const backups=r.backups||{};
@@ -115,7 +118,7 @@ async function refresh(){
  const table=$('records');table.replaceChildren();
  for(const x of records){
    const tr=document.createElement('tr');
-   [x.customer,x.contract_number,x.status+(x.importFinancial?.issues?.length?" ⚠ Сверка суммы":""),x.contract_date].forEach(y=>td(tr,y));
+   [x.customer,x.contract_number,x.status+(x.importFinancial?.issues?.length?" ⚠ Сверка суммы":""),x.contract_date,x.importFinancial?.preservedAmount??x.items.map(i=>i.amount||"").join(" + ")].forEach(y=>td(tr,y));
    const cell=document.createElement('td');
    const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);
    const remove=document.createElement('button');remove.textContent='В Корзину';
@@ -134,16 +137,32 @@ async function refresh(){
  }
  renderFinance();renderTrash();renderFiles();
 }
+function addLine(item={}) {
+ const row=document.createElement('div');row.className='fields extra-line';
+ const product=document.createElement('select');product.dataset.field='product';choose(product,goods.map(x=>x.product));product.value=item.product||product.value;
+ const qty=document.createElement('input');qty.type='number';qty.min='1';qty.value=item.quantity||1;qty.dataset.field='quantity';
+ const price=document.createElement('input');price.placeholder='Цена, ₽';price.value=item.unitPrice??'';price.dataset.field='unitPrice';
+ const total=document.createElement('input');total.placeholder='Сумма, ₽ (без цены)';total.value=item.unitPrice?'':(item.amount??'');total.dataset.field='amount';
+ const remove=document.createElement('button');remove.textContent='Удалить позицию';remove.type='button';remove.onclick=()=>row.remove();
+ row.append(product,qty,price,total,remove);$('extraItems').append(row);
+}
+$('addLine').onclick=()=>addLine();
+function currentItems(){
+ const make=(product,quantity,unitPrice,amount)=>({product,quantity,unitPrice,...(!unitPrice.trim()&&amount.trim()?{amount}: {})});
+ return [make($('product').value,$('qty').value,$('price').value,$('lineAmount').value),...Array.from($('extraItems').children,row=>make(...['product','quantity','unitPrice','amount'].map(k=>row.querySelector('[data-field="'+k+'"]').value)))];
+}
 function open(x){activeId=x.id;revision=x.revision;
- for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
- if(x.items[0]){$('product').value=x.items[0].product;$('qty').value=x.items[0].quantity;$('price').value=x.items[0].unitPrice}
- const f=x.importFinancial;const blocked=stockImportLocked||Boolean(f?.issues?.length)||x.items.length>1;$('save').disabled=blocked;
+ for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date'],['signBy','sign_by'],['fulfillBy','fulfill_by'],['paymentDue','payment_due']])$(id).value=x[k];
+ $('extraItems').replaceChildren();$('stockReserve').checked=x.stockReserve??true;
+ if(x.items[0]){$('product').value=x.items[0].product;$('qty').value=x.items[0].quantity;$('price').value=x.items[0].unitPrice;$('lineAmount').value=x.items[0].unitPrice?'':(x.items[0].amount??'')}
+ for(const item of x.items.slice(1))addLine(item);
+ const f=x.importFinancial;const blocked=stockImportLocked||Boolean(f?.issues?.length);$('save').disabled=blocked;
  if(stockImportLocked)tell('Начальные остатки перенесены из Excel. Изменения склада и карточек заблокированы до сверки резервов.',true);
  else if(f?.issues?.length)tell('Сумма из Excel: '+(f.preservedAmount??'не определена')+' ₽. '+f.issues.join('; ')+'. Только просмотр до сверки.',true);
- else if(x.items.length>1)tell('Многопозиционная карточка: только просмотр до поддержки редактирования всех строк.',true);
+
  else tell('Открыт черновик '+x.id+', ревизия '+revision+(f?.preservedAmount!=null?' · сумма Excel '+f.preservedAmount+' ₽':''));
 }
-function reset(){activeId='';revision=0;$('save').disabled=stockImportLocked;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
+function reset(){activeId='';revision=0;$('save').disabled=stockImportLocked;$('extraItems').replaceChildren();$('lineAmount').value='';$('stockReserve').checked=true;for(const k of ['signBy','fulfillBy','paymentDue'])$(k).value='';$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
 $('status').addEventListener('change',()=>{if($('status').value==='заключен'&&!$('contractDate').value){const d=new Date();$('contractDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)}});
 $('new').onclick=reset;
 $('refresh').onclick=()=>refresh().catch(e=>tell(e.message,true));
@@ -152,9 +171,9 @@ $('receipt').onclick=async()=>{try{await request('/api/receipt',{requestId:crypt
 $('save').onclick=async()=>{try{const payload={
  id:activeId||crypto.randomUUID().replaceAll('-',''),revision,status:$('status').value,
  customer:$('customer').value,platform:$('platform').value,contractNumber:$('contractNumber').value,
- contractDate:$('contractDate').value,signBy:'',fulfillBy:'',handoverDate:$('handoverDate').value,paymentDue:'',
- items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
- };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
+ contractDate:$('contractDate').value,signBy:$('signBy').value,fulfillBy:$('fulfillBy').value,handoverDate:$('handoverDate').value,paymentDue:$('paymentDue').value,
+ items:currentItems()
+ };if(explicitReservation){payload.stockReserve=$('stockReserve').checked;const prev=records.find(x=>x.id===activeId);if(payload.status==='Отправлен'&&!['Отправлен','Вручен','Оплачен'].includes(prev?.status)){if(!confirm('Подтвердить фактическую отправку товара?'))return;payload.shipConfirmed=true;}}if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
 $('saveBackupFolder').onclick=async()=>{try{
  const folder=$('backupFolder').value.trim();if(!folder)throw Error('Укажите путь к папке');

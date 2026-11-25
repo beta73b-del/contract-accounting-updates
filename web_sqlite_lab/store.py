@@ -81,11 +81,19 @@ def normalized_lines(raw, allow_missing_price=False):
         qty = int(quantity)
         raw_price=row.get("unitPrice")
         missing=raw_price is None or (isinstance(raw_price,str) and not raw_price.strip())
-        price=money(raw_price,required=not allow_missing_price)
-        if price * qty > MONEY_LIMIT:
+        supplied=row.get("amount")
+        has_total=supplied is not None and bool(str(supplied).strip())
+        explicit=money(supplied) if has_total else None
+        price=money(raw_price,required=not allow_missing_price and not (missing and explicit is not None and explicit>0))
+        total=explicit if missing and has_total else price*qty
+        if not missing and has_total and explicit!=price*qty:
+            raise DataError("Сумма позиции не равна цене × количество")
+        if total > MONEY_LIMIT:
             raise DataError("Стоимость товарной строки превышает предел")
-        line={"product":product,"quantity":qty,"unit_price":price,"line_total":price*qty}
-        if missing:line["price_missing"]=True
+        line={"product":product,"quantity":qty,"unit_price":price,"line_total":total}
+        if missing:
+            line["price_missing"]=True
+            if has_total:line["amount_explicit"]=True
         lines.append(line)
     return lines
 
@@ -249,6 +257,16 @@ class Store:
         self.db.execute("""CREATE TABLE IF NOT EXISTS stock_import_guard(
             product TEXT PRIMARY KEY REFERENCES products(name),
             reserved INTEGER NOT NULL CHECK(reserved>=0))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS contract_line_amounts(
+            contract_id TEXT NOT NULL, position INTEGER NOT NULL,
+            amount_kopecks INTEGER NOT NULL CHECK(amount_kopecks>=0),
+            PRIMARY KEY(contract_id,position),
+            FOREIGN KEY(contract_id,position) REFERENCES contract_lines(contract_id,position) ON DELETE CASCADE)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS explicit_reservation_mode(
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS contract_reserve_state(
+            contract_id TEXT PRIMARY KEY REFERENCES contracts(id) ON DELETE RESTRICT,
+            reserved INTEGER NOT NULL CHECK(reserved IN (0,1)))""")
         if self.db.execute("PRAGMA user_version").fetchone()[0] != 4:
             raise DataError("SQLite managed-file migration failed")
         required=("finance_events","contract_trash","contract_lifecycle","managed_files","file_events")
@@ -332,7 +350,16 @@ class Store:
     def _stock(self, product):
         return self.db.execute("SELECT physical_qty,inventory_cost FROM products WHERE name=?", (product,)).fetchone()
 
+    def explicit_reservation(self):
+        return self.db.execute("SELECT 1 FROM explicit_reservation_mode").fetchone() is not None
+
     def _reserved_other(self, product, exclude_id):
+        if self.explicit_reservation():
+            row=self.db.execute("""SELECT COALESCE(SUM(l.quantity),0)
+                FROM contract_lines l JOIN contract_reserve_state r ON r.contract_id=l.contract_id
+                WHERE r.reserved=1 AND l.product=? AND l.contract_id<>?
+                AND NOT EXISTS(SELECT 1 FROM contract_trash t WHERE t.contract_id=l.contract_id)""",(product,exclude_id)).fetchone()
+            return int(row[0])
         row = self.db.execute("""
             SELECT COALESCE(SUM(l.quantity),0) FROM contract_lines l
             JOIN contracts c ON c.id=l.contract_id
@@ -361,10 +388,14 @@ class Store:
         lines = normalized_lines(raw.get("items"),allow_missing_price=status in ("формирование","подписать до","на подписи"))
         if sum(x["line_total"] for x in lines) > MONEY_LIMIT:
             raise DataError("Общая сумма контракта слишком велика")
+        reserve_flag=raw.get("stockReserve")
+        if reserve_flag is not None and type(reserve_flag) is not bool:raise DataError("Некорректный признак резерва")
         payload = {"kind":"contract","id":cid,"status":status, "customer":customer,
                    "paymentConfirmed":raw.get("paymentConfirmed") is True,
                    "platform":platform, "number":contract_number, "dates":dates,
                    "lines":lines, "revision":raw.get("revision",0)}
+        if reserve_flag is not None:payload["stockReserve"]=reserve_flag
+        if raw.get("shipConfirmed") is True:payload["shipConfirmed"]=True
         with self.transaction():
             self._require_stock_writable()
             digest, old = self._operation(request_id,payload)
@@ -381,6 +412,12 @@ class Store:
                 if imported and json.loads(imported[0]).get("issues"):
                     raise DataError("Карточка импортирована с финансовыми замечаниями. Редактирование заблокировано до отдельной сверки.")
             prev_status = existing["status"] if existing else ""
+            explicit_mode=self.explicit_reservation()
+            old_reserve=self.db.execute("SELECT reserved FROM contract_reserve_state WHERE contract_id=?",(cid,)).fetchone() if explicit_mode else None
+            if explicit_mode and existing and old_reserve is None:raise DataError("Отсутствует состояние резерва импортированной карточки")
+            reserve=bool(old_reserve[0]) if old_reserve else True
+            if reserve_flag is not None:reserve=reserve_flag
+            if status in SHIPPED:reserve=False
             if prev_status in SHIPPED and status not in SHIPPED:
                 raise DataError("Возврат на предыдущий этап требует отдельной складской операции (не реализовано)")
             if status == "Оплачен" and prev_status != "Оплачен":
@@ -395,9 +432,9 @@ class Store:
             if existing and status in SHIPPED and existing["contract_date"] and not dates["contractDate"]:
                 # A status change must not silently erase the signed contract date.
                 dates["contractDate"]=existing["contract_date"]
-            old_lines = self.db.execute("SELECT product,quantity,unit_price FROM contract_lines WHERE contract_id=? ORDER BY position",(cid,)).fetchall()
-            if prev_status in SHIPPED and [(x["product"],x["quantity"],x["unit_price"]) for x in old_lines] != [
-                (x["product"],x["quantity"],x["unit_price"]) for x in lines]:
+            old_lines=self.get_contract(cid)["items"] if existing else []
+            if prev_status in SHIPPED and [(x["product"],x["quantity"],x["unitPrice"],money(x.get("amount"))) for x in old_lines] != [
+                (x["product"],x["quantity"],"" if x.get("price_missing") else amount(x["unit_price"]),x["line_total"]) for x in lines]:
                 raise DataError("Нельзя изменять фактически отгруженные позиции без возврата")
             counts = {}
             for line in lines:
@@ -406,6 +443,13 @@ class Store:
                 counts[line["product"]] = counts.get(line["product"],0)+line["quantity"]
             # Shipment is atomic across all goods and happens once, even when next status is Delivered/Paid.
             if status in SHIPPED and prev_status not in SHIPPED:
+                if explicit_mode:
+                    if status!="Отправлен" or raw.get("shipConfirmed") is not True:
+                        raise DataError("Подтвердите фактическую отправку")
+                    if not old_reserve or not old_reserve[0]:raise DataError("Нет действующего резерва")
+                    old_counts={}
+                    for l in old_lines:old_counts[l["product"]]=old_counts.get(l["product"],0)+l["quantity"]
+                    if old_counts!=counts:raise DataError("Сначала сохраните изменённые позиции и резерв")
                 for product, count in counts.items():
                     stock = self._stock(product)
                     if stock["physical_qty"] - self._reserved_other(product,cid) < count:
@@ -432,6 +476,8 @@ class Store:
                 [(cid,i+1,l["product"],l["quantity"],l["unit_price"]) for i,l in enumerate(lines)])
             self.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",
                 [(cid,i+1) for i,l in enumerate(lines) if l.get("price_missing")])
+            self.db.executemany("INSERT INTO contract_line_amounts VALUES(?,?,?)",[(cid,i+1,l["line_total"]) for i,l in enumerate(lines) if l.get("amount_explicit")])
+            if explicit_mode:self.db.execute("INSERT OR REPLACE INTO contract_reserve_state VALUES(?,?)",(cid,int(reserve)))
             # Remove superseded import-only metadata when a verified card is edited.
             self.db.execute("DELETE FROM contract_import_financial WHERE contract_id=?",(cid,))
             result=self.get_contract(cid)
@@ -451,13 +497,18 @@ class Store:
         data["items"]=[dict(x) for x in self.db.execute(
             """SELECT l.product,l.quantity,l.unit_price,
             EXISTS(SELECT 1 FROM contract_line_missing_price m WHERE m.contract_id=l.contract_id AND m.position=l.position) AS missing
+            ,(SELECT a.amount_kopecks FROM contract_line_amounts a WHERE a.contract_id=l.contract_id AND a.position=l.position) AS explicit_amount
             FROM contract_lines l WHERE l.contract_id=? ORDER BY l.position""",(cid,))]
         for item in data["items"]:
-            v=item.pop("unit_price")
+            v=item.pop("unit_price");explicit_amount=item.pop("explicit_amount")
+            item["amount"]=amount(explicit_amount if explicit_amount is not None else v*item["quantity"])
             if item.pop("missing"):
                 item["unitPrice"]=""
                 item["priceMissing"]=True
             else:item["unitPrice"]=amount(v)
+        if self.explicit_reservation():
+            reserve=self.db.execute("SELECT reserved FROM contract_reserve_state WHERE contract_id=?",(cid,)).fetchone()
+            data["stockReserve"]=bool(reserve and reserve[0])
         imported=self.db.execute("SELECT details_json FROM contract_import_financial WHERE contract_id=?",(cid,)).fetchone()
         if imported:data["importFinancial"]=json.loads(imported[0])
         return data
@@ -540,7 +591,7 @@ class Store:
                 "sqliteVersion":sqlite3.sqlite_version,
                 "walResetFixed":patched_wal_reset(),
                 "journalMode":self.db.execute("PRAGMA journal_mode").fetchone()[0],
-                "contracts":len(self.list_contracts()),"stockImportLocked":self.stock_import_locked(),
+                "contracts":len(self.list_contracts()),"stockImportLocked":self.stock_import_locked(),"explicitReservation":self.explicit_reservation(),
                 "trashedContracts":self.db.execute("SELECT COUNT(*) FROM contract_trash").fetchone()[0]}
 
     def backup(self, target):

@@ -11,7 +11,7 @@ comparison against Stock-Payload passes.
 from __future__ import annotations
 from copy import deepcopy
 
-DEFAULT_PRODUCTS=("Рутокен 1010","Рутокен 3.0 серт ФСТЭК","Рутокен 3.0 серт ФСБ")
+DEFAULT_PRODUCTS=("Рутокен 1010","Рутокен ЭЦП 3.0 3120","Рутокен 3.0 серт ФСТЭК","Рутокен 3.0 серт ФСБ")
 MAX_QTY=1_000_000_000
 MAX_CENTS=90_000_000_000_000
 

@@ -98,18 +98,19 @@ class ExcelImportTests(unittest.TestCase):
         self.capture()
         report=build_trial_archive(self.snap,self.archive)
         self.assertEqual(report["checks"]["stockHistoryReplay"],"PASS")
-        self.assertEqual(report["checks"]["reservationAllocation"],"WARN")
-        self.assertTrue(report["stockImportLocked"])
+        self.assertEqual(report["checks"]["reservationAllocation"],"PASS")
+        self.assertFalse(report["stockImportLocked"])
         target=self.root/"reserve";restore_first_install(self.archive,target)
         db=Store(target/"lab.db")
         try:
             x=next(i for i in db.stock_summary() if i["product"]==self.product)
             self.assertEqual(x["reserved"],7)
             self.assertEqual(x["available"],10)
-            from store import DataError
-            with self.assertRaises(DataError):db.receipt("receipt-guard",self.product,1,"100")
-            with self.assertRaises(DataError):db.save_contract("save-guard-01",dict(self.payload["records"][0],revision=1))
-            with self.assertRaises(DataError):db.trash_contract("trash-guard-01",self.cid,1)
+            self.assertTrue(db.get_contract(self.cid)["stockReserve"])
+            db.receipt("receipt-guard",self.product,1,"100")
+            db.save_contract("save-guard-01",dict(self.payload["records"][0],revision=1))
+            db.trash_contract("trash-guard-01",self.cid,2)
+            self.assertEqual(next(i for i in db.stock_summary() if i["product"]==self.product)["reserved"],0)
         finally:db.close()
     def test_history_mismatch_without_reservations_allows_new_receipts(self):
         self.payload["records"][0]["status"]="формирование"
@@ -171,20 +172,25 @@ class ExcelImportTests(unittest.TestCase):
         self.payload["records"][0]["items"][0]["unitPrice"]=""
         self.capture()
         report=build_trial_archive(self.snap,self.archive)
-        self.assertEqual(report["derivedPricePositions"],[{"id":self.cid,"positions":[1]}])
+        self.assertEqual(report["derivedPricePositions"],[])
+        self.assertEqual(report["checks"]["financialArithmetic"],"PASS")
     def test_blank_price_fraction_preserved(self):
         self.payload["records"][0]["items"][0]["unitPrice"]=""
         self.payload["records"][0]["amount"]="10500.01"
         self.capture()
         report=build_trial_archive(self.snap,self.archive)
-        self.assertEqual(report["financialWarnings"][0]["preservedAmount"],"10500.01")
+        self.assertEqual(report["financialWarnings"],[])
+        self.assertEqual(report["checks"]["financialArithmetic"],"PASS")
         self.assertTrue(report["contractKopecksComplete"])
         target=self.root/"fraction";restore_first_install(self.archive,target)
         db=Store(target/"lab.db")
         try:
             item=db.get_contract(self.cid)
             self.assertEqual(item["items"][0]["unitPrice"],"")
+            self.assertEqual(item["items"][0]["amount"],"10500.01")
             self.assertEqual(item["importFinancial"]["preservedAmount"],"10500.01")
+            raw=dict(self.payload["records"][0],revision=1,items=[{"product":self.product,"quantity":7,"unitPrice":"","amount":"10500.01"}])
+            self.assertEqual(db.save_contract("save-amount-01",raw)["items"][0]["amount"],"10500.01")
             self.assertEqual(len(db.list_contracts()),2)
         finally:db.close()
     def test_invalid_price_and_conflicting_aliases_do_not_abort(self):
