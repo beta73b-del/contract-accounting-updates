@@ -1,4 +1,4 @@
-"""Differential test against current Web source app/logic.mjs, synthetic only.
+r"""Differential test against current Web source app/logic.mjs, synthetic only.
 
 To enable locally:
   set CONTRACTS_EXCEL_WEB_LOGIC=D:\...\Приложение\app\logic.mjs
@@ -54,6 +54,11 @@ class JsParity(unittest.TestCase):
         self.assertEqual(len(original),len(cases))
         for index,case in enumerate(cases):
             candidate=forecast(case["records"],case["year"],case["finance"])
+            if candidate != original[index]:
+                print("PARITY_DIFF index=",index,
+                      "statuses=",[(r["status"],r["check"],r["month"]) for r in case["records"]],
+                      "candidate_counts=",[(m["count"],m["paid"],m["expected"]) for m in candidate["months"]],
+                      "oracle_counts=",[(m["count"],m["paid"],m["expected"]) for m in original[index]["months"]])
             self.assertEqual(candidate,original[index],"Excel Web/SQLite forecast mismatch on synthetic case "+str(index))
 if __name__=="__main__":
     unittest.main()
