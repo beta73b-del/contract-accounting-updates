@@ -11,6 +11,7 @@ from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 import json
+import os
 import sqlite3
 import uuid
 
@@ -151,7 +152,10 @@ def build_stock_staging(source_db, destination_db):
             # Close file handles BEFORE atomic rename, including on Windows.
             if dst.exists():
                 raise FileExistsError("Destination appeared during import")
-            temp.rename(dst)
+            # Atomic no-clobber publish on the same filesystem. os.rename() can
+            # replace an existing file on POSIX after a concurrent creation.
+            os.link(temp, dst)
+            temp.unlink()
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
