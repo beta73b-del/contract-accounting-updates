@@ -292,6 +292,41 @@ class FileVault:
         return {"purgedFiles":purged,"checkedAt":moment.isoformat(),
                 "retentionDays":RETENTION_DAYS}
 
+    def legacy_path(self,relative_path,attachments_root):
+        """Resolve a file ONLY inside the application's old attachments root."""
+        try:_safe_name(relative_path)
+        except TransferError as exc:
+            raise DataError("Неверный относительный путь вложения") from exc
+        root=Path(attachments_root)
+        if root.is_symlink() or not root.is_dir():
+            raise DataError("Папка вложений недоступна")
+        root=root.resolve(strict=True)
+        current=root
+        for component in relative_path.split("/"):
+            current=current/component
+            if current.is_symlink():
+                raise DataError("Вложение содержит символьную ссылку")
+        if not current.is_file() or not current.resolve().is_relative_to(root):
+            raise DataError("Вложение отсутствует")
+        return current
+
+    def list_legacy(self,attachments_root):
+        """List app-owned legacy attachments, never arbitrary user folders."""
+        root=Path(attachments_root)
+        if root.is_symlink() or not root.is_dir():
+            raise DataError("Папка вложений недоступна")
+        result=[]
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink():raise DataError("Символьные ссылки в документах запрещены")
+            if path.is_file():
+                relative=path.relative_to(root).as_posix()
+                try:_safe_name(relative)
+                except TransferError as exc:
+                    raise DataError("Документ имеет некорректное имя") from exc
+                result.append({"path":relative,"size":path.stat().st_size,
+                               "storage":"legacy"})
+        return result
+
     def trash_legacy_attachment(self,request_id,relative_path,attachments_root,contract_id=None):
         """Protect a pre-existing app-owned attachment on explicit deletion.
 
