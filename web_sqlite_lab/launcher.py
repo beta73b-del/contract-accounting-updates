@@ -20,9 +20,8 @@ def main():
     tk.Label(root,text="Изолированная тестовая программа.\nРабочая Excel-версия не изменяется.",
              justify="center",wraplength=420).pack(pady=5)
     try:
-        from server import Handler, HOST, PORT, store
-        from http.server import ThreadingHTTPServer
-        listener=ThreadingHTTPServer((HOST,PORT),Handler)
+        from server import Handler, HOST, PORT, store, LoopbackHTTPServer
+        listener=LoopbackHTTPServer((HOST,PORT),Handler)
         listener.daemon_threads=False
         worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
         worker.start()
@@ -64,14 +63,13 @@ def main():
 
 def frozen_smoke():
     """Headless packaged-artifact HTTP smoke against a synthetic temporary DB."""
-    from http.server import ThreadingHTTPServer
     from threading import Thread
     from urllib.request import build_opener, ProxyHandler
-    from server import Handler,HOST,store
+    from server import Handler,HOST,store,LoopbackHTTPServer
     opener=build_opener(ProxyHandler({}))
     if sys.stderr is not None:
         print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
-    listener=ThreadingHTTPServer((HOST,0),Handler)
+    listener=LoopbackHTTPServer((HOST,0),Handler)
     worker=Thread(target=listener.serve_forever,daemon=True)
     try:
         worker.start()
