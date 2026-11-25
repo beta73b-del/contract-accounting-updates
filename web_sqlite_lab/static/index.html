@@ -25,7 +25,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <header><strong>Контракты ИП — SQLite</strong><small>ИЗОЛИРОВАННАЯ ТЕСТОВАЯ ВЕРСИЯ · порт 8766 · действующая Excel-версия не изменяется</small></header>
 <main>
 <div class="notice"><b>Лаборатория, не рабочая система.</b> Используйте исключительно искусственные записи. Не импортируйте реальные контракты и документы. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
-<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Создать проверенный снимок SQLite</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="message" aria-live="polite" class="status"></div></div>
+<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Снимок одной базы SQLite (без документов)</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="backupStatus" class="status" aria-live="polite">Автоматическое резервирование: проверка…</div><div id="message" aria-live="polite" class="status"></div></div>
 <div class="columns">
 <section class="panel"><h2>Тестовая карточка контракта</h2><div class="fields">
 <label>Заказчик<input id="customer" value="Тестовый заказчик"></label>
@@ -94,6 +94,17 @@ async function request(path,body){
 async function refresh(){
  const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration;
+ const backups=r.backups||{};
+ const warning=backups.lastError?'Ошибка резервирования: '+backups.lastError:
+      backups.warning==='SECONDARY_NOT_CONFIGURED'?'ВНИМАНИЕ: внешняя копия не настроена':
+      backups.warning==='SECONDARY_FAILED'?'ВНИМАНИЕ: внешняя копия не подтверждена':
+      backups.warning==='NO_VERIFIED_COPY'?'Ещё нет проверенной копии':'';
+ $('backupStatus').textContent='Полная копия: проверка не чаще раза в 24 часа; хранение автоматических ZIP — 14 суток. '+ 
+      'Последняя проверка: '+(backups.lastVerifiedUtc||'нет')+
+      ' · архивов: '+(backups.automaticCopies??0)+
+      ' · папка: '+(backups.primaryPath||'неизвестна')+
+      (backups.secondaryPath?' · второе хранилище: '+backups.secondaryPath:'')+
+      (warning?' · '+warning:'');
  choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
  const st=$('stock');st.replaceChildren();
  for(const x of goods){const tr=document.createElement('tr');[x.product,x.physical,x.reserved,x.available,x.shortage].forEach(y=>td(tr,y));st.append(tr)}
