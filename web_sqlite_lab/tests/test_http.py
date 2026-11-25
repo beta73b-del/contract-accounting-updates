@@ -3,6 +3,7 @@ from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
+import http.client
 import sqlite3
 import os
 import socket
@@ -86,6 +87,30 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status,403)
         status,text,_=call(self.url+"/api/product",{"name":"DANGER"},key=self.key,origin="https://invalid.example")
         self.assertEqual(status,403)
+
+    def test_02b_reject_dns_rebinding_host_before_nonce_or_write(self):
+        def hostile(method,path,body=None):
+            connection=http.client.HTTPConnection("127.0.0.1",self.port,timeout=5)
+            try:
+                connection.putrequest(method,path,skip_host=True)
+                connection.putheader("Host","malicious.invalid:"+str(self.port))
+                if body is not None:
+                    connection.putheader("Content-Type","application/json")
+                    connection.putheader("Content-Length",str(len(body)))
+                    connection.putheader("X-Contracts-Key",self.key)
+                connection.endheaders(body)
+                response=connection.getresponse()
+                return response.status,json.loads(response.read().decode("utf-8"))
+            finally:
+                connection.close()
+        code,data=hostile("GET","/api/bootstrap")
+        self.assertEqual(code,403)
+        self.assertNotIn("nonce",data)
+        code,data=hostile("POST","/api/product",b'{"name":"blocked"}')
+        self.assertEqual(code,403)
+        code,data,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        self.assertFalse(any(x.get("product")=="blocked" for x in data["stock"]["items"]))
 
     def test_03_complete_lifecycle_and_backup(self):
         p="Рутокен Lite 1010"
