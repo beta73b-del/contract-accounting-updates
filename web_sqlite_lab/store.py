@@ -6,7 +6,7 @@ Money is stored strictly as integer kopecks. No production data is read.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
@@ -312,7 +312,9 @@ class Store:
         if target.exists(): raise DataError("Архив уже существует, замена запрещена")
         tmp=target.with_name(target.name+".staging-"+uuid.uuid4().hex)
         try:
-            with sqlite3.connect(tmp) as destination:
+            # sqlite3.Connection's context manager commits but does NOT close the file.
+            # Explicit close is required before rename on Windows.
+            with closing(sqlite3.connect(tmp)) as destination:
                 self.db.backup(destination)
                 if destination.execute("PRAGMA integrity_check").fetchone()[0]!="ok":
                     raise DataError("Снимок SQLite повреждён")
