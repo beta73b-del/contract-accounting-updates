@@ -46,7 +46,7 @@ def install():
                 raise RuntimeError("pysqlite3 source SHA-256 differs from PyPI")
             with tarfile.open(source_archives[0], "r:gz") as archive:
                 members = archive.getmembers()
-                if any(not m.name.startswith("pysqlite3-0.6.2/") or
+                if any(not (m.name == "pysqlite3-0.6.2" or m.name.startswith("pysqlite3-0.6.2/")) or
                        m.issym() or m.islnk() or
                        ".." in Path(m.name).parts for m in members):
                     raise RuntimeError("Unsafe Python source archive")
