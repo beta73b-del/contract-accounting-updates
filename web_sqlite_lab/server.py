@@ -6,7 +6,7 @@ from socketserver import TCPServer
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import RLock
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs, quote
 import json
 import os
 import sys
@@ -15,6 +15,7 @@ import uuid
 from store import Store, DataError, Conflict, moscow_today
 from finance_ledger import FinanceLedger, FinanceError
 from finance_engine import forecast
+from file_vault import FileVault, MAX_FILE_BYTES, RETENTION_DAYS
 
 from platform_paths import lab_data_dir
 
@@ -37,6 +38,10 @@ class LoopbackHTTPServer(ThreadingHTTPServer):
         self.server_port = self.server_address[1]
 
 store = Store(DB)
+file_vault = FileVault(store, DATA_DIR / 'managed_files')
+# Only app-owned files are managed. Legacy documents remain untouched until
+# a user invokes an explicit protected delete through the vault.
+(DATA_DIR / 'attachments').mkdir(parents=True,exist_ok=True)
 finance_ledger = FinanceLedger(store)
 mutex = RLock()
 nonce = token_urlsafe(32)
@@ -84,10 +89,37 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers();self.wfile.write(html);return
         if path=="/api/bootstrap":
             with mutex:
+                cleanup=file_vault.purge_expired()
                 self.reply(200,{"lab":True,"storage":"SQLite","nonce":nonce,"today":moscow_today(),
                                 "records":store.list_contracts(),"trash":{"contracts":store.list_trashed()},"stock":{"items":store.stock_summary()},
                                 "finance":finance_ledger.payload(),
+                                "files":{"active":file_vault.list_files("active"),
+                                         "trash":file_vault.list_files("trashed"),
+                                         "retentionDays":RETENTION_DAYS,
+                                         "cleanup":cleanup},
                                 "integrity":store.verify(),"migration":"NOT RUN"});return
+        if path=="/api/files/download":
+            parsed=parse_qs(urlsplit(self.path).query)
+            file_ids=parsed.get("id",[])
+            if len(file_ids)!=1:
+                self.reply(400,{"error":"Требуется ID документа"});return
+            try:
+                with mutex:
+                    meta,file_path=file_vault.get_active(file_ids[0])
+                    with file_path.open("rb") as stream:
+                        self.send_response(200)
+                        self.send_header("Content-Type","application/octet-stream")
+                        self.send_header("Content-Disposition",
+                            "attachment; filename*=UTF-8''"+quote(meta["name"],safe=""))
+                        self.send_header("Content-Length",str(meta["size"]))
+                        self.send_header("Cache-Control","no-store")
+                        self.send_header("X-Content-Type-Options","nosniff")
+                        self.end_headers()
+                        while chunk:=stream.read(1024*1024):
+                            self.wfile.write(chunk)
+            except DataError as error:
+                self.reply(404,{"error":str(error)})
+            return
         self.reply(404,{"error":"Маршрут отсутствует"})
 
     def do_POST(self):
@@ -99,7 +131,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Contracts-Key")!=nonce:
             self.reply(403,{"error":"Неверный защитный ключ"});return
         try:
+            path=urlsplit(self.path).path
             size=int(self.headers.get("Content-Length","-1"))
+            if path=="/api/files/upload":
+                if not 0<=size<=MAX_FILE_BYTES:
+                    raise DataError("Ограничение загрузки: 256 МБ на файл")
+                query=parse_qs(urlsplit(self.path).query,keep_blank_values=True)
+                def one(key,required=True):
+                    result=query.get(key,[])
+                    if len(result)>1 or (required and (len(result)!=1 or not result[0])):
+                        raise DataError("Неверный параметр файла: "+key)
+                    return result[0] if result else ""
+                with mutex:
+                    result=file_vault.add_stream(
+                        one("requestId"),one("id"),one("name"),self.rfile,size,
+                        one("contractId",False) or None)
+                self.reply(200,result);return
             if size<0 or size>65536: raise DataError("Размер запроса недопустим")
             raw=json.loads(self.rfile.read(size).decode("utf-8"))
             if not isinstance(raw,dict): raise DataError("Неверное тело запроса")
@@ -118,6 +165,13 @@ class Handler(BaseHTTPRequestHandler):
                 elif path=="/api/restore":
                     result=store.restore_contract(raw.get("requestId"),raw.get("id"),
                                                   raw.get("expectedRevision"))
+                elif path=="/api/files/trash":
+                    result=file_vault.trash_file(
+                        raw.get("requestId"),raw.get("id"),
+                        raw.get("revision"),raw.get("reason",""))
+                elif path=="/api/files/restore":
+                    result=file_vault.restore_file(
+                        raw.get("requestId"),raw.get("id"),raw.get("revision"))
                 elif path=="/api/finance":
                     result=finance_ledger.mutate(raw)
                 elif path=="/api/backup":
