@@ -74,8 +74,32 @@ def main():
         worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
         worker.start()
     except Exception:
-        messagebox.showerror("Ошибка запуска","Не удалось открыть тестовую SQLite-базу или локальный порт.\n"
-                             "Проверьте, не запущен ли второй экземпляр лаборатории.")
+        # A damaged *existing* DB must not make the recovery UI inaccessible.
+        # Restore only to an independent NEW directory; never overwrite the
+        # old DB, documents or the user's Excel source.
+        if messagebox.askyesno("Не удалось запустить SQLite",
+            "Не удалось открыть тестовую базу или локальный порт.\n"
+            "Сначала проверьте, не запущена ли программа второй раз.\n\n"
+            "Открыть восстановление ZIP в ОТДЕЛЬНУЮ папку без замены исходных данных?"):
+            default=target/"backups"/"automatic"
+            chosen=filedialog.askopenfilename(
+                title="Проверенный архив с другого диска или из папки backups",
+                initialdir=str(default if default.is_dir() else target),
+                filetypes=[("Резервный ZIP","*.zip"),("Все файлы","*.*")])
+            if chosen:
+                separate=target.with_name(target.name+"-Recovered-"+uuid.uuid4().hex[:8])
+                try:
+                    restored=restore_new_install(chosen,separate)
+                    if not restored.get("appReady"):
+                        raise TransferError("Restore verification incomplete")
+                    messagebox.showinfo("Восстановленная копия",
+                        "SQLite, документы и Корзина проверены.\n"
+                        "Копия сохранена отдельно:\n"+str(separate)+"\n\n"
+                        "Рабочая папка НЕ заменена. Для переключения нужен "
+                        "отдельный безопасный перенос.")
+                except Exception:
+                    messagebox.showerror("Восстановление не выполнено",
+                        "Архив не удалось проверить. Исходная папка и база не заменены.")
         root.destroy()
         return 1
 
