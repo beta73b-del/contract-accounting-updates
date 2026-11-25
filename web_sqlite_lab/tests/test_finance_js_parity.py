@@ -47,18 +47,13 @@ class JsParity(unittest.TestCase):
             cases.append({"records":records,"year":year,"finance":{"rates":rates,"expenses":expenses}})
         runner=Path(__file__).parent/"finance_oracle.mjs"
         node=subprocess.run(["node",str(runner),str(Path(logic).resolve())],
-                            input=json.dumps(cases,ensure_ascii=False),text=True,
+                            input=json.dumps(cases,ensure_ascii=True),text=True,
                             capture_output=True,timeout=30)
         self.assertEqual(node.returncode,0,"Original JS oracle failed (stderr omitted)")
         original=json.loads(node.stdout)
         self.assertEqual(len(original),len(cases))
         for index,case in enumerate(cases):
             candidate=forecast(case["records"],case["year"],case["finance"])
-            if candidate != original[index]:
-                print("PARITY_DIFF index=",index,
-                      "statuses=",[(r["status"],r["check"],r["month"]) for r in case["records"]],
-                      "candidate_counts=",[(m["count"],m["paid"],m["expected"]) for m in candidate["months"]],
-                      "oracle_counts=",[(m["count"],m["paid"],m["expected"]) for m in original[index]["months"]])
             self.assertEqual(candidate,original[index],"Excel Web/SQLite forecast mismatch on synthetic case "+str(index))
 if __name__=="__main__":
     unittest.main()
