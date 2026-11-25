@@ -23,6 +23,22 @@ def audit(snapshot_dir,report_file=None):
     phases=stock.get("phases")
     if not isinstance(events,list) or not isinstance(items,list) or not isinstance(phases,dict):
         raise ValueError("Incomplete source stock payload")
+    seen_events={}
+    for position,event in enumerate(events):
+        if not isinstance(event,dict) or not isinstance(event.get("id"),str):
+            raise StockError("Invalid source event")
+        if event.get("kind") in ("editReceipt","deleteReceipt"):
+            target=event.get("target")
+            original=seen_events.get(target)
+            if original is None or original.get("kind")!="receipt":
+                raise StockError("Source correction points to a missing or non-receipt event")
+        seen_events[event["id"]]=event
+    if any(not isinstance(item,dict) or not isinstance(item.get("product"),str)
+           for item in items):
+        raise StockError("Invalid reference stock product")
+    labels=[r["product"] for r in items]
+    if len(set(labels))!=len(labels):
+        raise StockError("Duplicate product in reference stock snapshot")
     actual=project(events)
     reference={r["product"]:r for r in items}
     changed_fields={}
@@ -35,7 +51,7 @@ def audit(snapshot_dir,report_file=None):
             continue
         for key in FIELDS:
             comparisons+=1
-            if r.get(key)!=projection.get(key):
+            if type(r.get(key)) is not type(projection.get(key)) or r.get(key)!=projection.get(key):
                 changed_fields[key]=changed_fields.get(key,0)+1
     unexpected=len(set(actual["inventory"])-set(reference))
     phase_mismatch=0
@@ -72,5 +88,7 @@ def audit(snapshot_dir,report_file=None):
 if __name__=="__main__":
     if len(sys.argv) not in (2,3):
         raise SystemExit("Usage: python stock_parity_audit.py <private-snapshot> [new-report.json]")
-    print(json.dumps(audit(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None),
-                     ensure_ascii=False))
+    result=audit(sys.argv[1],sys.argv[2] if len(sys.argv)==3 else None)
+    print(json.dumps(result,ensure_ascii=False))
+    if result["result"]!="PASS":
+        raise SystemExit(2)
