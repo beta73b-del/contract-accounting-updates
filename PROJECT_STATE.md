@@ -1,3 +1,24 @@
+## Web SQLite — аудит критических ошибок и GitHub Actions, 25.11.2026 (через чат, без рабочего Excel)
+
+**Ветка:** [feature/web-sqlite-parallel-prototype](https://github.com/beta73b-del/contract-accounting-updates/tree/feature/web-sqlite-parallel-prototype/web_sqlite_lab). Реальные контракты, рабочий Excel, `VERSION` и релизы НЕ менялись.
+
+**Установленные причины прежних CI FAIL (по настоящим GitHub Actions logs):**
+1. macOS `launcher.py --smoke` блокировался на 20-секундном таймауте HTTP localhost; добавлены прямой loopback `127.0.0.1`, отключение proxy, диагностический вывод.
+2. При усилении DNS-rebinding защиты фиксированный порт `8766` ошибочно сравнивался с `Host` при запуске на случайном порту → 403. Исправлено сравнением с `self.server.server_port`; проверены посторонний GET nonce и POST.
+3. Запуск PyInstaller `--windowed` может иметь `sys.stderr=None`: исправлены вывод HTTP и CLI smoke, тестируется `--smoke-no-console`.
+4. Тесты Windows/macOS использовали неканонический путь временного каталога (`C:\Users\RUNNER~1` vs длинный путь, `/var` vs `/private/var`), исправлены ожидания абсолютных путей.
+
+**Критические дефекты сохранности данных, исправленные в исходниках:**
+- Перед обновлением схемы SQLite v1→v2 теперь проверяются обязательные таблицы/целостность и сохраняется точная онлайн-резервная копия **до** любых записей в схему/смены WAL. Для непустой базы без версии, неизвестной версии или повреждённой схемы запуск блокируется, вместо неявного восстановления таблиц.
+- Резервная копия через `Store.backup` публикуется без перезаписи (`os.link`), в том числе при гонке процессов.
+- ZIP-экспорт теперь удаляет уже созданный архив, если итоговый `inspect_transfer` провалился; отклоняются опасные Windows-имена, Unicode/NFC+case коллизии и неверные пути.
+- `restore_to_empty` эксклюзивно создаёт новый каталог и никогда не переименовывает рабочую папку поверх чужой; создаётся маркер успешной проверки, а активация установленного приложения по-прежнему ЗАПРЕЩЕНА.
+- Локальный Web/API отказывает запросам с чужим `Host`, уменьшая угрозу DNS rebinding.
+
+**Новые отрицательные тесты:** `test_critical_safety.py`, расширенные `test_transfer.py`, `test_http.py` и `test_launcher.py`; подтверждён актуальный [GitHub Actions Linux/Windows тестовый прогон](https://github.com/beta73b-del/contract-accounting-updates/actions/runs/45663231623): **115 тестов, 114 PASS / 1 SKIP** на Linux, Windows regression также PASS. [Windows EXE сборка+реальный --smoke](https://github.com/beta73b-del/contract-accounting-updates/actions/runs/45663231666) PASS, тестовый unsigned ZIP artifact id 15045687811, около 12.9 МБ. **Mac CI unit-test и .app сборки на момент проверки оставались QUEUED**, НЕ считать их успешными.
+
+**Незакрыто:** Mac ARM64/Intel реальные сборки и GUI, архивный перенос Win→Mac и Mac→Win, восстановление поверх установленной БД с проверенным откатом, реальный Excel+документы, 21 складское событие, все кнопки и бизнес-модули. Не проводить рабочую миграцию до полного PASS.
+
 ## Web/SQLite: продолжение через чат, 25.11.2026 (отдельная ветка)
 
 - **Выполнено и протестировано в изолированной Linux-среде этого чата:** подтверждена побайтовая идентичность исходников складской проекции, складского аудита и тестов по Git blob SHA с [веткой Web/SQLite](https://github.com/beta73b-del/contract-accounting-updates/tree/feature/web-sqlite-parallel-prototype/web_sqlite_lab). `stock_projection.py`, `stock_parity_audit.py` и `platform_paths.py` прошли исходные 25 тестов. После добавления проверок целостности и нового `stock_staging.py` общий локальный набор **43/43 PASS**, Python compileall PASS. Это подтверждение **Linux-контейнера**, не ПК пользователя и не Mac.
