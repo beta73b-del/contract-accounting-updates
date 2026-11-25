@@ -32,12 +32,12 @@ jobs:
         with:
           python-version: '3.11'
           architecture: ${{ matrix.arch }}
-      - name: Install isolated QA dependencies
-        run: python -m pip install "openpyxl>=3.1,<4" "pyinstaller>=6.20,<7"
-      - name: Inspect actual SQLite runtime before packaging (QA only)
-        run: python web_sqlite_lab/sqlite_build_safety.py
-        # PRODUCTION RELEASE MUST use --require-safe after bundling a patched
-        # SQLite (3.51.3+ or documented backport). QA builds remain unsigned.
+      - name: Install latest SQLite 3.54.1 and isolated QA dependencies
+        run: |
+          python -m pip install "setuptools>=65" wheel "openpyxl>=3.1,<4" "pyinstaller>=6.20,<7"
+          python web_sqlite_lab/install_sqlite_3541.py
+      - name: Block packaging if loaded SQLite is not verified 3.54.1
+        run: python web_sqlite_lab/sqlite_build_safety.py --require-safe
       - name: Compile and run synthetic SQLite regression
         run: |
           python -m compileall -q web_sqlite_lab
@@ -58,6 +58,7 @@ jobs:
           pyinstaller --noconfirm --clean --onedir --windowed
           --name ContractsIP-SQLiteLab
           --paths web_sqlite_lab
+          --collect-all pysqlite3
           --add-data "web_sqlite_lab/static/index.html:static"
           web_sqlite_lab/launcher.py
       - name: Smoke-test actual Windows EXE against an isolated SQLite
