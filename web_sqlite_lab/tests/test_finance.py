@@ -133,10 +133,12 @@ class LedgerTests(unittest.TestCase):
         self.store.close()
         with closing(sqlite3.connect(self.db)) as c:
             c.execute("DROP TABLE finance_events")
+            c.execute("DROP TABLE contract_trash")
+            c.execute("DROP TABLE contract_lifecycle")
             c.execute("PRAGMA user_version=1")
         self.store=Store(self.db)
         self.ledger=FinanceLedger(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],2)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0],3)
         backups=list((self.db.parent/"backups").glob("before-v2-*.sqlite"))
         self.assertEqual(len(backups),1)
         with closing(sqlite3.connect(backups[0])) as c:
