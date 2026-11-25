@@ -464,5 +464,34 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(outside.read_bytes(),b"must stay")
 
 
+    def test_13_daily_automatic_full_backup_is_in_db_data_directory(self):
+        # Worker may perform first snapshot asynchronously. Test bounded
+        # actual startup behavior, not a mocked backup function.
+        complete=None
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            code,data,_=self.req("/api/bootstrap")
+            self.assertEqual(code,200)
+            backups=data["backups"]
+            if backups.get("automaticCopies",0)>=1 and backups.get("lastVerifiedUtc"):
+                complete=backups
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(complete,"Startup did not create an automatic complete ZIP")
+        self.assertEqual(complete["retentionDays"],14)
+        self.assertEqual(complete["checkHours"],24)
+        self.assertTrue(Path(complete["primaryPath"]).is_relative_to(self.db.parent))
+        self.assertEqual(complete["warning"],"SECONDARY_NOT_CONFIGURED")
+        folder=Path(complete["primaryPath"])
+        copies=list(folder.glob("auto-*.zip"))
+        self.assertEqual(len(copies),1)
+        self.assertEqual(inspect_transfer(copies[0])["database"]["schemaVersion"],4)
+        # Repeated page reloads must not spawn new archives.
+        for _ in range(3):
+            code,more,_=self.req("/api/bootstrap")
+            self.assertEqual(code,200)
+            self.assertEqual(more["backups"]["automaticCopies"],1)
+
+
 if __name__=="__main__":
     unittest.main()
