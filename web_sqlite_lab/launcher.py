@@ -6,11 +6,11 @@ No production workbook is read. No remote network is opened.
 from __future__ import annotations
 from threading import Thread
 import sys
-import tkinter as tk
-from tkinter import messagebox
 import webbrowser
 
 def main():
+    import tkinter as tk
+    from tkinter import messagebox
     root=tk.Tk()
     root.title("Контракты ИП — SQLite LAB (тестовая версия)")
     root.geometry("470x260")
