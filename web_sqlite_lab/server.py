@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from pathlib import Path
 from secrets import token_urlsafe
 from threading import RLock
@@ -26,6 +27,15 @@ if os.environ.get("CONTRACTS_SQLITE_LAB_DB") and not os.environ.get("CONTRACTS_S
     raise SystemExit("Override database path is allowed only when CONTRACTS_SQLITE_LAB_TEST=1")
 DATA_DIR = lab_data_dir(frozen=bool(getattr(sys, "frozen", False)), source_root=SOURCE_ROOT)
 DB = Path(os.environ.get("CONTRACTS_SQLITE_LAB_DB", str(DATA_DIR / "lab.db"))).resolve()
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind performs socket.getfqdn(127.0.0.1):
+        # this reverse DNS lookup can hang for 20s+ on macOS CI runners.
+        # TCPServer binds directly; Host checks in Handler still apply.
+        TCPServer.server_bind(self)
+        self.server_name = HOST
+        self.server_port = self.server_address[1]
+
 store = Store(DB)
 finance_ledger = FinanceLedger(store)
 mutex = RLock()
@@ -128,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=="__main__":
     print(f"SQLite LAB ONLY: http://localhost:{PORT}/ ; db={DB} ; production Excel is untouched",flush=True)
-    server=ThreadingHTTPServer((HOST,PORT),Handler)
+    server=LoopbackHTTPServer((HOST,PORT),Handler)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close();store.close()
