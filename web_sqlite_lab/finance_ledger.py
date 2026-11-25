@@ -29,14 +29,14 @@ def normalize(body):
             previous is not None and (type(previous)!=int or previous not in (5,15))):
             raise FinanceError("Выберите 5% или 15% для года 2027–2100")
         return {"action":"rate","opId":op,"year":year,"rate":rate,"previous":previous}
-    if action not in ("create","edit","delete"):raise FinanceError("Unknown finance action")
+    if action not in ("create","edit","delete","restore"):raise FinanceError("Unknown finance action")
     eid=_id(body.get("id"),"ID расхода")
     revision=body.get("revision",0)
     if type(revision)!=int or not (0<=revision<=999999999):
         raise FinanceError("Invalid expense revision")
     if action=="create" and revision!=0:raise FinanceError("Creation revision must be zero")
     if action!="create" and revision<1:raise FinanceError("Missing expense revision")
-    if action=="delete":
+    if action in ("delete","restore"):
         return {"action":action,"opId":op,"id":eid,"revision":revision}
     d=validate_finance_expense_date(body.get("date"))
     amount=kopecks(body.get("amount"))
@@ -49,7 +49,7 @@ def normalize(body):
             "date":d,"amount":f"{amount//100}.{amount%100:02d}","comment":comment}
 
 def model(events):
-    expenses={};rates={};ops={};created_ids=set()
+    expenses={};deleted={};rates={};ops={};created_ids=set()
     for item in events:
         e=normalize(item)
         op=e["opId"]
@@ -64,15 +64,22 @@ def model(events):
         if e["action"]=="create":
             if eid in created_ids:raise FinanceError("Повторное создание расхода")
             created_ids.add(eid)
-        else:
-            if eid not in expenses or expenses[eid]["revision"]!=e["revision"]:
-                raise FinanceError("Расход уже изменён или удалён; обновите страницу")
+        elif e["action"]=="restore":
+            if eid not in deleted or deleted[eid]["revision"]!=e["revision"]:
+                raise FinanceError("Расход не найден в Корзине или его версия изменилась")
+        elif eid not in expenses or expenses[eid]["revision"]!=e["revision"]:
+            raise FinanceError("Расход уже изменён или удалён; обновите страницу")
         if e["action"]=="delete":
-            del expenses[eid]
+            deleted[eid]={**expenses.pop(eid),"revision":e["revision"]+1}
+            continue
+        if e["action"]=="restore":
+            old=deleted.pop(eid)
+            expenses[eid]={**old,"revision":e["revision"]+1}
             continue
         expenses[eid]={"id":eid,"revision":e["revision"]+1,"date":e["date"],
                        "amount":e["amount"],"comment":e["comment"]}
     return {"expenses":sorted(expenses.values(),key=lambda x:(x["date"],x["id"])),
+            "deletedExpenses":sorted(deleted.values(),key=lambda x:(x["date"],x["id"])),
             "rates":rates,"operations":ops}
 
 class FinanceLedger:
@@ -85,7 +92,7 @@ class FinanceLedger:
             "SELECT payload_json FROM finance_events ORDER BY sequence")]
     def payload(self):
         result=model(self.events())
-        return {"expenses":result["expenses"],"rates":result["rates"]}
+        return {"expenses":result["expenses"],"deletedExpenses":result["deletedExpenses"],"rates":result["rates"]}
     def mutate(self,raw):
         e=normalize(raw)
         compact=json.dumps(e,ensure_ascii=False,sort_keys=True,separators=(",",":"))
@@ -95,9 +102,9 @@ class FinanceLedger:
             old=existing["operations"].get(e["opId"])
             if old is not None:
                 if old!=e:raise FinanceError("Операция с таким ID уже существует")
-                return {"expenses":existing["expenses"],"rates":existing["rates"]}
+                return {"expenses":existing["expenses"],"deletedExpenses":existing["deletedExpenses"],"rates":existing["rates"]}
             after=model(before+[e])
             self.store.db.execute(
                 "INSERT INTO finance_events(op_id,payload_json) VALUES(?,?)",
                 (e["opId"],compact))
-            return {"expenses":after["expenses"],"rates":after["rates"]}
+            return {"expenses":after["expenses"],"deletedExpenses":after["deletedExpenses"],"rates":after["rates"]}
