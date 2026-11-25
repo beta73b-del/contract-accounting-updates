@@ -82,7 +82,7 @@ class FileVaultTests(unittest.TestCase):
         self.assertTrue(self.vault._blob(item["id"]).exists())
         self.assertEqual(self.vault._row(item["id"])["state"],"trashed")
     def test_05_invalid_file_names_and_paths(self):
-        for name in ("../escape.txt","C:\\Windows\\test.txt","CON.txt","bad/name.txt",""):
+        for name in ("../escape.txt","C:\\Windows\\test.txt","CON.txt","bad/name.txt","bad\\nfile.txt",""):
             with self.subTest(name=name),self.assertRaises(DataError):
                 self.vault.add_stream(rid(),rid(),name,BytesIO(b"test"),4)
         self.assertEqual(self.vault.list_files("active"),[])
