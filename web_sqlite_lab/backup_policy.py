@@ -192,7 +192,8 @@ class BackupPolicy:
                 "lastSecondaryStatus":state.get("secondaryStatus","NOT_CONFIGURED"),
                 "automaticCopies":len(entries),
                 "warning":("NO_VERIFIED_COPY" if not entries else
-                           "SECONDARY_NOT_CONFIGURED" if self.secondary is None else None)}
+                           "SECONDARY_NOT_CONFIGURED" if self.secondary is None else
+                           "SECONDARY_FAILED" if state.get("secondaryStatus")=="FAILED" else None)}
 
     def run_if_due(self,now=None,force=False):
         moment=aware_utc(now)
@@ -205,6 +206,10 @@ class BackupPolicy:
                     last_check=aware_utc(last_check) if last_check else None
                 except (ValueError,TypeError):
                     last_check=None
+                if not force and last_check is not None and moment<last_check:
+                    # Clock was moved backwards. Do not create dated archives
+                    # in the past or run age-based deletion with an invalid clock.
+                    return {"status":"CLOCK_MOVED_BACK",**self.status()}
                 if (not force and last_check is not None and
                     last_check<=moment and
                     moment-last_check<timedelta(hours=CHECK_HOURS)):
@@ -217,7 +222,9 @@ class BackupPolicy:
                             inspect_transfer(path)
                             last_good=(created,path)
                             break
-                        except (TransferError,OSError,ValueError,KeyError):
+                        except Exception:
+                            # A corrupt latest ZIP must never be accepted as a
+                            # valid duplicate; create a fresh verified snapshot.
                             continue
                 archive=self._new_archive(moment)
                 result=export_lab(self.db,self.attachments,archive,
