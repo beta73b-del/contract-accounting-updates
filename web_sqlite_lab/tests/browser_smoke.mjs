@@ -74,6 +74,23 @@ try {
   await evaluate("document.getElementById('save').click()");
   check(await until(()=>evaluate("document.getElementById('records').textContent.includes('заключен')")),'Conclusion persisted via SQLite API');
   check(await evaluate("document.getElementById('health').textContent.includes('контрактов: 1')"),'UI count reconciled');
+  await set('expenseDate','2026-11-24');
+  await set('expenseAmount','125.01');
+  await set('expenseComment','Synthetic test expense');
+  await evaluate("document.getElementById('expenseSave').click()");
+  check(await until(()=>evaluate("document.getElementById('expenseRows').rows.length===1")),'Finance expense created and shown through SQLite');
+  await evaluate("document.querySelector('#expenseRows button').click()");
+  await set('expenseAmount','225.02');
+  await evaluate("document.getElementById('expenseSave').click()");
+  check(await until(()=>evaluate("document.getElementById('expenseRows').textContent.includes('225.02')")),'Finance expense revision updated in browser');
+  await set('rateYear','2027');
+  await set('rateValue','15');
+  await evaluate("document.getElementById('rateSave').click()");
+  check(await until(()=>evaluate("document.getElementById('rateCurrent').textContent.includes('15%')")),'2027 annual tax rate saved in SQLite');
+  await evaluate("window.confirm=()=>true");
+  await evaluate("document.querySelectorAll('#expenseRows button')[1].click()");
+  check(await until(()=>evaluate("document.getElementById('expenseRows').rows.length===0")),'Finance expense deleted with preserved ledger history');
+
   console.log('SQLITE_BROWSER_SMOKE '+checks+'/'+checks+' PASS');
 }finally{
   try{ws?.close()}catch{}
