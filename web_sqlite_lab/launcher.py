@@ -10,6 +10,20 @@ import sys
 import uuid
 import webbrowser
 
+def startup_data_state(folder):
+    """Classify user data *before* importing server.py (which opens SQLite)."""
+    root=Path(folder)
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        return "UNSAFE"
+    db=root/"lab.db"
+    if db.is_symlink() or (db.exists() and not db.is_file()):
+        return "UNSAFE"
+    if db.is_file():
+        return "EXISTING"
+    if root.exists() and any(root.iterdir()):
+        return "ORPHANED"
+    return "FRESH"
+
 def main():
     import tkinter as tk
     from tkinter import messagebox,filedialog
@@ -26,6 +40,29 @@ def main():
     tk.Label(root,text="Контракты ИП · SQLite LAB",font=("Arial",16,"bold")).pack(pady=(5,6))
     tk.Label(root,text="Изолированная тестовая программа.\nРабочая Excel-версия не изменяется.",
              justify="center",wraplength=420).pack(pady=5)
+    def recover_to_independent_folder():
+        """Use a verified archive, preserving the whole old data root."""
+        default=target/"backups"/"automatic"
+        chosen=filedialog.askopenfilename(
+            title="Выберите проверенный полный ZIP",
+            initialdir=str(default if default.is_dir() else target.parent),
+            filetypes=[("Резервный ZIP","*.zip"),("Все файлы","*.*")])
+        if not chosen:return False
+        separate=target.with_name(target.name+"-Recovered-"+uuid.uuid4().hex[:8])
+        try:
+            result=restore_new_install(chosen,separate)
+            if not result.get("appReady"):
+                raise TransferError("Incomplete restore")
+            messagebox.showinfo("Копия восстановлена отдельно",
+                "Полный комплект проверен. Папка:\n"+str(separate)+"\n\n"
+                "Старые база и документы не заменены. Переключение "
+                "разрешено только после сверки восстановленных данных.")
+            return True
+        except Exception:
+            messagebox.showerror("Восстановление не выполнено",
+                "Архив не прошёл полную проверку. Существующие данные не затронуты.")
+            return False
+
     def import_archive_first_run():
         """Only for a new, not-yet-created application data directory."""
         chosen=filedialog.askopenfilename(
@@ -55,7 +92,24 @@ def main():
                                  "Существующие данные не заменялись.")
             return False
 
-    if not (target/"lab.db").exists():
+    state=startup_data_state(target)
+    if state=="UNSAFE":
+        messagebox.showerror("Небезопасный каталог данных",
+            "Каталог приложения или файл SQLite является ссылкой/неверным типом. "
+            "Новая база не создаётся.")
+        root.destroy()
+        return 1
+    if state=="ORPHANED":
+        # Critical: database vanished but documents/backups remain.
+        # Creating a NEW empty DB here would silently detach all documents.
+        if messagebox.askyesno("SQLite отсутствует, документы сохранены",
+            "Рабочей базы lab.db нет, но в каталоге приложения остались файлы.\n"
+            "Создавать пустую базу поверх этих данных ЗАПРЕЩЕНО.\n\n"
+            "Восстановить проверенный архив в отдельную папку?"):
+            recover_to_independent_folder()
+        root.destroy()
+        return 1
+    if state=="FRESH":
         # Ask BEFORE importing the HTTP server, which would create a new DB.
         if messagebox.askyesno("Первый запуск — восстановление",
              "Новая SQLite-база отсутствует. Восстановить полный архив ZIP "
@@ -78,28 +132,10 @@ def main():
         # Restore only to an independent NEW directory; never overwrite the
         # old DB, documents or the user's Excel source.
         if messagebox.askyesno("Не удалось запустить SQLite",
-            "Не удалось открыть тестовую базу или локальный порт.\n"
-            "Сначала проверьте, не запущена ли программа второй раз.\n\n"
-            "Открыть восстановление ZIP в ОТДЕЛЬНУЮ папку без замены исходных данных?"):
-            default=target/"backups"/"automatic"
-            chosen=filedialog.askopenfilename(
-                title="Проверенный архив с другого диска или из папки backups",
-                initialdir=str(default if default.is_dir() else target),
-                filetypes=[("Резервный ZIP","*.zip"),("Все файлы","*.*")])
-            if chosen:
-                separate=target.with_name(target.name+"-Recovered-"+uuid.uuid4().hex[:8])
-                try:
-                    restored=restore_new_install(chosen,separate)
-                    if not restored.get("appReady"):
-                        raise TransferError("Restore verification incomplete")
-                    messagebox.showinfo("Восстановленная копия",
-                        "SQLite, документы и Корзина проверены.\n"
-                        "Копия сохранена отдельно:\n"+str(separate)+"\n\n"
-                        "Рабочая папка НЕ заменена. Для переключения нужен "
-                        "отдельный безопасный перенос.")
-                except Exception:
-                    messagebox.showerror("Восстановление не выполнено",
-                        "Архив не удалось проверить. Исходная папка и база не заменены.")
+            "Не удалось открыть существующую SQLite-базу или локальный порт.\n"
+            "Проверьте, не запущен ли второй экземпляр программы.\n\n"
+            "Попробовать восстановить полный ZIP в отдельный каталог?"):
+            recover_to_independent_folder()
         root.destroy()
         return 1
 
