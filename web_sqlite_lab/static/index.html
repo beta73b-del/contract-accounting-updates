@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Контракты ИП — SQLite лаборатория</title>
+<style>
+:root{font:15px/1.5 system-ui,Segoe UI,Arial,sans-serif;color:#1f2937;background:#eef2f7}
+*{box-sizing:border-box}body{margin:0}header{padding:18px 24px;background:#18324e;color:#fff}
+header strong{font-size:21px}header small{display:block;color:#d0dce9}main{max-width:1160px;margin:22px auto;padding:0 14px}
+.panel{background:#fff;border:1px solid #d6dfe8;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 8px #00000009}
+h2{font-size:19px;margin:0 0 14px}h3{font-size:15px}label{display:block;font-weight:600;font-size:13px;margin-bottom:10px}
+input,select{font:inherit;width:100%;padding:9px;border:1px solid #bcc9d5;border-radius:6px;min-width:0;margin-top:3px}
+button{border:0;border-radius:7px;padding:9px 14px;background:#17629c;color:#fff;font:inherit;cursor:pointer;margin:3px}
+button:hover{background:#0d4977}button:disabled{opacity:.5;cursor:not-allowed}
+.columns{display:grid;grid-template-columns:1fr 1fr;gap:16px}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 13px}
+.notice{background:#fff7e1;border-left:4px solid #ce8f16;padding:9px 14px;margin:8px 0 14px}
+.status{white-space:pre-wrap;background:#eef5fb;padding:11px;border-radius:8px;min-height:45px}
+table{border-collapse:collapse;width:100%}th,td{padding:8px;border-bottom:1px solid #dce3ea;text-align:left}
+td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:auto}
+.small{font-size:12px;color:#586573}.error{color:#a72222}.ok{color:#0b6840}
+@media(max-width:800px){.columns,.fields{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><strong>Контракты ИП — SQLite</strong><small>ИЗОЛИРОВАННАЯ ТЕСТОВАЯ ВЕРСИЯ · порт 8766 · действующая Excel-версия не изменяется</small></header>
+<main>
+<div class="notice"><b>Лаборатория, не рабочая система.</b> Используйте исключительно искусственные записи. Не импортируйте реальные контракты и документы. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
+<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Создать проверенный снимок SQLite</button><div id="message" aria-live="polite" class="status"></div></div>
+<div class="columns">
+<section class="panel"><h2>Тестовая карточка контракта</h2><div class="fields">
+<label>Заказчик<input id="customer" value="Тестовый заказчик"></label>
+<label>Площадка<input id="platform" value="Тестовая площадка"></label>
+<label>Номер<input id="contractNumber" value="LAB-001"></label>
+<label>Дата контракта<input id="contractDate" type="date"></label>
+<label>Статус<select id="status"><option value="формирование">Формирование</option><option value="подписать до">Подписать до</option><option value="на подписи">На подписи</option><option value="заключен">Заключён</option><option value="Отправлен">Отправлен</option><option value="Вручен">Вручен</option><option value="Оплачен">Оплачен</option></select></label>
+<label>Дата вручения<input id="handoverDate" type="date"></label>
+<label>Товар<select id="product"></select></label>
+<label>Количество<input id="qty" type="number" min="1" step="1" value="1"></label>
+<label>Цена, ₽<input id="price" value="1500.00" inputmode="decimal"></label>
+</div><p class="small">Перевод в «Отправлен» списывает физический остаток однократно. Возвраты, корректировки прихода, налоги и документы пока не реализованы.</p>
+<button id="save">Сохранить тестовый контракт</button><button id="new">Новая карточка</button>
+</section>
+<section class="panel"><h2>Тестовый склад</h2><label>Новый товар<input id="newProduct" placeholder="Название товара"></label>
+<button id="addProduct">Добавить товар</button><div class="fields">
+<label>Позиция<select id="receiptProduct"></select></label>
+<label>Приход, шт.<input id="receiptQty" type="number" min="1" value="10"></label>
+<label>Себестоимость за шт., ₽<input id="receiptCost" value="1000.00"></label>
+</div><button id="receipt">Приход</button>
+<div class="scroll"><table><thead><tr><th>Товар</th><th>Физически</th><th>Резерв</th><th>Доступно</th><th>Дефицит</th></tr></thead><tbody id="stock"></tbody></table></div>
+</section>
+</div>
+<section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Редактировать</th></tr></thead><tbody id="records"></tbody></table></div></section>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let key='',records=[],goods=[],activeId='',revision=0;
+function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
+function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
+function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
+async function request(path,body){
+ const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Contracts-Key':key},body:JSON.stringify(body),cache:'no-store'});
+ const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
+}
+async function refresh(){
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;goods=r.stock.items;
+ $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration;
+ choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
+ const st=$('stock');st.replaceChildren();
+ for(const x of goods){const tr=document.createElement('tr');[x.product,x.physical,x.reserved,x.available,x.shortage].forEach(y=>td(tr,y));st.append(tr)}
+ const table=$('records');table.replaceChildren();
+ for(const x of records){const tr=document.createElement('tr');[x.customer,x.contract_number,x.status,x.contract_date].forEach(y=>td(tr,y));const cell=document.createElement('td');const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);cell.append(b);tr.append(cell);table.append(tr)}
+}
+function open(x){activeId=x.id;revision=x.revision;
+ for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
+ if(x.items[0]){$('product').value=x.items[0].product;$('qty').value=x.items[0].quantity;$('price').value=x.items[0].unitPrice}
+ tell('Открыт черновик '+x.id+', ревизия '+revision);
+}
+function reset(){activeId='';revision=0;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
+$('status').addEventListener('change',()=>{if($('status').value==='заключен'&&!$('contractDate').value){const d=new Date();$('contractDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)}});
+$('new').onclick=reset;
+$('refresh').onclick=()=>refresh().catch(e=>tell(e.message,true));
+$('addProduct').onclick=async()=>{try{await request('/api/product',{name:$('newProduct').value});await refresh();tell('Товар добавлен')}catch(e){tell(e.message,true)}};
+$('receipt').onclick=async()=>{try{await request('/api/receipt',{requestId:crypto.randomUUID(),product:$('receiptProduct').value,qty:$('receiptQty').value,unitCost:$('receiptCost').value});await refresh();tell('Приход подтверждён')}catch(e){tell(e.message,true)}};
+$('save').onclick=async()=>{try{const payload={
+ id:activeId||crypto.randomUUID().replaceAll('-',''),revision,status:$('status').value,
+ customer:$('customer').value,platform:$('platform').value,contractNumber:$('contractNumber').value,
+ contractDate:$('contractDate').value,signBy:'',fulfillBy:'',handoverDate:$('handoverDate').value,paymentDue:'',
+ items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
+ };const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
+$('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
+refresh().catch(e=>tell(e.message,true));
+</script>
+</body></html>
