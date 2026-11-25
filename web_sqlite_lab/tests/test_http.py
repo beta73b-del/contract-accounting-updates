@@ -25,7 +25,10 @@ def call(url, payload=None, key="", origin=None):
         with urllib.request.urlopen(request,timeout=6) as res:
             return res.status, res.read().decode("utf-8"), dict(res.headers)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8"), dict(exc.headers)
+        try:
+            return exc.code, exc.read().decode("utf-8"), dict(exc.headers)
+        finally:
+            exc.close()
 
 class HTTPTests(unittest.TestCase):
     @classmethod
