@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from contextlib import closing
 from pathlib import Path
 
@@ -87,6 +88,44 @@ class TransferTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):restore_to_empty(self.zip,target)
         with closing(sqlite3.connect(target/"database.sqlite")) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],1)
+    def test_11_rejected_export_does_not_leave_corrupted_public_zip(self):
+        with patch("transfer_package.inspect_transfer",side_effect=TransferError("simulated integrity failure")):
+            with self.assertRaises(TransferError):self.create()
+        self.assertFalse(self.zip.exists(),"failed validation must not publish a corrupt transfer")
+        self.assertFalse(list(self.root.glob("*.incomplete-*")))
+    def test_12_reject_windows_reserved_device_names(self):
+        (self.attachments/"CON.txt").write_text("test")
+        with self.assertRaises(TransferError):self.create()
+        self.assertFalse(self.zip.exists())
+    def test_13_no_overwrite_and_explicit_verified_marker(self):
+        self.create()
+        target=self.root/"restored"
+        result=restore_to_empty(self.zip,target)
+        self.assertTrue(result["restoredToEmpty"])
+        proof=json.loads((target/".transfer-verified.json").read_text(encoding="utf-8"))
+        self.assertEqual(proof["archiveId"],result["archiveId"])
+        with self.assertRaises(FileExistsError):restore_to_empty(self.zip,target)
+        self.assertEqual((target/"database.sqlite").is_file(),True)
+    def test_14_reject_unicode_normalized_zip_collisions(self):
+        self.create()
+        test_zip=self.root/"collision-unicode.zip"
+        with zipfile.ZipFile(self.zip) as zin,zipfile.ZipFile(test_zip,"w") as zout:
+            for info in zin.infolist():
+                zout.writestr(info.filename,zin.read(info.filename))
+            zout.writestr("attachments/Cafe\u0301.txt","one")
+            zout.writestr("attachments/Caf\u00e9.txt","two")
+        with self.assertRaises(TransferError):inspect_transfer(test_zip)
+    def test_15_restore_rejects_destination_symlink_if_supported(self):
+        self.create()
+        real=self.root/"real-docs"
+        real.mkdir()
+        alias=self.root/"alias-docs"
+        try:alias.symlink_to(real,target_is_directory=True)
+        except (OSError,NotImplementedError):
+            self.skipTest("symlink creation is not allowed")
+        with self.assertRaises((TransferError,FileExistsError)):
+            restore_to_empty(self.zip,alias)
+        self.assertEqual(list(real.iterdir()),[])
     def test_10_symlink_rejected_if_supported(self):
         other=self.root/"outside.txt";other.write_text("private")
         try:(self.attachments/"external-link.txt").symlink_to(other)
