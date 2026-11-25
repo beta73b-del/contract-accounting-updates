@@ -178,7 +178,7 @@ class Handler(BaseHTTPRequestHandler):
                                          "cleanup":cleanup},
                                 "integrity":store.verify(),
                                 "backups":backup_status(),
-                                "migration":"NOT RUN"});return
+                                "migration":"TRIAL_BASELINE_PARTIAL" if (DB.parent/"attachments"/"excel-import-report.json").is_file() else "NOT RUN"});return
         if path=="/api/export/download":
             params=parse_qs(urlsplit(self.path).query)
             names=params.get("name",[])

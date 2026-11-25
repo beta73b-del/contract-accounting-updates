@@ -46,9 +46,10 @@ def main_locked(base,target):
     from transfer_package import TransferError
     from recovery_center import restore_first_install,restore_separate,activate_recovered
     from recovery_ui import choose_archive
+    from excel_import_ui import import_excel
     root=tk.Tk()
     root.title("Контракты ИП — SQLite LAB (тестовая версия)")
-    root.geometry("600x470")
+    root.geometry("620x510")
     root.minsize(510,420)
     root.configure(padx=20,pady=15)
     tk.Label(root,text="Контракты ИП · SQLite LAB",font=("Arial",16,"bold")).pack(pady=(5,6))
@@ -113,6 +114,14 @@ def main_locked(base,target):
         root.destroy()
         return 1
     if state=="FRESH":
+        if messagebox.askyesno("Первый запуск: Excel → SQLite",
+            "Перенести данные действующего Excel-приложения в отдельную SQLite LAB?\n\nДа — импорт Excel. Нет — восстановление ZIP или пустая база."):
+            imported=import_excel(root,base)
+            if imported:
+                activate_recovered(base,imported[0])
+                messagebox.showinfo("Импорт завершён","Тестовая база готова. Запустите приложение повторно. Excel не изменён.")
+            root.destroy()
+            return 0 if imported else 1
         # Ask BEFORE importing the HTTP server, which would create a new DB.
         if messagebox.askyesno("Первый запуск — восстановление",
              "Новая SQLite-база отсутствует. Восстановить полный архив ZIP "
@@ -188,6 +197,14 @@ def main_locked(base,target):
         except Exception as error:
             messagebox.showerror("Восстановление не выполнено",str(error))
 
+    def open_excel_import():
+        imported=import_excel(root,base)
+        if not imported:return
+        if messagebox.askyesno("Открыть импортированную копию",
+            "Новая SQLite сохранена отдельно. Завершить текущую программу и активировать импорт при следующем запуске?\nСтарая SQLite и Excel сохраняются."):
+            stop(activate=imported[0])
+        else:
+            messagebox.showinfo("Отдельная копия",str(imported[0]))
     def backup_now():
         try:
             with mutex:result=run_full_backup(force=True)
@@ -211,6 +228,8 @@ def main_locked(base,target):
 
     tk.Button(root,text="Создать полную резервную копию сейчас",
               command=backup_now,width=42).pack(pady=4)
+    tk.Button(root,text="Импорт базы Excel в SQLite (тест)",
+              command=open_excel_import,width=42).pack(pady=4)
     tk.Button(root,text="Центр резервирования и восстановления",
               command=open_recovery_center,width=42).pack(pady=4)
     tk.Button(root,text="Завершить работу",font=("Arial",12),

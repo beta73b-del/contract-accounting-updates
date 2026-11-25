@@ -62,6 +62,8 @@ jobs:
           --name ContractsIP-SQLiteLab
           --paths web_sqlite_lab
           --collect-all pysqlite3
+          --collect-all openpyxl
+          --collect-all et_xmlfile
           --add-data "web_sqlite_lab/static/index.html:static"
           web_sqlite_lab/launcher.py
       - name: Smoke-test actual Windows EXE against an isolated SQLite
