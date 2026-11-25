@@ -271,7 +271,8 @@ class HTTPTests(unittest.TestCase):
                                           "id":expid,"revision":2})
         self.assertEqual(status,200)
         self.assertEqual(e["expenses"][0]["amount"],"11.57")
-        self.assertEqual(e["deletedExpenses"],[])
+        self.assertFalse(any(row["id"]==expid for row in e["deletedExpenses"]),
+                         "Restored expense must leave Trash, without erasing other users' deleted expenses")
         status,backup,_=self.req("/api/backup",{})
         self.assertEqual(status,200)
         with closing(sqlite3.connect(backup["file"])) as db:
