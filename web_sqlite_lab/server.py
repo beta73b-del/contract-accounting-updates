@@ -18,6 +18,7 @@ from finance_ledger import FinanceLedger, FinanceError
 from finance_engine import forecast
 from file_vault import FileVault, MAX_FILE_BYTES, RETENTION_DAYS
 from transfer_package import export_lab, inspect_transfer, TransferError
+from backup_policy import BackupPolicy
 
 from platform_paths import lab_data_dir
 
@@ -45,24 +46,40 @@ file_vault = FileVault(store, DB.parent / 'managed_files')
 # a user invokes an explicit protected delete through the vault.
 (DB.parent / 'attachments').mkdir(parents=True,exist_ok=True)
 finance_ledger = FinanceLedger(store)
+backup_config_error = None
+try:
+    backup_policy = BackupPolicy(
+        DB, secondary_dir=os.environ.get("CONTRACTS_SQLITE_LAB_SECONDARY_BACKUP_DIR") or None)
+except TransferError:
+    # A missing USB/NAS must never prevent access to the LOCAL contracts DB.
+    # Do not claim secondary protection if it is unavailable.
+    backup_config_error = "Недоступно второе хранилище резервных копий"
+    backup_policy = BackupPolicy(DB)
 mutex = RLock()
 nonce = token_urlsafe(32)
 cleanup_stop = Event()
+last_backup_error = None
 
 def _cleanup_worker():
-    # At most one-hour delay after each 30-day deadline while the app stays open.
-    # The initial browser bootstrap also triggers cleanup immediately. SQLite
-    # writes share the same mutex as user operations.
-    while not cleanup_stop.wait(3600):
+    # Trigger on startup and then hourly, including missed daily backups.
+    # A failed backup must never delete older verified copies. Run all
+    # filesystem and SQL mutations behind the same per-process API mutex.
+    global last_backup_error
+    while not cleanup_stop.is_set():
         with mutex:
             try:
                 file_vault.purge_expired()
-            except (DataError, OSError):
-                # Never delete unverified bytes or crash the application.
-                # Keep the original document and retry at the next interval.
+                backup_policy.run_if_due()
+                last_backup_error = None
+            except Exception as error:
+                # Fail open for reading/using the application; fail closed
+                # for backup claims and deletion of old snapshots.
+                last_backup_error = type(error).__name__
                 if sys.stderr is not None:
-                    print("Managed file retention check failed; data left intact",
+                    print("Automatic backup or Trash retention failed; existing data preserved",
                           file=sys.stderr)
+        if cleanup_stop.wait(3600):
+            return
 
 cleanup_thread=Thread(target=_cleanup_worker,daemon=True,
                       name="ManagedFiles30DayRetention")
@@ -124,7 +141,10 @@ class Handler(BaseHTTPRequestHandler):
                                          "legacy":file_vault.list_legacy(DB.parent/"attachments"),
                                          "retentionDays":RETENTION_DAYS,
                                          "cleanup":cleanup},
-                                "integrity":store.verify(),"migration":"NOT RUN"});return
+                                "integrity":store.verify(),
+                                "backups":{**backup_policy.status(),
+                                           "lastError":last_backup_error or backup_config_error},
+                                "migration":"NOT RUN"});return
         if path=="/api/export/download":
             params=parse_qs(urlsplit(self.path).query)
             names=params.get("name",[])
