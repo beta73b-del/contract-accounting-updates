@@ -144,6 +144,30 @@ class LedgerTests(unittest.TestCase):
         with closing(sqlite3.connect(backups[0])) as c:
             self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0],1)
             self.assertEqual(c.execute("PRAGMA integrity_check").fetchone()[0],"ok")
+    def test_deleted_expense_is_recoverable_from_journal(self):
+        x=self.expense(amount="151.99")
+        self.ledger.mutate(x)
+        deletion={"action":"delete","opId":key(),"id":x["id"],"revision":1}
+        deleted=self.ledger.mutate(deletion)
+        self.assertEqual(deleted["expenses"],[])
+        self.assertEqual((len(deleted["deletedExpenses"]),deleted["deletedExpenses"][0]["revision"]),(1,2))
+        restore={"action":"restore","opId":key(),"id":x["id"],"revision":2}
+        result=self.ledger.mutate(restore)
+        self.assertEqual((len(result["expenses"]),result["expenses"][0]["amount"],
+                          result["expenses"][0]["revision"]),(1,"151.99",3))
+        self.assertEqual(result["deletedExpenses"],[])
+        self.assertEqual(self.ledger.mutate(restore),result)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM finance_events").fetchone()[0],3)
+        self.store.close();self.store=Store(self.db);self.ledger=FinanceLedger(self.store)
+        self.assertEqual(self.ledger.payload()["expenses"][0]["amount"],"151.99")
+    def test_restore_rejects_wrong_revision_or_untrashed_expense(self):
+        x=self.expense();self.ledger.mutate(x)
+        with self.assertRaises(FinanceError):
+            self.ledger.mutate({"action":"restore","opId":key(),"id":x["id"],"revision":1})
+        self.ledger.mutate({"action":"delete","opId":key(),"id":x["id"],"revision":1})
+        with self.assertRaises(FinanceError):
+            self.ledger.mutate({"action":"restore","opId":key(),"id":x["id"],"revision":1})
+        self.assertEqual(len(self.ledger.payload()["deletedExpenses"]),1)
     def test_schema_integrity(self):
         self.assertEqual(self.store.verify()["integrity"],"ok")
         self.assertEqual(self.store.db.execute("PRAGMA foreign_key_check").fetchall(),[])
