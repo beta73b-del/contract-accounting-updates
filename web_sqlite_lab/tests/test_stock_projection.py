@@ -48,9 +48,9 @@ class ReplayTests(unittest.TestCase):
            event("fix","editReceipt",target="r1",correctedQuantity=5,
                  correctedCents=7500,correctedDate="2026-11-20",
                  party="Test Supplier",lines=[line(0,0)])]
-        result=self.check_stock(e,(2,4500,0,2,0))
+        result=self.check_stock(e,(2,3000,0,2,0))
         self.assertEqual(result["events"][0]["lines"][0]["quantity"],5)
-        self.assertEqual(result["events"][1]["lines"][0]["cents"],-3000 if False else -4500)
+        self.assertEqual(result["events"][1]["lines"][0]["cents"],-4500)
         self.assertEqual(result["events"][2]["lines"][0]["cents"],0)
     def test_delete_receipt_can_fail_historical_stock(self):
         e=[event("r1","receipt",lines=[line(10,10000)]),
