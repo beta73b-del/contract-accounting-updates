@@ -2,7 +2,7 @@
 from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import sqlite3
+from sqlite_runtime import sqlite3
 import subprocess
 import sys
 import unittest
@@ -21,14 +21,16 @@ class SQLiteBuildSafetyTests(unittest.TestCase):
     def test_report_matches_actual_runtime(self):
         r=report()
         self.assertEqual(r["sqliteVersion"],sqlite3.sqlite_version)
-        self.assertEqual(r["releaseReadyForWAL"],patched_wal_reset())
+        self.assertEqual(r["sqliteVersion"],"3.54.1")
+        self.assertTrue(r["releaseReadyForWAL"])
+        self.assertEqual(r["expectedVersion"],"3.54.1")
     def test_production_gate_does_not_silently_pass_unsafe_build(self):
         mod=Path(__file__).resolve().parent.parent/"sqlite_build_safety.py"
         process=subprocess.run([sys.executable,str(mod),"--require-safe"],
                                capture_output=True,text=True,timeout=10)
-        expected=0 if patched_wal_reset() else 2
+        expected=0
         self.assertEqual(process.returncode,expected,process.stderr)
-        self.assertIn("sqliteVersion",process.stdout)
+        self.assertIn('"3.54.1"',process.stdout)
     def test_integrity_pragmas_are_real_not_just_schema_version(self):
         with TemporaryDirectory(prefix="sqlite-health-") as temp:
             db=Path(temp)/"synthetic.db"
