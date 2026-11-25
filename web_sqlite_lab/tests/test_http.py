@@ -428,5 +428,41 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(err.exception.code,403)
 
 
+    def test_12_legacy_attachment_delete_is_protected_and_reversible(self):
+        folder=self.db.parent/"attachments"/"legacy 2026"
+        folder.mkdir(exist_ok=True)
+        content=b"legacy attachment content"
+        file=folder/"Номер 1210001.txt"
+        file.write_bytes(content)
+        rel="legacy 2026/Номер 1210001.txt"
+        code,payload,_=self.req("/api/bootstrap")
+        self.assertEqual(code,200)
+        self.assertTrue(any(x["path"]==rel for x in payload["files"]["legacy"]))
+        with urllib.request.urlopen(self.url+"/api/files/legacy-download?"+urlencode({"path":rel}),timeout=8) as response:
+            self.assertEqual(response.read(),content)
+        delete={"requestId":uuid.uuid4().hex,"relativePath":rel}
+        code,trashed,_=self.req("/api/files/legacy-trash",delete)
+        self.assertEqual(code,200)
+        self.assertEqual(trashed["state"],"trashed")
+        self.assertEqual(trashed["name"],rel)
+        self.assertFalse(file.exists())
+        code,again,_=self.req("/api/files/legacy-trash",delete)
+        self.assertEqual((code,again),(200,trashed))
+        blob=self.db.parent/"managed_files"/(trashed["id"]+".bin")
+        self.assertEqual(blob.read_bytes(),content)
+        code,restored,_=self.req("/api/files/restore",{
+            "requestId":uuid.uuid4().hex,
+            "id":trashed["id"],"revision":trashed["revision"]})
+        self.assertEqual(code,200)
+        with urllib.request.urlopen(self.url+"/api/files/download?id="+restored["id"],timeout=8) as response:
+            self.assertEqual(response.read(),content)
+        # Relative path escape does not delete files outside attachments.
+        outside=self.db.parent/"outside.txt";outside.write_bytes(b"must stay")
+        code,error,_=self.req("/api/files/legacy-trash",{
+            "requestId":uuid.uuid4().hex,"relativePath":"../outside.txt"})
+        self.assertEqual(code,400)
+        self.assertEqual(outside.read_bytes(),b"must stay")
+
+
 if __name__=="__main__":
     unittest.main()
