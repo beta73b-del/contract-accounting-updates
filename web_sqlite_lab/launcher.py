@@ -69,7 +69,8 @@ def frozen_smoke():
     from urllib.request import build_opener, ProxyHandler
     from server import Handler,HOST,store
     opener=build_opener(ProxyHandler({}))
-    print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
+    if sys.stderr is not None:
+        print("SQLITE_LAB_SMOKE_SERVER_START",file=sys.stderr,flush=True)
     listener=ThreadingHTTPServer((HOST,0),Handler)
     worker=Thread(target=listener.serve_forever,daemon=True)
     try:
@@ -82,7 +83,8 @@ def frozen_smoke():
         with opener.open(f"http://127.0.0.1:{port}/api/bootstrap",timeout=4) as response:
             if response.status!=200:
                 raise RuntimeError("SQLite API healthcheck failed")
-        print("SQLITE_LAB_SMOKE_PASS",file=sys.stderr,flush=True)
+        if sys.stderr is not None:
+            print("SQLITE_LAB_SMOKE_PASS",file=sys.stderr,flush=True)
         return 0
     finally:
         listener.shutdown()
@@ -91,6 +93,11 @@ def frozen_smoke():
         store.close()
 
 if __name__=="__main__":
+    if "--smoke-no-console" in sys.argv:
+        # Reproduce the no-stdio behavior of a real GUI-frozen Windows app.
+        sys.stdout=None
+        sys.stderr=None
+        raise SystemExit(frozen_smoke())
     if "--smoke" in sys.argv:
         raise SystemExit(frozen_smoke())
     raise SystemExit(main())
