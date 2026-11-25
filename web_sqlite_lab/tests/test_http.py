@@ -14,6 +14,8 @@ import unittest
 import urllib.request
 import urllib.error
 import uuid
+from urllib.parse import urlencode
+from transfer_package import inspect_transfer,restore_new_install
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -279,6 +281,101 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM contract_lifecycle").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM contracts WHERE id=?",(cid,)).fetchone()[0],1)
+
+
+    def test_06_managed_file_api_and_browser_download_roundtrip(self):
+        fid=uuid.uuid4().hex
+        data=b"\x00\xff\x7f%PDF 2026 test"
+        query=urlencode({"requestId":uuid.uuid4().hex,"id":fid,"name":"Сертификат №3120.pdf","contractId":""})
+        request=urllib.request.Request(self.url+"/api/files/upload?"+query,data=data,
+                                       headers={"X-Contracts-Key":self.key},
+                                       method="POST")
+        with urllib.request.urlopen(request,timeout=8) as response:
+            self.assertEqual(response.status,200)
+            created=json.loads(response.read())
+        self.assertEqual(created["state"],"active")
+        self.assertEqual(created["size"],len(data))
+        with urllib.request.urlopen(self.url+"/api/files/download?id="+fid,timeout=8) as response:
+            self.assertEqual(response.read(),data)
+            self.assertIn("attachment",response.headers["Content-Disposition"])
+        status,boot,_=self.req("/api/bootstrap")
+        self.assertEqual(status,200)
+        self.assertTrue(any(x["id"]==fid for x in boot["files"]["active"]))
+        trash={"requestId":uuid.uuid4().hex,"id":fid,"revision":1,"reason":"Mistake"}
+        status,deleted,_=self.req("/api/files/trash",trash)
+        self.assertEqual(status,200)
+        self.assertEqual(deleted["state"],"trashed")
+        status,boot,_=self.req("/api/bootstrap")
+        self.assertTrue(any(x["id"]==fid for x in boot["files"]["trash"]))
+        self.assertFalse(any(x["id"]==fid for x in boot["files"]["active"]))
+        try:
+            urllib.request.urlopen(self.url+"/api/files/download?id="+fid,timeout=8)
+        except urllib.error.HTTPError as error:
+            self.assertEqual(error.code,404)
+        else:
+            self.fail("Trashed document was downloadable")
+        status,restored,_=self.req("/api/files/restore",{
+            "requestId":uuid.uuid4().hex,"id":fid,"revision":2})
+        self.assertEqual(status,200)
+        self.assertEqual(restored["state"],"active")
+        with urllib.request.urlopen(self.url+"/api/files/download?id="+fid,timeout=8) as response:
+            self.assertEqual(response.read(),data)
+
+    def test_07_export_full_db_docs_and_trash_to_new_os_folder(self):
+        fid=uuid.uuid4().hex
+        content=b"deleted document remains portable"
+        url=self.url+"/api/files/upload?"+urlencode({
+            "requestId":uuid.uuid4().hex,"id":fid,
+            "name":"Удалённый документ.docx"})
+        request=urllib.request.Request(url,data=content,
+              headers={"X-Contracts-Key":self.key},method="POST")
+        with urllib.request.urlopen(request,timeout=8) as response:
+            self.assertEqual(response.status,200)
+        status,deleted,_=self.req("/api/files/trash",{
+            "requestId":uuid.uuid4().hex,"id":fid,
+            "revision":1,"reason":"Test trash"})
+        self.assertEqual(status,200)
+        status,report,_=self.req("/api/export",{})
+        self.assertEqual(status,200)
+        self.assertTrue(report["valid"])
+        self.assertGreaterEqual(report["managedBlobs"],1)
+        with urllib.request.urlopen(self.url+report["download"],timeout=20) as response:
+            archive_bytes=response.read()
+            self.assertEqual(response.headers["Content-Type"],"application/zip")
+        archive=Path(self.tmp.name)/"cross-machine-test.zip"
+        archive.write_bytes(archive_bytes)
+        self.assertEqual(inspect_transfer(archive)["managedBlobs"],report["managedBlobs"])
+        restored=Path(self.tmp.name)/"fresh-computer"
+        result=restore_new_install(archive,restored)
+        self.assertTrue(result["appReady"])
+        self.assertTrue((restored/"lab.db").is_file())
+        with closing(sqlite3.connect(restored/"lab.db")) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],4)
+            row=db.execute("SELECT state FROM managed_files WHERE id=?",(fid,)).fetchone()
+            self.assertEqual(row[0],"trashed")
+            doc=db.execute("SELECT blob FROM managed_files WHERE id=?",(fid,)).fetchone()[0]
+        self.assertEqual((restored/"managed_files"/doc).read_bytes(),content)
+        self.assertFalse((restored/"database.sqlite").exists())
+
+    def test_08_tampered_managed_document_fails_export_closed(self):
+        fid=uuid.uuid4().hex
+        body=b"untouched file content"
+        url=self.url+"/api/files/upload?"+urlencode({
+            "requestId":uuid.uuid4().hex,"id":fid,"name":"dont-leak.txt"})
+        req=urllib.request.Request(url,data=body,
+               headers={"X-Contracts-Key":self.key},method="POST")
+        with urllib.request.urlopen(req,timeout=8):pass
+        blob=self.db.parent/"managed_files"/(fid+".bin")
+        self.assertEqual(blob.read_bytes(),body)
+        prior=set((self.db.parent/"backups").glob("complete-*.zip"))
+        blob.write_bytes(b"CORRUPTED BY EXTERNAL PROCESS")
+        try:
+            status,error,_=self.req("/api/export",{})
+            self.assertEqual(status,400)
+            self.assertIn("error",error)
+            self.assertEqual(set((self.db.parent/"backups").glob("complete-*.zip")),prior)
+        finally:
+            blob.write_bytes(body)
 
 
 if __name__=="__main__":
