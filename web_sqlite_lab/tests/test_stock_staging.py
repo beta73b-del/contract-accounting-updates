@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 import copy
 import json
 import sqlite3
+import os
+from unittest.mock import patch
 import subprocess
 import sys
 import unittest
@@ -108,6 +110,16 @@ class StockStagingTests(unittest.TestCase):
         self.dest.write_bytes(b'KEEP')
         with self.assertRaises(FileExistsError):build_stock_staging(self.raw,self.dest)
         self.assertEqual(self.dest.read_bytes(),b'KEEP')
+    def test_concurrent_destination_creation_cannot_be_overwritten(self):
+        real_link=os.link
+        def create_target_first(source,dest):
+            Path(dest).write_bytes(b'KEEP USER DATA')
+            return real_link(source,dest)
+        with patch('stock_staging.os.link',side_effect=create_target_first):
+            with self.assertRaises(FileExistsError):
+                build_stock_staging(self.raw,self.dest)
+        self.assertEqual(self.dest.read_bytes(),b'KEEP USER DATA')
+        self.assertEqual(len(list(self.root.glob('*.staging-*'))),0)
     def test_missing_stock_section(self):
         with closing(sqlite3.connect(self.raw)) as con:
             con.execute('DELETE FROM raw_sections')
