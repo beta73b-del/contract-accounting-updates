@@ -93,7 +93,7 @@ async function request(path,body){
 }
 async function refresh(){
  const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());stockImportLocked=Boolean(r.integrity.stockImportLocked);$('receipt').disabled=stockImportLocked;$('addProduct').disabled=stockImportLocked;if(stockImportLocked)$('save').disabled=true;key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
- $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration+
+ $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration+(stockImportLocked?' · СКЛАД: ТОЛЬКО ПРОСМОТР ДО СВЕРКИ РЕЗЕРВОВ':'')+
    (r.integrity.walResetFixed?'':' · ВНИМАНИЕ: SQLite '+r.integrity.sqliteVersion+' без патча WAL-reset, журнал '+r.integrity.journalMode+'; нужен патч перед рабочим релизом');
  const backups=r.backups||{};
  const warning=backups.lastError?'Ошибка резервирования: '+backups.lastError:

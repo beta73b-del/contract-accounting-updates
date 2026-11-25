@@ -39,9 +39,10 @@ def baseline(stock):
         inv[name]={**x,"quantity":q,"cents":c,"reserved":r,"available":a,"shortage":s,"deleted":d}
     if any(not isinstance(k,str) or (v is not None and not isinstance(v,str)) for k,v in phases.items()):
         raise BaselineError("Некорректный справочник фаз Excel")
-    warnings=[];replay=None
+    warnings=[];replay=None;candidate=None
     try:
         replay=_validate_stock(stock)
+        candidate=replay
     except (ValueError,TypeError,KeyError) as e:
         warnings.append({"kind":"journalParity","message":str(e)})
         # Produce explicit per-product differences if independent replay is possible.
@@ -57,7 +58,7 @@ def baseline(stock):
                     if actual.get(field)!=expected[field]:
                         warnings.append({"kind":"journalDifference","product":name,"field":field,"excel":expected[field],"replay":actual.get(field)})
         except (ValueError,TypeError,KeyError):pass
-    return {"inventory":inv,"phases":phases,"verifiedReplay":replay,"warnings":warnings}
+    return {"inventory":inv,"phases":phases,"verifiedReplay":replay,"reservationReplay":candidate,"warnings":warnings}
 
 def reservation_differences(inv,phases,records,replay):
     """Check attribution, not merely the sum, before allowing stock mutations."""
@@ -77,6 +78,10 @@ def reservation_differences(inv,phases,records,replay):
                 for n in replay["contracts"].get(cid,{}).get("needs",[]):needs[n["product"]]+=n["quantity"]
                 if dict(qty)!=dict(needs):
                     warnings.append({"kind":"reservationAllocation","id":cid,"excelNeeds":dict(needs),"sqliteNeeds":dict(qty)})
+    if replay is not None:
+        candidate_phases={cid:v.get("phase") for cid,v in replay["contracts"].items() if v.get("phase")=="reserved"}
+        source_phases={cid:phase for cid,phase in phases.items() if phase=="reserved"}
+        if candidate_phases!=source_phases:warnings.append({"kind":"reservationJournalPhaseMismatch"})
     for cid,phase in phases.items():
         if phase=="reserved" and cid not in active_ids:
             warnings.append({"kind":"reservationMissingContract","id":cid})

@@ -77,19 +77,18 @@ class ExcelImportTests(unittest.TestCase):
         report=build_trial_archive(self.snap,self.archive)
         self.assertEqual(report["checks"]["stockBalancesReservesCost"],"PASS")
         self.assertEqual(report["checks"]["stockHistoryReplay"],"WARN")
-        self.assertTrue(report["stockImportLocked"])
+        self.assertFalse(report["stockImportLocked"])
         self.assertTrue(any(x.get("field")=="quantity" for x in report["stockWarnings"]))
         target=self.root/"opening";restore_first_install(self.archive,target)
         db=Store(target/"lab.db")
         try:
             x=next(i for i in db.stock_summary() if i["product"]==self.product)
             self.assertEqual((x["physical"],x["reserved"],x["available"],x["inventoryCost"]),(19,7,12,"23750.00"))
-            self.assertTrue(db.stock_import_locked())
-            from store import DataError
-            with self.assertRaises(DataError):db.receipt("receipt-guard",self.product,1,"100")
-            with self.assertRaises(DataError):db.save_contract("save-guard-01",dict(self.payload["records"][0],revision=1))
-            with self.assertRaises(DataError):db.trash_contract("trash-guard-01",self.cid,1)
+            self.assertFalse(db.stock_import_locked())
             self.assertEqual(db.db.execute("SELECT COUNT(*) FROM shipments").fetchone()[0],0)
+            db.receipt("receipt-after-import",self.product,1,"1250")
+            x=next(i for i in db.stock_summary() if i["product"]==self.product)
+            self.assertEqual((x["physical"],x["reserved"],x["inventoryCost"]),(20,7,"25000.00"))
         finally:db.close()
     def test_reservation_from_excel_not_status(self):
         # Journal is coherent, but a source reserve can belong to a different status.
@@ -107,6 +106,10 @@ class ExcelImportTests(unittest.TestCase):
             x=next(i for i in db.stock_summary() if i["product"]==self.product)
             self.assertEqual(x["reserved"],7)
             self.assertEqual(x["available"],10)
+            from store import DataError
+            with self.assertRaises(DataError):db.receipt("receipt-guard",self.product,1,"100")
+            with self.assertRaises(DataError):db.save_contract("save-guard-01",dict(self.payload["records"][0],revision=1))
+            with self.assertRaises(DataError):db.trash_contract("trash-guard-01",self.cid,1)
         finally:db.close()
     def test_history_mismatch_without_reservations_allows_new_receipts(self):
         self.payload["records"][0]["status"]="формирование"

@@ -249,7 +249,7 @@ def build_trial_archive(snapshot_dir,archive_path):
             now=datetime.now(timezone.utc).isoformat()
             inv=opening["inventory"];replay=opening["verifiedReplay"];phases=opening["phases"]
             stock_warnings=opening["warnings"]
-            reserve_warnings=reservation_differences(inv,phases,records,replay)
+            reserve_warnings=reservation_differences(inv,phases,records,opening["reservationReplay"])
             legacy_shipped=[];archived_deleted=[]
             with store.transaction():
                 # Opening balances copied exactly from the current Web/Excel snapshot.
