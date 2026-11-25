@@ -197,7 +197,7 @@ class HTTPTests(unittest.TestCase):
         code,archive,_=self.req("/api/backup",{})
         self.assertEqual(code,200)
         with closing(sqlite3.connect(archive["file"])) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],4)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM finance_events").fetchone()[0],4)
 
 
