@@ -1,0 +1,41 @@
+name: Web SQLite Lab cross-platform tests (no release)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/web-sqlite-parallel-prototype
+    paths:
+      - 'web_sqlite_lab/**'
+      - '.github/workflows/web-sqlite-lab-ci.yml'
+jobs:
+  test:
+    name: Unit API Backup Import - ${{ matrix.os }} - Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python: ['3.11']
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test-only XLSX reader
+        run: python -m pip install "openpyxl>=3.1,<4"
+      - name: Syntax verification
+        run: python -m compileall -q web_sqlite_lab
+      - name: SQLite lab synthetic integration and migration tests
+        working-directory: web_sqlite_lab
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Check that no customer DB is committed
+        shell: bash
+        run: |
+          if git ls-files web_sqlite_lab | grep -Ei '(\.db$|\.sqlite$|\.xlsx$|\.zip$|\.pdf$|\.sqlite-wal$)'; then
+            echo "Unexpected binary/user data inside lab source"; exit 1
+          fi
+      - name: Publish test metadata
+        if: always()
+        run: python -c "import platform,sys;print('OS:',platform.platform());print('Python:',sys.version);"
