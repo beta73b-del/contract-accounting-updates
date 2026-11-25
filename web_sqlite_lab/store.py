@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from pathlib import Path
+from sqlite_build_safety import patched_wal_reset
 import json
 import os
 import re
@@ -487,6 +488,9 @@ class Store:
         if integrity!="ok" or fk:
             raise DataError("Ошибка целостности базы данных")
         return {"integrity":integrity,"foreignKeys":len(fk),
+                "sqliteVersion":sqlite3.sqlite_version,
+                "walResetFixed":patched_wal_reset(),
+                "journalMode":self.db.execute("PRAGMA journal_mode").fetchone()[0],
                 "contracts":len(self.list_contracts()),
                 "trashedContracts":self.db.execute("SELECT COUNT(*) FROM contract_trash").fetchone()[0]}
 
