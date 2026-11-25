@@ -53,6 +53,8 @@ def import_excel(parent,base):
             summary=("Контрактов: "+str(value["activeContracts"])+"\nТоваров: "+str(value["products"])+
                 "\nДокументов: "+str(value["documents"])+"\nРасходов: "+str(value["finance"]["activeExpenses"])+
                 "\nОтсутствующих папок: "+str(len(value["missingLinkedFolders"]))+
+                "\nКарточек без цены: "+str(len(value.get("missingPricePositions",[])))+
+                "\nКарточек с точно рассчитанной ценой: "+str(len(value.get("derivedPricePositions",[])))+
                 "\nУдалённых строк Excel (в архиве): "+str(value["deletedExcelRowsPreserved"])+
                 "\n\nСкладской журнал, исходный Excel, JSON и неподдерживаемые поля сохранены в архиве."
                 "\nИстория, дополнительные поля, письма и полная финансовая сверка пока не реализованы в интерфейсе."

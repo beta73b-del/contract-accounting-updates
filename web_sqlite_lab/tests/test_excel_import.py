@@ -82,3 +82,42 @@ class ExcelImportTests(unittest.TestCase):
         self.capture();(self.snap/"source_api.json").write_text("{}",encoding="utf8")
         with self.assertRaises(ValueError):build_trial_archive(self.snap,self.archive)
         self.assertFalse(self.archive.exists())
+
+    def test_blank_price_preserved_not_zero(self):
+        self.payload["records"][0]["items"][0]["unitPrice"]=""
+        self.payload["records"][0]["amount"]=""
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertFalse(report["contractKopecksComplete"])
+        self.assertEqual(report["missingPricePositions"],[{"id":self.cid,"positions":[1]}])
+        target=self.root/"missing";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            item=db.get_contract(self.cid)["items"][0]
+            self.assertEqual(item["unitPrice"],"")
+            self.assertTrue(item["priceMissing"])
+        finally:db.close()
+    def test_blank_price_exact_from_total(self):
+        self.payload["records"][0]["items"][0]["unitPrice"]=""
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["derivedPricePositions"],[{"id":self.cid,"positions":[1]}])
+    def test_blank_price_fraction_rejected_with_contract(self):
+        self.payload["records"][0]["items"][0]["unitPrice"]=""
+        self.payload["records"][0]["amount"]="10500.01"
+        self.capture()
+        with self.assertRaisesRegex(MigrationError,"Контракт 0000042"):build_trial_archive(self.snap,self.archive)
+        self.assertFalse(self.archive.exists())
+    def test_zero_price_is_not_missing(self):
+        self.payload["records"][0]["items"][0]["unitPrice"]="0"
+        self.payload["records"][0]["amount"]="0"
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertTrue(report["contractKopecksComplete"])
+        target=self.root/"zero";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            item=db.get_contract(self.cid)["items"][0]
+            self.assertEqual(item["unitPrice"],"0.00")
+            self.assertNotIn("priceMissing",item)
+        finally:db.close()

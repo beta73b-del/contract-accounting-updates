@@ -50,16 +50,27 @@ def source_lines(r):
     raw=pick(r,("items","positions"),"позиции")
     if raw is None:
         # Explicit single-line legacy shape, not derived from contract total.
-        if all(k in r for k in ("product","quantity","unitPrice")):raw=[r]
+        if all(k in r for k in ("product","quantity")):raw=[r]
         else:raise MigrationError("Неизвестный формат товарных позиций; требуется карта полей")
     if not isinstance(raw,list) or not raw:raise MigrationError("Нет товарных позиций")
-    out=[]
-    for x in raw:
+    out=[];derived=[]
+    for pos,x in enumerate(raw,1):
         if not isinstance(x,dict):raise MigrationError("Некорректная позиция")
-        out.append({"product":pick(x,("product","name"),"товар"),
-            "quantity":pick(x,("quantity","qty"),"количество"),
-            "unitPrice":decimal_text(pick(x,("unitPrice","price"),"цена"))})
-    return normalized_lines(out)
+        qty=pick(x,("quantity","qty"),"количество")
+        prices=[money(decimal_text(x[k])) for k in ("unitPrice","price") if k in x and x[k] is not None and str(x[k]).strip()]
+        if len(set(prices))>1:raise MigrationError("Противоречивые цены позиции "+str(pos))
+        value=amount(prices[0]) if prices else ""
+        if not prices:
+            totals=[x[k] for k in ("lineTotal","total","amount") if k in x and x[k] is not None and str(x[k]).strip()]
+            if len(raw)==1 and r.get("amount") is not None and str(r["amount"]).strip():totals.append(r["amount"])
+            cents=[money(decimal_text(v)) for v in totals]
+            if len(set(cents))>1:raise MigrationError("Противоречивые суммы позиции "+str(pos))
+            if cents and cents[0]>0:
+                if not re.fullmatch(r"[1-9]\d{0,6}",str(qty)) or cents[0]%int(qty):
+                    raise MigrationError("Не удаётся точно вычислить цену позиции "+str(pos)+" из суммы и количества")
+                value=amount(cents[0]//int(qty));derived.append(pos)
+        out.append({"product":pick(x,("product","name"),"товар"),"quantity":qty,"unitPrice":value})
+    return normalized_lines(out,allow_missing_price=True),derived
 
 def normalize_contract(r):
     if not isinstance(r,dict):raise MigrationError("Некорректная карточка")
@@ -70,7 +81,8 @@ def normalize_contract(r):
     if status not in STATUSES:raise MigrationError("Неизвестный статус контракта: "+str(status))
     dates={k:validate_date(textfield(r,(k,),k,10)) for k in
         ("contractDate","signBy","fulfillBy","handoverDate","paymentDue")}
-    lines=source_lines(r)
+    lines,derived=source_lines(r)
+    missing=[i for i,l in enumerate(lines,1) if l.get("price_missing")]
     total=sum(x["line_total"] for x in lines)
     if r.get("amount") not in (None,"") and money(decimal_text(r["amount"]))!=total:
         raise MigrationError("Сумма контракта не равна сумме его позиций")
@@ -78,7 +90,7 @@ def normalize_contract(r):
         "customer":textfield(r,("customer",),"заказчик",500),
         "platform":textfield(r,("platform",),"площадка",120),
         "number":textfield(r,("contractNumber",),"номер",100),
-        "dates":dates,"lines":lines,"total":total}
+        "dates":dates,"lines":lines,"total":total,"missingPrices":missing,"derivedPrices":derived}
 
 def read_api():
     opener=build_opener(ProxyHandler({}))
@@ -165,7 +177,12 @@ def build_trial_archive(snapshot_dir,archive_path):
     if db_records!={r["id"]:r for r in raw["records"]} or db_sections!={k:v for k,v in raw.items() if k!="records"}:
         raise MigrationError("JSON и сохранённый источник SQLite расходятся")
     projection=_validate_stock(raw["stock"])
-    records=[normalize_contract(r) for r in raw["records"]]
+    records=[]
+    for r in raw["records"]:
+        try:records.append(normalize_contract(r))
+        except (ValueError,TypeError) as exc:
+            label=str(r.get("contractNumber") or r.get("id") or "?") if isinstance(r,dict) else "?"
+            raise MigrationError("Контракт "+label+": "+str(exc)) from exc
     ids={r["id"] for r in records}
     if len(ids)!=len(records):raise MigrationError("Повторный контракт")
     archive.parent.mkdir(parents=True,exist_ok=True)
@@ -208,6 +225,7 @@ def build_trial_archive(snapshot_dir,archive_path):
                         (cid,1,r["customer"],r["platform"],r["status"],r["number"],d["contractDate"],d["signBy"],d["fulfillBy"],d["handoverDate"],d["paymentDue"],now,now))
                     store.db.executemany("INSERT INTO contract_lines VALUES(?,?,?,?,?)",
                         [(cid,i,l["product"],l["quantity"],l["unit_price"]) for i,l in enumerate(r["lines"],1)])
+                    store.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",[(cid,i) for i in r["missingPrices"]])
                     store.db.execute("INSERT INTO excel_import_raw_contracts VALUES(?,?)",(cid,json.dumps(source,ensure_ascii=False)))
                     phase=phases.get(cid,{})
                     if r["status"]=="заключен" and phase.get("phase")!="reserved":
@@ -241,7 +259,7 @@ def build_trial_archive(snapshot_dir,archive_path):
             for r in records:
                 x=got[r["id"]];d=r["dates"]
                 if (x["status"],x["customer"],x["platform"],x["contract_number"],x["contract_date"],x["sign_by"],x["fulfill_by"],x["handover_date"],x["payment_due"])!=(r["status"],r["customer"],r["platform"],r["number"],d["contractDate"],d["signBy"],d["fulfillBy"],d["handoverDate"],d["paymentDue"]):raise MigrationError("Реквизиты контракта не совпали")
-                if [(l["product"],l["quantity"],money(l["unitPrice"])) for l in x["items"]]!=[(l["product"],l["quantity"],l["unit_price"]) for l in r["lines"]]:raise MigrationError("Позиции контракта не совпали")
+                if [(l["product"],l["quantity"],money(l["unitPrice"]),bool(l.get("priceMissing"))) for l in x["items"]]!=[(l["product"],l["quantity"],l["unit_price"],bool(l.get("price_missing"))) for l in r["lines"]]:raise MigrationError("Позиции контракта не совпали")
             mapping,finance=finance_baseline(store,raw["finance"])
             vault=FileVault(store);docs=0;unlinked=[]
             for entry in manifest["files"]:
@@ -258,6 +276,9 @@ def build_trial_archive(snapshot_dir,archive_path):
             store.verify()
             report={"status":"TRIAL_BASELINE_PARTIAL","sourceManifestSha256":checksum(src/"manifest.json"),
                 "activeContracts":len(records),"contractKopecks":sum(r["total"] for r in records),
+                "contractKopecksComplete":not any(r["missingPrices"] for r in records),
+                "missingPricePositions":[{"id":r["id"],"positions":r["missingPrices"]} for r in records if r["missingPrices"]],
+                "derivedPricePositions":[{"id":r["id"],"positions":r["derivedPrices"]} for r in records if r["derivedPrices"]],
                 "products":len(inv),"stockEventsPreserved":len(raw["stock"]["events"]),"documents":docs,
                 "sourceDocuments":checks["documentFilesCopied"],"missingLinkedFolders":manifest.get("warnings",[]),
                 "unlinkedDocumentsPreserved":unlinked,"historicalShippedWithoutEvent":legacy_shipped,

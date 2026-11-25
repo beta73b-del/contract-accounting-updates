@@ -65,7 +65,7 @@ def validate_date(value):
         except ValueError: raise DataError("Несуществующая дата") from None
     return value
 
-def normalized_lines(raw):
+def normalized_lines(raw, allow_missing_price=False):
     if not isinstance(raw, list) or not (1 <= len(raw) <= 50):
         raise DataError("Нужно от 1 до 50 товарных строк")
     lines = []
@@ -79,10 +79,14 @@ def normalized_lines(raw):
         if isinstance(quantity, bool) or not re.fullmatch(r"[1-9]\d{0,6}", str(quantity)):
             raise DataError("Количество должно быть положительным целым числом")
         qty = int(quantity)
-        price = money(row.get("unitPrice"), required=True)
+        raw_price=row.get("unitPrice")
+        missing=raw_price is None or (isinstance(raw_price,str) and not raw_price.strip())
+        price=money(raw_price,required=not allow_missing_price)
         if price * qty > MONEY_LIMIT:
             raise DataError("Стоимость товарной строки превышает предел")
-        lines.append({"product": product, "quantity": qty, "unit_price": price, "line_total": price * qty})
+        line={"product":product,"quantity":qty,"unit_price":price,"line_total":price*qty}
+        if missing:line["price_missing"]=True
+        lines.append(line)
     return lines
 
 class Store:
@@ -235,6 +239,10 @@ class Store:
             except BaseException:
                 self.db.execute("ROLLBACK")
                 raise
+        self.db.execute("""CREATE TABLE IF NOT EXISTS contract_line_missing_price(
+            contract_id TEXT NOT NULL, position INTEGER NOT NULL,
+            PRIMARY KEY(contract_id,position),
+            FOREIGN KEY(contract_id,position) REFERENCES contract_lines(contract_id,position) ON DELETE CASCADE)""")
         if self.db.execute("PRAGMA user_version").fetchone()[0] != 4:
             raise DataError("SQLite managed-file migration failed")
         required=("finance_events","contract_trash","contract_lifecycle","managed_files","file_events")
@@ -335,7 +343,7 @@ class Store:
                  ("contractDate", "signBy", "fulfillBy", "handoverDate", "paymentDue")}
         if status in ("Вручен", "Оплачен") and not dates["handoverDate"]:
             raise DataError("При вручении укажите фактическую дату")
-        lines = normalized_lines(raw.get("items"))
+        lines = normalized_lines(raw.get("items"),allow_missing_price=status in ("формирование","подписать до","на подписи"))
         if sum(x["line_total"] for x in lines) > MONEY_LIMIT:
             raise DataError("Общая сумма контракта слишком велика")
         payload = {"kind":"contract","id":cid,"status":status, "customer":customer,
@@ -402,6 +410,8 @@ class Store:
                      dates["signBy"],dates["fulfillBy"],dates["handoverDate"],dates["paymentDue"],now,now))
             self.db.executemany("INSERT INTO contract_lines VALUES(?,?,?,?,?)",
                 [(cid,i+1,l["product"],l["quantity"],l["unit_price"]) for i,l in enumerate(lines)])
+            self.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",
+                [(cid,i+1) for i,l in enumerate(lines) if l.get("price_missing")])
             result=self.get_contract(cid)
             self._record_op(request_id,digest,result)
             return result
@@ -417,9 +427,15 @@ class Store:
         data["deletedAt"]=deleted["deleted_at"] if deleted else None
         data["deletedReason"]=deleted["reason"] if deleted else ""
         data["items"]=[dict(x) for x in self.db.execute(
-            "SELECT product,quantity,unit_price FROM contract_lines WHERE contract_id=? ORDER BY position",(cid,))]
+            """SELECT l.product,l.quantity,l.unit_price,
+            EXISTS(SELECT 1 FROM contract_line_missing_price m WHERE m.contract_id=l.contract_id AND m.position=l.position) AS missing
+            FROM contract_lines l WHERE l.contract_id=? ORDER BY l.position""",(cid,))]
         for item in data["items"]:
-            item["unitPrice"] = amount(item.pop("unit_price"))
+            v=item.pop("unit_price")
+            if item.pop("missing"):
+                item["unitPrice"]=""
+                item["priceMissing"]=True
+            else:item["unitPrice"]=amount(v)
         return data
 
     def list_contracts(self):
