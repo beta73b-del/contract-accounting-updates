@@ -41,8 +41,10 @@ def _name(name):
         _safe_name(name)
     except TransferError as exc:
         raise DataError("Недопустимое имя документа") from exc
-    if "/" in name or len(name)>240 or name in ("manifest.json","database.sqlite"):
-        raise DataError("Имя документа должно быть допустимым именем файла")
+    # Permit a normalized virtual relative path for legacy attachments.
+    # Physical data is always stored as an opaque ID.bin, never under name.
+    if len(name)>800 or name in ("manifest.json","database.sqlite"):
+        raise DataError("Имя документа должно быть допустимым относительным путём")
     return name
 
 def _id(value, what="идентификатор"):
@@ -313,15 +315,28 @@ class FileVault:
                 raise DataError("Символьные ссылки во вложениях запрещены")
         if not src.is_file() or not src.resolve().is_relative_to(base):
             raise DataError("Файл вложения отсутствует")
-        file_id=uuid.uuid4().hex
+        # Deterministic IDs make a repeated delete request idempotent even
+        # if the original file was already removed after successful copying.
+        file_id=sha256((request_id+"\\0"+relative_path).encode("utf-8")).hexdigest()[:32]
+        copy_op=sha256(("copy:"+request_id).encode("utf-8")).hexdigest()
+        trash_op=sha256(("trash:"+request_id).encode("utf-8")).hexdigest()
         with src.open("rb") as stream:
-            item=self.add_stream(request_id+"-copy",file_id,src.name,
+            item=self.add_stream(copy_op,file_id,relative_path,
                                  stream,src.stat().st_size,contract_id)
-        trashed=self.trash_file(request_id+"-trash",item["id"],item["revision"],
-                                "Удалён файл из прежнего каталога вложений")
-        # The source can be modified concurrently by an external actor: verify
-        # both source and protected blob before unlinking the source.
-        if self._check_blob(self._row(item["id"])).read_bytes()!=src.read_bytes():
+        if item["state"]=="trashed":
+            trashed=item
+        else:
+            trashed=self.trash_file(trash_op,item["id"],item["revision"],
+                                    "Удалён файл из прежнего каталога вложений")
+        # Verify the protected byte stream and the original by SHA-256.
+        # Never load a potentially 256-MB attachment fully into memory.
+        protected=self._check_blob(self._row(item["id"]))
+        source_hash=sha256()
+        with src.open("rb") as stream:
+            for block in iter(lambda:stream.read(1024*1024),b""):
+                source_hash.update(block)
+        if (src.is_symlink() or source_hash.hexdigest()!=self._row(item["id"])["sha256"]
+                or protected.stat().st_size!=src.stat().st_size):
             raise DataError("Исходный файл изменился во время копирования")
         src.unlink()
         return trashed
