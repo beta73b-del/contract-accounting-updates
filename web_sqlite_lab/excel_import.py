@@ -14,7 +14,7 @@ import json,os,re,shutil,uuid
 from preserve_excel_snapshot import snapshot,checksum
 from source_audit import audit
 from staging_import import import_snapshot
-from stock_staging import _validate_stock
+from stock_baseline import baseline,reservation_differences
 from store import Store,STATUSES,SHIPPED,normalized_lines,validate_date,money,amount
 from file_vault import FileVault
 from finance_ledger import FinanceLedger
@@ -218,7 +218,7 @@ def build_trial_archive(snapshot_dir,archive_path):
         db_sections={r[0]:json.loads(r[1]) for r in con.execute("SELECT name,payload FROM raw_sections")}
     if db_records!={r["id"]:r for r in raw["records"]} or db_sections!={k:v for k,v in raw.items() if k!="records"}:
         raise MigrationError("JSON и сохранённый источник SQLite расходятся")
-    projection=_validate_stock(raw["stock"])
+    opening=baseline(raw["stock"])
     records=[]
     for r in raw["records"]:
         try:records.append(normalize_contract(r))
@@ -247,15 +247,19 @@ def build_trial_archive(snapshot_dir,archive_path):
         store=Store(root/"lab.db")
         try:
             now=datetime.now(timezone.utc).isoformat()
-            inv=projection["inventory"];phases=projection["contracts"]
+            inv=opening["inventory"];replay=opening["verifiedReplay"];phases=opening["phases"]
+            stock_warnings=opening["warnings"]
+            reserve_warnings=reservation_differences(inv,phases,records,replay)
             legacy_shipped=[];archived_deleted=[]
             with store.transaction():
-                # Opening balances from the independently replayed source;
-                # NEVER replay historic sales through save_contract().
+                # Opening balances copied exactly from the current Web/Excel snapshot.
+                # Historical replay is only an independent diagnostic.
                 for name,item in inv.items():
                     if not isinstance(name,str) or not name or len(name)>200:raise MigrationError("Недопустимый товар")
                     if item["deleted"]:archived_deleted.append(name)
                     store.db.execute("INSERT INTO products VALUES(?,?,?)",(name,item["quantity"],item["cents"]))
+                if reserve_warnings:
+                    store.db.executemany("INSERT INTO stock_import_guard VALUES(?,?)",[(name,item["reserved"]) for name,item in inv.items()])
                 store.db.execute("CREATE TABLE excel_import_raw_contracts(id TEXT PRIMARY KEY,payload_json TEXT NOT NULL)")
                 store.db.execute("CREATE TABLE excel_import_stock_events(seq INTEGER PRIMARY KEY,payload_json TEXT NOT NULL)")
                 for n,e in enumerate(raw["stock"]["events"],1):
@@ -270,9 +274,7 @@ def build_trial_archive(snapshot_dir,archive_path):
                     store.db.executemany("INSERT INTO contract_line_missing_price VALUES(?,?)",[(cid,i) for i in r["missingPrices"]])
                     store.db.execute("INSERT INTO excel_import_raw_contracts VALUES(?,?)",(cid,json.dumps(source,ensure_ascii=False)))
                     store.db.execute("INSERT INTO contract_import_financial VALUES(?,?)",(cid,json.dumps(r["financial"],ensure_ascii=False)))
-                    phase=phases.get(cid,{})
-                    if r["status"]=="заключен" and phase.get("phase")!="reserved":
-                        raise MigrationError("Статус заключённого контракта не совпадает с резервом")
+                    phase=replay["contracts"].get(cid,{}) if replay is not None else {}
                     if r["status"] in SHIPPED:
                         shipment=phase.get("shipment")
                         if not shipment:
@@ -287,9 +289,12 @@ def build_trial_archive(snapshot_dir,archive_path):
                                 product=l["product"];q=-l["quantity"];cost=-l["cents"]
                                 if q<=0 or cost<0:raise MigrationError("Некорректная историческая отгрузка")
                                 old=actual.get(product,(0,0));actual[product]=(old[0]+q,old[1]+cost)
-                            if {k:v[0] for k,v in actual.items()}!=qty:raise MigrationError("История отгрузки не совпала с карточкой")
-                            for product,(q,cost) in actual.items():
-                                store.db.execute("INSERT INTO shipments VALUES(?,?,?,?)",(cid,product,q,cost))
+                            if {k:v[0] for k,v in actual.items()}!=qty:
+                                stock_warnings.append({"kind":"shipmentCardMismatch","id":cid})
+                                legacy_shipped.append(cid)
+                            else:
+                                for product,(q,cost) in actual.items():
+                                    store.db.execute("INSERT INTO shipments VALUES(?,?,?,?)",(cid,product,q,cost))
             # Strict quantity/value and per-product reserve reconciliation.
             actual={x["product"]:x for x in store.stock_summary()}
             if set(actual)!=set(inv):raise MigrationError("Номенклатура не совпала")
@@ -326,11 +331,13 @@ def build_trial_archive(snapshot_dir,archive_path):
                 "missingPricePositions":[{"id":r["id"],"positions":r["missingPrices"]} for r in records if r["missingPrices"]],
                 "derivedPricePositions":[{"id":r["id"],"positions":r["derivedPrices"]} for r in records if r["derivedPrices"]],
                 "products":len(inv),"stockEventsPreserved":len(raw["stock"]["events"]),"documents":docs,
+                "openingStockSource":"EXCEL_API_CURRENT_BALANCES","openingStock":[{"product":k,"quantity":v["quantity"],"cents":v["cents"],"reserved":v["reserved"],"available":v["available"],"shortage":v["shortage"]} for k,v in inv.items()],
+                "stockWarnings":stock_warnings,"reservationWarnings":reserve_warnings,"stockImportLocked":store.stock_import_locked(),
                 "sourceDocuments":checks["documentFilesCopied"],"missingLinkedFolders":manifest.get("warnings",[]),
                 "unlinkedDocumentsPreserved":unlinked,"historicalShippedWithoutEvent":legacy_shipped,
                 "deletedProductsPreservedAsZeroStock":archived_deleted,"deletedExcelRowsPreserved":checks["deletedRowsInExcel"],
                 "finance":finance,"expenseIdMapping":mapping,
-                "checks":{"contractIdsFieldsItems":"PASS","sourceMoneyPreservation":"PASS","financialArithmetic":"WARN" if any(r["financial"]["issues"] for r in records) else "PASS","stockBalancesReservesCost":"PASS","currentExpensesRates":"PASS","documentHashes":"PASS","sqliteIntegrity":"PASS"},
+                "checks":{"contractIdsFieldsItems":"PASS","sourceMoneyPreservation":"PASS","financialArithmetic":"WARN" if any(r["financial"]["issues"] for r in records) else "PASS","stockBalancesReservesCost":"PASS","stockHistoryReplay":"WARN" if stock_warnings else "PASS","reservationAllocation":"WARN" if reserve_warnings else "PASS","currentExpensesRates":"PASS","documentHashes":"PASS","sqliteIntegrity":"PASS"},
                 "notVerified":["full Excel field/UI parity","monthly/annual financial and tax forecasts","historical stock UI and corrections","deleted contract normalization","drafts/notes/competitors UI","source COM snapshot transaction","real user installation"],
                 "limitations":["Original historical stock events preserved, not re-applied; receipts history not normalized.",
                     "Current expenses imported as opening records; original financial history/revisions preserved in raw sources.",

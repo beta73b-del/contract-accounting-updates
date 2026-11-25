@@ -53,6 +53,9 @@ def import_excel(parent,base):
             summary=("Контрактов: "+str(value["activeContracts"])+"\nТоваров: "+str(value["products"])+
                 "\nДокументов: "+str(value["documents"])+"\nРасходов: "+str(value["finance"]["activeExpenses"])+
                 "\nОтсутствующих папок: "+str(len(value["missingLinkedFolders"]))+
+                "\nЗамечаний по истории склада: "+str(len(value.get("stockWarnings",[])))+
+                "\nЗамечаний по резервам: "+str(len(value.get("reservationWarnings",[])))+
+                ("\nСклад и редактирование карточек временно заблокированы до сверки резервов." if value.get("stockImportLocked") else "")+
                 "\nКарточек с финансовыми замечаниями (только просмотр): "+str(len(value.get("financialWarnings",[])))+
                 "\nКарточек без цены: "+str(len(value.get("missingPricePositions",[])))+
                 "\nКарточек с точно рассчитанной ценой: "+str(len(value.get("derivedPricePositions",[])))+

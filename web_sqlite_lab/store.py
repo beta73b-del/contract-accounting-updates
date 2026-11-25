@@ -246,6 +246,9 @@ class Store:
         self.db.execute("""CREATE TABLE IF NOT EXISTS contract_import_financial(
             contract_id TEXT PRIMARY KEY REFERENCES contracts(id) ON DELETE RESTRICT,
             details_json TEXT NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS stock_import_guard(
+            product TEXT PRIMARY KEY REFERENCES products(name),
+            reserved INTEGER NOT NULL CHECK(reserved>=0))""")
         if self.db.execute("PRAGMA user_version").fetchone()[0] != 4:
             raise DataError("SQLite managed-file migration failed")
         required=("finance_events","contract_trash","contract_lifecycle","managed_files","file_events")
@@ -285,10 +288,18 @@ class Store:
         self.db.execute("INSERT INTO operations VALUES(?,?,?)",
                         (request_id, digest, json.dumps(result, ensure_ascii=False, sort_keys=True)))
 
+    def stock_import_locked(self):
+        return self.db.execute("SELECT 1 FROM stock_import_guard LIMIT 1").fetchone() is not None
+
+    def _require_stock_writable(self):
+        if self.stock_import_locked():
+            raise DataError("Склад импортирован из Excel. Резервы или их распределение требуют сверки; складские изменения временно заблокированы.")
+
     def add_product(self, name):
         if not isinstance(name, str) or not name.strip() or len(name.strip()) > 200:
             raise DataError("Неверное название товара")
         with self.transaction():
+            self._require_stock_writable()
             self.db.execute("INSERT OR IGNORE INTO products(name) VALUES(?)", (name.strip(),))
         return name.strip()
 
@@ -303,6 +314,7 @@ class Store:
             raise DataError("Стоимость прихода превышает предел")
         payload = {"kind": "receipt", "product": product.strip(), "qty": count, "cost": cost}
         with self.transaction():
+            self._require_stock_writable()
             digest, old = self._operation(request_id, payload)
             if old is not None: return old
             item = self.db.execute("SELECT physical_qty FROM products WHERE name=?", (product.strip(),)).fetchone()
@@ -354,6 +366,7 @@ class Store:
                    "platform":platform, "number":contract_number, "dates":dates,
                    "lines":lines, "revision":raw.get("revision",0)}
         with self.transaction():
+            self._require_stock_writable()
             digest, old = self._operation(request_id,payload)
             if old is not None: return old
             existing = self.db.execute("SELECT * FROM contracts WHERE id=?", (cid,)).fetchone()
@@ -470,6 +483,7 @@ class Store:
         payload={"kind":kind,"id":contract_id,"expectedRevision":expected_revision,
                  "reason":reason if kind=="trash" else ""}
         with self.transaction():
+            self._require_stock_writable()
             digest,old=self._operation(request_id,payload)
             if old is not None:return old
             record=self.db.execute("SELECT revision,status FROM contracts WHERE id=?",
@@ -509,7 +523,8 @@ class Store:
     def stock_summary(self):
         results=[]
         for row in self.db.execute("SELECT name,physical_qty,inventory_cost FROM products ORDER BY name"):
-            reserved=self._reserved_other(row["name"],"")
+            opening=self.db.execute("SELECT reserved FROM stock_import_guard WHERE product=?",(row["name"],)).fetchone()
+            reserved=opening[0] if opening else self._reserved_other(row["name"],"")
             available=row["physical_qty"]-reserved
             results.append({"product":row["name"],"physical":row["physical_qty"],
                             "reserved":reserved,"available":available,"shortage":max(0,-available),
@@ -525,7 +540,7 @@ class Store:
                 "sqliteVersion":sqlite3.sqlite_version,
                 "walResetFixed":patched_wal_reset(),
                 "journalMode":self.db.execute("PRAGMA journal_mode").fetchone()[0],
-                "contracts":len(self.list_contracts()),
+                "contracts":len(self.list_contracts()),"stockImportLocked":self.stock_import_locked(),
                 "trashedContracts":self.db.execute("SELECT COUNT(*) FROM contract_trash").fetchone()[0]}
 
     def backup(self, target):

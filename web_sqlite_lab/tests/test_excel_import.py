@@ -65,11 +65,67 @@ class ExcelImportTests(unittest.TestCase):
             self.assertEqual((target/"attachments"/"Excel-source"/"source"/"База_контрактов.xlsx").read_bytes(),before)
             self.assertTrue((target/"attachments"/"excel-import-report.json").is_file())
         finally:db.close()
-    def test_bad_stock_blocks_archive(self):
+    def test_inconsistent_source_stock_blocks_archive(self):
         self.payload["stock"]["items"][0]["quantity"]+=1
         self.capture()
         with self.assertRaises(ValueError):build_trial_archive(self.snap,self.archive)
         self.assertFalse(self.archive.exists())
+    def test_source_balance_preserved_when_replay_differs(self):
+        item=self.payload["stock"]["items"][0]
+        item["quantity"]+=2;item["cents"]+=250000;item["available"]+=2
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["checks"]["stockBalancesReservesCost"],"PASS")
+        self.assertEqual(report["checks"]["stockHistoryReplay"],"WARN")
+        self.assertTrue(report["stockImportLocked"])
+        self.assertTrue(any(x.get("field")=="quantity" for x in report["stockWarnings"]))
+        target=self.root/"opening";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            x=next(i for i in db.stock_summary() if i["product"]==self.product)
+            self.assertEqual((x["physical"],x["reserved"],x["available"],x["inventoryCost"]),(19,7,12,"23750.00"))
+            self.assertTrue(db.stock_import_locked())
+            from store import DataError
+            with self.assertRaises(DataError):db.receipt("receipt-guard",self.product,1,"100")
+            with self.assertRaises(DataError):db.save_contract("save-guard-01",dict(self.payload["records"][0],revision=1))
+            with self.assertRaises(DataError):db.trash_contract("trash-guard-01",self.cid,1)
+            self.assertEqual(db.db.execute("SELECT COUNT(*) FROM shipments").fetchone()[0],0)
+        finally:db.close()
+    def test_reservation_from_excel_not_status(self):
+        # Journal is coherent, but a source reserve can belong to a different status.
+        self.payload["records"][0]["status"]="на подписи"
+        wb=__import__("openpyxl").load_workbook(self.book)
+        wb["Контракты"]["M2"]="на подписи";wb.save(self.book);wb.close()
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertEqual(report["checks"]["stockHistoryReplay"],"PASS")
+        self.assertEqual(report["checks"]["reservationAllocation"],"WARN")
+        self.assertTrue(report["stockImportLocked"])
+        target=self.root/"reserve";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            x=next(i for i in db.stock_summary() if i["product"]==self.product)
+            self.assertEqual(x["reserved"],7)
+            self.assertEqual(x["available"],10)
+        finally:db.close()
+    def test_history_mismatch_without_reservations_allows_new_receipts(self):
+        self.payload["records"][0]["status"]="формирование"
+        wb=__import__("openpyxl").load_workbook(self.book)
+        wb["Контракты"]["M2"]="формирование";wb.save(self.book);wb.close()
+        stock=self.payload["stock"];stock["events"].pop();stock["phases"].pop(self.cid)
+        proj=project(stock["events"]);stock["items"]=list(proj["inventory"].values())
+        item=stock["items"][0];item["quantity"]+=2;item["cents"]+=250000;item["available"]+=2
+        self.capture()
+        report=build_trial_archive(self.snap,self.archive)
+        self.assertFalse(report["stockImportLocked"])
+        self.assertEqual(report["checks"]["stockHistoryReplay"],"WARN")
+        target=self.root/"unreserved";restore_first_install(self.archive,target)
+        db=Store(target/"lab.db")
+        try:
+            db.receipt("receipt-new-01",self.product,1,"1250")
+            x=next(i for i in db.stock_summary() if i["product"]==self.product)
+            self.assertEqual((x["physical"],x["reserved"],x["inventoryCost"]),(20,0,"25000.00"))
+        finally:db.close()
     def test_inconsistent_contract_total_preserved(self):
         self.payload["records"][0]["amount"]="1.00";self.capture()
         report=build_trial_archive(self.snap,self.archive)

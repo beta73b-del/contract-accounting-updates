@@ -83,7 +83,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let key='',records=[],trashContracts=[],goods=[],fileState={active:[],trash:[]},activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
+let stockImportLocked=false;let key='',records=[],trashContracts=[],goods=[],fileState={active:[],trash:[]},activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
 function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
 function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
 function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
@@ -92,7 +92,7 @@ async function request(path,body){
  const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
 }
 async function refresh(){
- const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());stockImportLocked=Boolean(r.integrity.stockImportLocked);$('receipt').disabled=stockImportLocked;$('addProduct').disabled=stockImportLocked;if(stockImportLocked)$('save').disabled=true;key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};fileState=r.files||{active:[],trash:[]};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration+
    (r.integrity.walResetFixed?'':' · ВНИМАНИЕ: SQLite '+r.integrity.sqliteVersion+' без патча WAL-reset, журнал '+r.integrity.journalMode+'; нужен патч перед рабочим релизом');
  const backups=r.backups||{};
@@ -119,7 +119,7 @@ async function refresh(){
    const cell=document.createElement('td');
    const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);
    const remove=document.createElement('button');remove.textContent='В Корзину';
-   remove.disabled=['Отправлен','Вручен','Оплачен'].includes(x.status);
+   remove.disabled=stockImportLocked||['Отправлен','Вручен','Оплачен'].includes(x.status);
    remove.title=remove.disabled?'Отгруженные и оплаченные контракты защищены':'Переместить в Корзину без потери данных';
    remove.onclick=async()=>{
      if(!confirm('Переместить тестовый контракт №'+x.contract_number+' в Корзину? Запись можно восстановить.'))return;
@@ -137,12 +137,13 @@ async function refresh(){
 function open(x){activeId=x.id;revision=x.revision;
  for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
  if(x.items[0]){$('product').value=x.items[0].product;$('qty').value=x.items[0].quantity;$('price').value=x.items[0].unitPrice}
- const f=x.importFinancial;const blocked=Boolean(f?.issues?.length)||x.items.length>1;$('save').disabled=blocked;
- if(f?.issues?.length)tell('Сумма из Excel: '+(f.preservedAmount??'не определена')+' ₽. '+f.issues.join('; ')+'. Только просмотр до сверки.',true);
+ const f=x.importFinancial;const blocked=stockImportLocked||Boolean(f?.issues?.length)||x.items.length>1;$('save').disabled=blocked;
+ if(stockImportLocked)tell('Начальные остатки перенесены из Excel. Изменения склада и карточек заблокированы до сверки резервов.',true);
+ else if(f?.issues?.length)tell('Сумма из Excel: '+(f.preservedAmount??'не определена')+' ₽. '+f.issues.join('; ')+'. Только просмотр до сверки.',true);
  else if(x.items.length>1)tell('Многопозиционная карточка: только просмотр до поддержки редактирования всех строк.',true);
  else tell('Открыт черновик '+x.id+', ревизия '+revision+(f?.preservedAmount!=null?' · сумма Excel '+f.preservedAmount+' ₽':''));
 }
-function reset(){activeId='';revision=0;$('save').disabled=false;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
+function reset(){activeId='';revision=0;$('save').disabled=stockImportLocked;$('status').value='формирование';$('contractDate').value='';$('handoverDate').value='';tell('Новая тестовая карточка')}
 $('status').addEventListener('change',()=>{if($('status').value==='заключен'&&!$('contractDate').value){const d=new Date();$('contractDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(d)}});
 $('new').onclick=reset;
 $('refresh').onclick=()=>refresh().catch(e=>tell(e.message,true));
