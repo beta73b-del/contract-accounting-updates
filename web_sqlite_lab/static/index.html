@@ -62,12 +62,17 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <label>Ставка<select id="rateValue"><option value="5">5%</option><option value="15">15%</option></select></label>
 </div><button id="rateSave">Сохранить ставку</button><p id="rateCurrent" class="small"></p>
 </section>
-<section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Редактировать</th></tr></thead><tbody id="records"></tbody></table></div></section>
+<section class="panel"><h2>Тестовые контракты</h2><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата</th><th>Действия</th></tr></thead><tbody id="records"></tbody></table></div></section>
+<section class="panel"><h2>Корзина</h2>
+<p class="small">Удаление не стирает записи из SQLite. Восстановление возвращает тот же ID, товары и сумму. Отгруженные и оплаченные контракты защищены от удаления. Документы физически не удаляются. Очистка Корзины отключена.</p>
+<h3>Контракты</h3><div class="scroll"><table><thead><tr><th>Заказчик</th><th>Контракт</th><th>Статус</th><th>Дата удаления</th><th>Действие</th></tr></thead><tbody id="trashContracts"></tbody></table></div>
+<h3>Расходы</h3><div class="scroll"><table><thead><tr><th>Дата</th><th>Сумма</th><th>Комментарий</th><th>Действие</th></tr></thead><tbody id="trashExpenses"></tbody></table></div>
+</section>
 </main>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let key='',records=[],goods=[],activeId='',revision=0,finance={expenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
+let key='',records=[],trashContracts=[],goods=[],activeId='',revision=0,finance={expenses:[],deletedExpenses:[],rates:{}},activeExpenseId='',activeExpenseRevision=0;
 function tell(text,bad=false){$('message').textContent=text;$('message').className='status '+(bad?'error':'ok')}
 function td(tr,value){const x=document.createElement('td');x.textContent=String(value);tr.append(x);return x}
 function choose(input,list){const v=input.value;input.replaceChildren();for(const name of list){const o=document.createElement('option');o.value=name;o.textContent=name;input.append(o)}if(list.includes(v))input.value=v}
@@ -76,14 +81,32 @@ async function request(path,body){
  const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка '+r.status);return data;
 }
 async function refresh(){
- const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;goods=r.stock.items;finance=r.finance||{expenses:[],rates:{}};
+ const r=await fetch('/api/bootstrap',{cache:'no-store'}).then(x=>x.json());key=r.nonce;records=r.records;trashContracts=r.trash?.contracts||[];goods=r.stock.items;finance=r.finance||{expenses:[],deletedExpenses:[],rates:{}};
  $('health').textContent='Режим: '+r.storage+' / ИЗОЛИРОВАННЫЙ · целостность: '+r.integrity.integrity+' · контрактов: '+r.records.length+' · импорт Excel: '+r.migration;
  choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
  const st=$('stock');st.replaceChildren();
  for(const x of goods){const tr=document.createElement('tr');[x.product,x.physical,x.reserved,x.available,x.shortage].forEach(y=>td(tr,y));st.append(tr)}
  const table=$('records');table.replaceChildren();
- for(const x of records){const tr=document.createElement('tr');[x.customer,x.contract_number,x.status,x.contract_date].forEach(y=>td(tr,y));const cell=document.createElement('td');const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);cell.append(b);tr.append(cell);table.append(tr)}
- renderFinance();
+ for(const x of records){
+   const tr=document.createElement('tr');
+   [x.customer,x.contract_number,x.status,x.contract_date].forEach(y=>td(tr,y));
+   const cell=document.createElement('td');
+   const b=document.createElement('button');b.textContent='Открыть';b.onclick=()=>open(x);
+   const remove=document.createElement('button');remove.textContent='В Корзину';
+   remove.disabled=['Отправлен','Вручен','Оплачен'].includes(x.status);
+   remove.title=remove.disabled?'Отгруженные и оплаченные контракты защищены':'Переместить в Корзину без потери данных';
+   remove.onclick=async()=>{
+     if(!confirm('Переместить тестовый контракт №'+x.contract_number+' в Корзину? Запись можно восстановить.'))return;
+     try{
+       await request('/api/trash',{requestId:crypto.randomUUID(),id:x.id,
+                                  expectedRevision:x.revision,reason:'Удалён пользователем'});
+       if(activeId===x.id)reset();
+       await refresh();tell('Контракт перемещён в Корзину без удаления товаров и документов');
+     }catch(e){tell(e.message,true)}
+   };
+   cell.append(b,remove);tr.append(cell);table.append(tr);
+ }
+ renderFinance();renderTrash();
 }
 function open(x){activeId=x.id;revision=x.revision;
  for(const [id,k] of [['customer','customer'],['platform','platform'],['contractNumber','contract_number'],['contractDate','contract_date'],['status','status'],['handoverDate','handover_date']])$(id).value=x[k];
@@ -104,6 +127,38 @@ $('save').onclick=async()=>{try{const payload={
  };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
 
+function renderTrash(){
+ const rows=$('trashContracts');rows.replaceChildren();
+ for(const x of trashContracts){
+   const tr=document.createElement('tr');
+   [x.customer,x.contract_number,x.status,x.deletedAt].forEach(v=>td(tr,v??''));
+   const actions=document.createElement('td');
+   const restore=document.createElement('button');restore.textContent='Восстановить контракт';
+   restore.onclick=async()=>{
+     try{
+       await request('/api/restore',{requestId:crypto.randomUUID(),id:x.id,
+                                     expectedRevision:x.revision});
+       await refresh();tell('Контракт восстановлен с прежним номером и товарными позициями')
+     }catch(e){tell(e.message,true)}
+   };
+   actions.append(restore);tr.append(actions);rows.append(tr);
+ }
+ const expenses=$('trashExpenses');expenses.replaceChildren();
+ for(const e of finance.deletedExpenses||[]){
+   const tr=document.createElement('tr');
+   [e.date,e.amount,e.comment].forEach(v=>td(tr,v));
+   const cell=document.createElement('td');
+   const restore=document.createElement('button');restore.textContent='Восстановить расход';
+   restore.onclick=async()=>{
+     try{
+       await request('/api/finance',{action:'restore',opId:crypto.randomUUID().replaceAll('-',''),
+                                      id:e.id,revision:e.revision});
+       await refresh();tell('Расход восстановлен в исходный месяц и сумму')
+     }catch(err){tell(err.message,true)}
+   };
+   cell.append(restore);tr.append(cell);expenses.append(tr);
+ }
+}
 function renderFinance(){
  const table=$('expenseRows');table.replaceChildren();
  for(const e of finance.expenses){
