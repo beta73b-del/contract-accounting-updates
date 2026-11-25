@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 import os
-import sqlite3
+from sqlite_runtime import sqlite3
 import subprocess
 import sys
 import unittest
