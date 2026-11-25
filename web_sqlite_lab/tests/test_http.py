@@ -480,7 +480,7 @@ class HTTPTests(unittest.TestCase):
         self.assertIsNotNone(complete,"Startup did not create an automatic complete ZIP")
         self.assertEqual(complete["retentionDays"],14)
         self.assertEqual(complete["checkHours"],24)
-        self.assertTrue(Path(complete["primaryPath"]).is_relative_to(self.db.parent))
+        self.assertTrue(Path(complete["primaryPath"]).resolve().is_relative_to(self.db.parent.resolve()))
         self.assertEqual(complete["warning"],"SECONDARY_NOT_CONFIGURED")
         folder=Path(complete["primaryPath"])
         copies=list(folder.glob("auto-*.zip"))
