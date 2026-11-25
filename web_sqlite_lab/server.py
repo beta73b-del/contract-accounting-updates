@@ -15,12 +15,17 @@ from store import Store, DataError, Conflict, moscow_today
 from finance_ledger import FinanceLedger, FinanceError
 from finance_engine import forecast
 
-BASE = Path(__file__).resolve().parent
+from platform_paths import lab_data_dir
+
+SOURCE_ROOT = Path(__file__).resolve().parent
+# PyInstaller keeps bundled resources under _MEIPASS. Never create the DB there.
+BASE = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("CONTRACTS_SQLITE_LAB_PORT", "8766"))
-DB = Path(os.environ.get("CONTRACTS_SQLITE_LAB_DB", str(BASE / "data" / "lab.db"))).resolve()
 if os.environ.get("CONTRACTS_SQLITE_LAB_DB") and not os.environ.get("CONTRACTS_SQLITE_LAB_TEST"):
     raise SystemExit("Override database path is allowed only when CONTRACTS_SQLITE_LAB_TEST=1")
+DATA_DIR = lab_data_dir(frozen=bool(getattr(sys, "frozen", False)), source_root=SOURCE_ROOT)
+DB = Path(os.environ.get("CONTRACTS_SQLITE_LAB_DB", str(DATA_DIR / "lab.db"))).resolve()
 store = Store(DB)
 finance_ledger = FinanceLedger(store)
 mutex = RLock()
