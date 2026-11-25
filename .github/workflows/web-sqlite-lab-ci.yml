@@ -1,4 +1,8 @@
 name: Web SQLite Lab cross-platform tests (no release)
+concurrency:
+  group: sqlite-lab-test-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
