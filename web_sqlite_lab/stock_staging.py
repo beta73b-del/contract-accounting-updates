@@ -159,3 +159,9 @@ def build_stock_staging(source_db, destination_db):
             "products": product_count, "parity": "PASS",
             "sourceUnmodified": True,
             "activeInventoryUpdated": False}
+
+if __name__=="__main__":
+    import sys
+    if len(sys.argv)!=3:
+        raise SystemExit("Usage: python stock_staging.py <read-only-raw-staging.sqlite> <NEW-staging.sqlite>")
+    print(json.dumps(build_stock_staging(sys.argv[1],sys.argv[2]),ensure_ascii=False))
