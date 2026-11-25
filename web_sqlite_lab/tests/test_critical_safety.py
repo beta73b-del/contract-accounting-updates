@@ -42,7 +42,7 @@ class CriticalSafety(unittest.TestCase):
         with self.assertRaises(DataError):Store(self.db)
         with closing(sqlite3.connect(self.db)) as con:
             self.assertIsNone(con.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
-            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0],4)
     def test_v1_backup_before_any_mutating_schema_statement(self):
         store=Store(self.db)
         store.close()
@@ -50,6 +50,8 @@ class CriticalSafety(unittest.TestCase):
             con.execute("DROP TABLE finance_events")
             con.execute("DROP TABLE contract_trash")
             con.execute("DROP TABLE contract_lifecycle")
+            con.execute("DROP TABLE managed_files")
+            con.execute("DROP TABLE file_events")
             con.execute("PRAGMA user_version=1")
             con.execute("CREATE TABLE sentinel(value TEXT)")
             con.execute("INSERT INTO sentinel VALUES('preserved')")
@@ -63,7 +65,7 @@ class CriticalSafety(unittest.TestCase):
             self.assertIsNone(backup.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
             self.assertEqual(backup.execute("SELECT value FROM sentinel").fetchone()[0],"preserved")
         with closing(sqlite3.connect(self.db)) as updated:
-            self.assertEqual(updated.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(updated.execute("PRAGMA user_version").fetchone()[0],4)
             self.assertIsNotNone(updated.execute("SELECT name FROM sqlite_master WHERE name='finance_events'").fetchone())
     def test_backup_does_not_overwrite_concurrently_created_target(self):
         store=Store(self.db)
