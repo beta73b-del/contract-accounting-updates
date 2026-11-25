@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 import copy
 import json
 import sqlite3
+import subprocess
+import sys
 import unittest
 from stock_projection import project
 from stock_staging import build_stock_staging,StockStageError
@@ -64,6 +66,25 @@ class StockStagingTests(unittest.TestCase):
             original=json.loads(con.execute("SELECT payload_json FROM raw_sections WHERE name='stock'").fetchone()[0])
             self.assertEqual(original['events'],self.events)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM stock_event_archive').fetchone()[0],3)
+    def test_command_line_stage_with_redacted_output(self):
+        script=Path(__file__).resolve().parent.parent/'stock_staging.py'
+        result=subprocess.run([sys.executable,str(script),str(self.raw),str(self.dest)],
+                              capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr[-500:])
+        message=json.loads(result.stdout)
+        self.assertEqual(message['events'],2)
+        self.assertEqual(message['status'],'STOCK_RAW_STAGING_ONLY')
+        self.assertNotIn('Рутокен',result.stdout)
+        self.assertNotIn('fake-contract',result.stdout)
+        self.assertTrue(self.dest.is_file())
+    def test_command_line_rejects_mismatched_source(self):
+        self.stock['items'][0]['reserved']+=2
+        self.save()
+        script=Path(__file__).resolve().parent.parent/'stock_staging.py'
+        result=subprocess.run([sys.executable,str(script),str(self.raw),str(self.dest)],
+                              capture_output=True,text=True,timeout=15)
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse(self.dest.exists())
     def test_rejected_balance_mismatch_no_destination(self):
         self.stock['items'][0]['quantity']+=1
         self.save()
