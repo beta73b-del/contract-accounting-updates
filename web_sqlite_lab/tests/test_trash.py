@@ -106,11 +106,13 @@ class TrashTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db:
             db.execute("DROP TABLE contract_trash")
             db.execute("DROP TABLE contract_lifecycle")
+            db.execute("DROP TABLE managed_files")
+            db.execute("DROP TABLE file_events")
             db.execute("PRAGMA user_version=2")
             db.commit()
         self.store=Store(self.path)
         with closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0],4)
         backups=list((self.path.parent/"backups").glob("before-v3-*.sqlite"))
         self.assertEqual(len(backups),1)
         with closing(sqlite3.connect(backups[0])) as db:
