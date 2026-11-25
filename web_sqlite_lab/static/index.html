@@ -25,7 +25,7 @@ td button{font-size:12px;padding:4px 7px}th{background:#f1f5f9}.scroll{overflow:
 <header><strong>Контракты ИП — SQLite</strong><small>ИЗОЛИРОВАННАЯ ТЕСТОВАЯ ВЕРСИЯ · порт 8766 · действующая Excel-версия не изменяется</small></header>
 <main>
 <div class="notice"><b>Лаборатория, не рабочая система.</b> Используйте исключительно искусственные записи. Не импортируйте реальные контракты и документы. Не применяйте прототип для учёта до полной миграции и регрессионной сверки.</div>
-<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Снимок одной базы SQLite (без документов)</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="backupStatus" class="status" aria-live="polite">Автоматическое резервирование: проверка…</div><div id="message" aria-live="polite" class="status"></div></div>
+<div class="panel"><h2>Проверка системы</h2><div id="health" class="status">Подключение…</div><button id="refresh">Обновить</button><button id="backup">Снимок одной базы SQLite (без документов)</button><button id="exportAll">Экспорт: база + документы + Корзина (ZIP)</button><div id="backupStatus" class="status" aria-live="polite">Автоматическое резервирование: проверка…</div><details><summary>Настройки резервного хранилища</summary><p>Выберите существующую папку Google Drive через окно запуска приложения (Проводник / Finder) или вставьте абсолютный путь. Рабочая SQLite остаётся локальной.</p><label>Путь к внешнему хранилищу<input id="backupFolder" type="text" placeholder="Абсолютный путь к папке Google Drive"></label><button id="saveBackupFolder">Сохранить путь</button><button id="clearBackupFolder">Отключить внешнюю копию</button><button id="fullBackupNow">Создать полную копию сейчас</button><p>VERIFIED означает проверку ZIP через выбранный диск, а не подтверждение синхронизации Google.</p></details><div id="message" aria-live="polite" class="status"></div></div>
 <div class="columns">
 <section class="panel"><h2>Тестовая карточка контракта</h2><div class="fields">
 <label>Заказчик<input id="customer" value="Тестовый заказчик"></label>
@@ -99,12 +99,15 @@ async function refresh(){
  const warning=backups.lastError?'Ошибка резервирования: '+backups.lastError:
       backups.warning==='SECONDARY_NOT_CONFIGURED'?'ВНИМАНИЕ: внешняя копия не настроена':
       backups.warning==='SECONDARY_FAILED'?'ВНИМАНИЕ: внешняя копия не подтверждена':
+      backups.warning==='SECONDARY_PENDING'?'Внешняя копия ожидает проверки':
       backups.warning==='NO_VERIFIED_COPY'?'Ещё нет проверенной копии':'';
+ if(document.activeElement!==$('backupFolder'))$('backupFolder').value=backups.selectedPath||'';
  $('backupStatus').textContent='Полная копия: проверка не чаще раза в 24 часа; хранение автоматических ZIP — 14 суток. '+ 
       'Последняя проверка: '+(backups.lastVerifiedUtc||'нет')+
       ' · архивов: '+(backups.automaticCopies??0)+
       ' · папка: '+(backups.primaryPath||'неизвестна')+
-      (backups.secondaryPath?' · второе хранилище: '+backups.secondaryPath:'')+
+      (backups.selectedPath?' · выбранная папка: '+backups.selectedPath:'')+
+      (backups.secondaryPath?' · каталог копий: '+backups.secondaryPath+' · статус: '+backups.lastSecondaryStatus:'')+
       (warning?' · '+warning:'');
  choose($('product'),goods.map(x=>x.product));choose($('receiptProduct'),goods.map(x=>x.product));
  const st=$('stock');st.replaceChildren();
@@ -149,6 +152,17 @@ $('save').onclick=async()=>{try{const payload={
  items:[{product:$('product').value,quantity:$('qty').value,unitPrice:$('price').value}]
  };if(payload.status==='Оплачен'){const previous=records.find(x=>x.id===activeId);if(previous?.status!=='Оплачен'){if(!confirm('Фактически получена ПОЛНАЯ оплата за тестовый контракт?'))return;payload.paymentConfirmed=true;}}const result=await request('/api/record',{requestId:crypto.randomUUID(),record:payload});activeId=result.id;revision=result.revision;await refresh();tell('Сохранено в ТЕСТОВОЙ SQLite, ревизия '+revision)}catch(e){tell(e.message,true)}};
 $('backup').onclick=async()=>{try{const r=await request('/api/backup',{});tell('Снимок проверен: '+r.file+'; SHA-256 '+r.sha256)}catch(e){tell(e.message,true)}};
+$('saveBackupFolder').onclick=async()=>{try{
+ const folder=$('backupFolder').value.trim();if(!folder)throw Error('Укажите путь к папке');
+ await request('/api/backup/settings',{folder});await refresh();tell('Путь сохранён. Можно создать копию сейчас.');
+}catch(e){tell(e.message,true)}};
+$('clearBackupFolder').onclick=async()=>{if(!confirm('Отключить внешнее резервирование? Существующие архивы не удаляются.'))return;try{
+ await request('/api/backup/settings',{folder:null});await refresh();tell('Внешняя копия отключена, локальные сохраняются.');
+}catch(e){tell(e.message,true)}};
+$('fullBackupNow').onclick=async()=>{const b=$('fullBackupNow');b.disabled=true;try{
+ const r=await request('/api/backup/full',{});await refresh();
+ tell(r.lastSecondaryStatus==='VERIFIED'?'Полная копия проверена на локальном и выбранном диске.':'Локальная полная копия проверена. Внешняя копия не подтверждена.',r.lastSecondaryStatus!=='VERIFIED');
+}catch(e){tell(e.message,true)}finally{b.disabled=false}};
 $('exportAll').onclick=async()=>{
  const button=$('exportAll');button.disabled=true;
  try{

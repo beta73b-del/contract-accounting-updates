@@ -19,6 +19,7 @@ from finance_engine import forecast
 from file_vault import FileVault, MAX_FILE_BYTES, RETENTION_DAYS
 from transfer_package import export_lab, inspect_transfer, TransferError
 from backup_policy import BackupPolicy
+from backup_settings import BackupSettings
 
 from platform_paths import lab_data_dir
 
@@ -46,19 +47,49 @@ file_vault = FileVault(store, DB.parent / 'managed_files')
 # a user invokes an explicit protected delete through the vault.
 (DB.parent / 'attachments').mkdir(parents=True,exist_ok=True)
 finance_ledger = FinanceLedger(store)
-backup_config_error = None
-try:
-    backup_policy = BackupPolicy(
-        DB, secondary_dir=os.environ.get("CONTRACTS_SQLITE_LAB_SECONDARY_BACKUP_DIR") or None)
-except TransferError:
-    # A missing USB/NAS must never prevent access to the LOCAL contracts DB.
-    # Do not claim secondary protection if it is unavailable.
-    backup_config_error = "Недоступно второе хранилище резервных копий"
-    backup_policy = BackupPolicy(DB)
-mutex = RLock()
-nonce = token_urlsafe(32)
-cleanup_stop = Event()
-last_backup_error = None
+backup_settings=BackupSettings(DB.parent)
+backup_config_error=None
+backup_selected_path=None
+mutex=RLock()
+nonce=token_urlsafe(32)
+cleanup_stop=Event()
+last_backup_error=None
+
+def refresh_backup_policy():
+    global backup_policy,backup_config_error,backup_selected_path
+    backup_config_error=None
+    backup_selected_path=None
+    try:
+        data=backup_settings.read()
+        backup_selected_path=(os.environ.get("CONTRACTS_SQLITE_LAB_SECONDARY_BACKUP_DIR")
+                              if data["legacy"] else data["folder"])
+        backup_policy=BackupPolicy(DB,secondary_dir=backup_settings.destination(data))
+    except (TransferError,OSError,ValueError):
+        backup_config_error="Недоступно внешнее хранилище или его настройки"
+        backup_policy=BackupPolicy(DB)
+
+def backup_status():
+    return {**backup_policy.status(),"selectedPath":backup_selected_path,
+            "lastError":last_backup_error or backup_config_error}
+
+def run_full_backup(force=False):
+    global last_backup_error
+    refresh_backup_policy()
+    try:
+        result=backup_policy.run_if_due(force=force)
+        last_backup_error=None
+        return {**result,**backup_status()}
+    except Exception:
+        last_backup_error="Не удалось создать проверенную полную копию"
+        raise
+
+def configure_backup_folder(raw):
+    with mutex:
+        backup_settings.save(raw)
+        refresh_backup_policy()
+        return backup_status()
+
+refresh_backup_policy()
 
 def _cleanup_worker():
     # Trigger on startup and then hourly, including missed daily backups.
@@ -69,8 +100,7 @@ def _cleanup_worker():
         with mutex:
             try:
                 file_vault.purge_expired()
-                backup_policy.run_if_due()
-                last_backup_error = None
+                run_full_backup()
             except Exception as error:
                 # Fail open for reading/using the application; fail closed
                 # for backup claims and deletion of old snapshots.
@@ -142,8 +172,7 @@ class Handler(BaseHTTPRequestHandler):
                                          "retentionDays":RETENTION_DAYS,
                                          "cleanup":cleanup},
                                 "integrity":store.verify(),
-                                "backups":{**backup_policy.status(),
-                                           "lastError":last_backup_error or backup_config_error},
+                                "backups":backup_status(),
                                 "migration":"NOT RUN"});return
         if path=="/api/export/download":
             params=parse_qs(urlsplit(self.path).query)
@@ -270,6 +299,12 @@ class Handler(BaseHTTPRequestHandler):
                         raw.get("requestId"),raw.get("id"),raw.get("revision"))
                 elif path=="/api/finance":
                     result=finance_ledger.mutate(raw)
+                elif path=="/api/backup/settings":
+                    if "folder" not in raw:
+                        raise DataError("Укажите папку или null для отключения")
+                    result=configure_backup_folder(raw["folder"])
+                elif path=="/api/backup/full":
+                    result=run_full_backup(force=True)
                 elif path=="/api/backup":
                     target=DB.parent/"backups"/("lab-"+datetime.utcnow().strftime("%Y%m%d-%H%M%S")+"-"+uuid.uuid4().hex[:8]+".db")
                     result=store.backup(target)

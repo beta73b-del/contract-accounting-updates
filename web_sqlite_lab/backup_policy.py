@@ -161,9 +161,26 @@ class BackupPolicy:
                 shutil.copyfileobj(inp,out,1024*1024)
                 out.flush();os.fsync(out.fileno())
             if file_sha256(stage)!=digest:raise TransferError("Secondary SHA-256 mismatch")
-            os.link(stage,target)  # No overwriting, same secondary filesystem.
-            inspect_transfer(target)
-            return "VERIFIED"
+            owned=False
+            try:
+                try:
+                    os.link(stage,target)
+                    owned=True
+                except FileExistsError:
+                    raise TransferError("Secondary archive already exists; never overwrite")
+                except OSError:
+                    # Virtual Drive / File Provider may not support hard links.
+                    with stage.open("rb") as inp,target.open("xb") as out:
+                        owned=True
+                        shutil.copyfileobj(inp,out,1024*1024)
+                        out.flush();os.fsync(out.fileno())
+                if file_sha256(target)!=digest:
+                    raise TransferError("Secondary final SHA-256 mismatch")
+                inspect_transfer(target)
+                return "VERIFIED"
+            except Exception:
+                if owned:target.unlink(missing_ok=True)
+                raise
         finally:stage.unlink(missing_ok=True)
 
     def _prune(self,directory,moment,preserve):
@@ -189,10 +206,13 @@ class BackupPolicy:
                 "lastCheckUtc":state.get("lastCheckUtc"),
                 "lastVerifiedUtc":state.get("lastVerifiedUtc"),
                 "lastArchive":state.get("lastArchive"),
-                "lastSecondaryStatus":state.get("secondaryStatus","NOT_CONFIGURED"),
+                "lastSecondaryStatus":(state.get("secondaryStatus","NOT_CONFIGURED")
+                    if self.secondary and state.get("lastSecondaryPath")==str(self.secondary)
+                    else "PENDING" if self.secondary else "NOT_CONFIGURED"),
                 "automaticCopies":len(entries),
                 "warning":("NO_VERIFIED_COPY" if not entries else
                            "SECONDARY_NOT_CONFIGURED" if self.secondary is None else
+                           "SECONDARY_PENDING" if state.get("lastSecondaryPath")!=str(self.secondary) else
                            "SECONDARY_FAILED" if state.get("secondaryStatus")=="FAILED" else None)}
 
     def run_if_due(self,now=None,force=False):
@@ -210,7 +230,10 @@ class BackupPolicy:
                     # Clock was moved backwards. Do not create dated archives
                     # in the past or run age-based deletion with an invalid clock.
                     return {"status":"CLOCK_MOVED_BACK",**self.status()}
-                if (not force and last_check is not None and
+                retry_secondary=(self.secondary is not None and
+                    (state.get("lastSecondaryPath")!=str(self.secondary) or
+                     state.get("secondaryStatus")!="VERIFIED"))
+                if (not force and not retry_secondary and last_check is not None and
                     last_check<=moment and
                     moment-last_check<timedelta(hours=CHECK_HOURS)):
                     return {"status":"NOT_DUE",**self.status()}
@@ -254,6 +277,7 @@ class BackupPolicy:
                     "lastVerifiedUtc":moment.isoformat(),
                     "lastArchive":archive.name,
                     "secondaryStatus":secondary_status,
+                    "lastSecondaryPath":str(self.secondary) if self.secondary else None,
                     "lastContentSignature":canonical_signature(archive),
                 })
                 return {"status":"CREATED" if changed or not last_good or

@@ -34,8 +34,8 @@ def main():
                         source_root=Path(__file__).resolve().parent)
     root=tk.Tk()
     root.title("Контракты ИП — SQLite LAB (тестовая версия)")
-    root.geometry("540x360")
-    root.minsize(490,310)
+    root.geometry("580x420")
+    root.minsize(490,380)
     root.configure(padx=20,pady=15)
     tk.Label(root,text="Контракты ИП · SQLite LAB",font=("Arial",16,"bold")).pack(pady=(5,6))
     tk.Label(root,text="Изолированная тестовая программа.\nРабочая Excel-версия не изменяется.",
@@ -122,7 +122,7 @@ def main():
                 return 1
 
     try:
-        from server import Handler, HOST, PORT, store, LoopbackHTTPServer, stop_services
+        from server import Handler, HOST, PORT, store, LoopbackHTTPServer, stop_services, configure_backup_folder
         listener=LoopbackHTTPServer((HOST,PORT),Handler)
         listener.daemon_threads=False
         worker=Thread(target=listener.serve_forever,name="SQLiteLabHTTP",daemon=True)
@@ -177,6 +177,20 @@ def main():
             messagebox.showerror("Импорт не выполнен",
                                  "Не удалось подтвердить целостность полного архива. "
                                  "Текущая база и документы не изменялись.")
+
+    def choose_backup_folder():
+        chosen=filedialog.askdirectory(title="Выберите папку Google Drive или внешнего диска",
+                                       mustexist=True,parent=root)
+        if not chosen:return
+        try:
+            result=configure_backup_folder(chosen)
+            messagebox.showinfo("Настройки резервирования",
+                "Путь сохранён:\n"+str(result["selectedPath"])+
+                "\n\nДля немедленного резервирования нажмите «Создать полную копию сейчас» в браузере.")
+        except (TransferError,OSError,ValueError) as error:
+            messagebox.showerror("Не удалось сохранить путь",str(error))
+    tk.Button(root,text="Настройки: выбрать папку резервирования",
+              command=choose_backup_folder,width=42).pack(pady=4)
 
     tk.Button(root,text="Восстановить ZIP в отдельную папку",
               command=restore_separate,width=38).pack(pady=4)

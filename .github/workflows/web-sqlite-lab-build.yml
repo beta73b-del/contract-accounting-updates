@@ -34,8 +34,11 @@ jobs:
           architecture: ${{ matrix.arch }}
       - name: Install latest SQLite 3.54.1 and isolated QA dependencies
         run: |
-          python -m pip install "setuptools>=65" wheel "openpyxl>=3.1,<4" "pyinstaller>=6.20,<7"
+          python -m pip install --upgrade pip==26.3
+          python -m pip install -r web_sqlite_lab/requirements-qa.txt
           python web_sqlite_lab/install_sqlite_3541.py
+          python -m pip check
+          python -m pip freeze
       - name: Block packaging if loaded SQLite is not verified 3.54.1
         run: python web_sqlite_lab/sqlite_build_safety.py --require-safe
       - name: Compile and run synthetic SQLite regression
@@ -94,5 +97,5 @@ jobs:
         with:
           name: sqlite-lab-unsigned-${{ matrix.os }}-${{ matrix.arch }}
           path: qa-artifacts/*
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: error
