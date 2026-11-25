@@ -75,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=="/api/bootstrap":
             with mutex:
                 self.reply(200,{"lab":True,"storage":"SQLite","nonce":nonce,"today":moscow_today(),
-                                "records":store.list_contracts(),"stock":{"items":store.stock_summary()},
+                                "records":store.list_contracts(),"trash":{"contracts":store.list_trashed()},"stock":{"items":store.stock_summary()},
                                 "finance":finance_ledger.payload(),
                                 "integrity":store.verify(),"migration":"NOT RUN"});return
         self.reply(404,{"error":"Маршрут отсутствует"})
@@ -102,6 +102,12 @@ class Handler(BaseHTTPRequestHandler):
                     result=store.receipt(raw.get("requestId"),raw.get("product"),raw.get("qty"),raw.get("unitCost"))
                 elif path=="/api/record":
                     result=store.save_contract(raw.get("requestId"),raw.get("record"))
+                elif path=="/api/trash":
+                    result=store.trash_contract(raw.get("requestId"),raw.get("id"),
+                                                raw.get("expectedRevision"),raw.get("reason",""))
+                elif path=="/api/restore":
+                    result=store.restore_contract(raw.get("requestId"),raw.get("id"),
+                                                  raw.get("expectedRevision"))
                 elif path=="/api/finance":
                     result=finance_ledger.mutate(raw)
                 elif path=="/api/backup":
