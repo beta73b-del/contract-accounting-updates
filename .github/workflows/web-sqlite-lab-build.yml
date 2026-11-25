@@ -34,6 +34,10 @@ jobs:
           architecture: ${{ matrix.arch }}
       - name: Install isolated QA dependencies
         run: python -m pip install "openpyxl>=3.1,<4" "pyinstaller>=6.20,<7"
+      - name: Inspect actual SQLite runtime before packaging (QA only)
+        run: python web_sqlite_lab/sqlite_build_safety.py
+        # PRODUCTION RELEASE MUST use --require-safe after bundling a patched
+        # SQLite (3.51.3+ or documented backport). QA builds remain unsigned.
       - name: Compile and run synthetic SQLite regression
         run: |
           python -m compileall -q web_sqlite_lab
