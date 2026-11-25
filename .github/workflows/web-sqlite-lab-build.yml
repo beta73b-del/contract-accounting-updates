@@ -1,0 +1,80 @@
+name: Build isolated SQLite LAB for Windows / macOS (unsigned QA artifacts)
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/web-sqlite-parallel-prototype]
+    paths:
+      - 'web_sqlite_lab/**'
+      - '.github/workflows/web-sqlite-lab-build.yml'
+permissions:
+  contents: read
+jobs:
+  build-lab:
+    name: QA ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.arch }}
+      - name: Install isolated QA dependencies
+        run: python -m pip install "openpyxl>=3.1,<4" "pyinstaller>=6.20,<7"
+      - name: Compile and run synthetic SQLite regression
+        run: |
+          python -m compileall -q web_sqlite_lab
+          python -m unittest discover -s web_sqlite_lab/tests -p "test_*.py" -v
+        env:
+          PYTHONPATH: web_sqlite_lab
+      - name: Build self-contained GUI preview
+        run: >
+          pyinstaller --noconfirm --clean --onedir --windowed
+          --name ContractsIP-SQLiteLab
+          --paths web_sqlite_lab
+          --add-data "web_sqlite_lab/static/index.html:static"
+          web_sqlite_lab/launcher.py
+      - name: Smoke-test actual Windows EXE against an isolated SQLite
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:CONTRACTS_SQLITE_LAB_TEST='1'
+          $env:CONTRACTS_SQLITE_LAB_DB=Join-Path $env:RUNNER_TEMP 'contracts-sqlite-qa.sqlite'
+          & ".\dist\ContractsIP-SQLiteLab\ContractsIP-SQLiteLab.exe" --smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke-test actual macOS .app executable and bundled HTML
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export CONTRACTS_SQLITE_LAB_TEST=1
+          export CONTRACTS_SQLITE_LAB_DB="$RUNNER_TEMP/contracts-sqlite-qa.sqlite"
+          ./dist/ContractsIP-SQLiteLab.app/Contents/MacOS/ContractsIP-SQLiteLab --smoke
+          test -d dist/ContractsIP-SQLiteLab.app
+      - name: Pack macOS test bundle retaining symlinks
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p qa-artifacts
+          tar -czf "qa-artifacts/ContractsIP-SQLiteLab-macos-${{ matrix.arch }}.tar.gz" -C dist ContractsIP-SQLiteLab.app
+      - name: Pack Windows test bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qa-artifacts | Out-Null
+          Compress-Archive -Path 'dist\ContractsIP-SQLiteLab\*' -DestinationPath 'qa-artifacts\ContractsIP-SQLiteLab-win-x64.zip'
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: sqlite-lab-unsigned-${{ matrix.os }}-${{ matrix.arch }}
+          path: qa-artifacts/*
+          retention-days: 7
+          if-no-files-found: error
