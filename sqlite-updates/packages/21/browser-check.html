@@ -1,0 +1,25 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка интерфейса Контракты ИП</title><style>body{font:16px system-ui;max-width:1100px;margin:24px auto;padding:0 16px}iframe{width:100%;height:640px;border:1px solid #bbb}pre{white-space:pre-wrap;padding:16px;background:#f1f1f1;color:#222}a,button{margin:10px 10px 10px 0}</style><h1>Проверка оригинального интерфейса</h1><p>Только просмотр: проверяем доступность исходных файлов, загрузку данных и переходы между вкладками. Контракты и склад не изменяются.</p><button id="run">Повторить проверку</button><button id="save">Сохранить отчёт</button><a href="/">Открыть приложение</a><pre id="report">Запуск…</pre><iframe id="frame" title="Исходный интерфейс"></iframe><script>
+const out=document.getElementById('report'),frame=document.getElementById('frame');let running=false;let results=[];const delay=ms=>new Promise(r=>setTimeout(r,ms));const add=(name,ok,detail='')=>{results.push({name,ok,detail});out.textContent=results.map(x=>`${x.ok?'OK':'ОШИБКА'} | ${x.name}${x.detail?' | '+x.detail:''}`).join('\n')};async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{if(fn())return true}catch{}await delay(100)}return false}async function run(){if(running)return;running=true;results=[];out.textContent='Запуск…';try{const b=await fetch('/__build',{cache:'no-store'}).then(r=>r.json());add('Версия сервера',b.build==='sqlite-original-ui-20261126-build-021',b.build);const boot=await fetch('/api/bootstrap',{cache:'no-store'}).then(r=>r.json());add('База SQLite',Array.isArray(boot.records)&&Array.isArray(boot.stock?.items),'Контрактов: '+boot.records?.length);frame.src='/?browsercheck='+Date.now();const loaded=await until(()=>frame.contentDocument?.getElementById('db-indicator')?.classList.contains('online'));add('JavaScript и загрузка базы',loaded,frame.contentDocument?.getElementById('db-status')?.textContent||'нет статуса');const doc=frame.contentDocument;const nav=[...doc.querySelectorAll('.nav-item[data-view]')];add('Разделы интерфейса',nav.length===10,'Найдено: '+nav.length);const css=[...doc.styleSheets].filter(s=>s.href?.includes('/app/'));add('Подключение оригинальных стилей',css.length>=2,'Файлов CSS: '+css.length);for(const n of nav){const view=n.dataset.view;n.click();const ok=await until(()=>doc.querySelector('.view.active')?.id==='view-'+view,1000);add('Раздел '+n.textContent.trim(),ok);await delay(100)}doc.getElementById('openProfile')?.click();add('Главная по нажатию эмблемы',await until(()=>doc.querySelector('.view.active')?.id==='view-home',1000));const home=doc.querySelector('#homeContractsBody');add('Контракты на главной',!!home&&home.children.length>0,'Строк: '+(home?.children.length??0));const act=doc.querySelector('#actFrame');add('Встроенный конструктор актов',!!act&&act.getAttribute('src')==='/app/act-constructor.html'); }catch(e){add('Исключение',false,String(e))}finally{running=false}}document.getElementById('run').onclick=run;document.getElementById('save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([out.textContent],{type:'text/plain;charset=utf-8'}));a.download='ContractsIP-browser-check.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};run();</script></html>
+
+<script data-contracts-presence="019">
+(()=>{
+  if(window.top!==window || !/^https?:$/.test(location.protocol))return;
+  const tab=crypto.randomUUID();let key='',seq=0,active=true,timer=0,pending=false;
+  function send(open){
+    if(!key)return;
+    const body=JSON.stringify({key,tab,seq:++seq,open});
+    if(!open && navigator.sendBeacon && navigator.sendBeacon('/api/browser-presence',new Blob([body],{type:'application/json'})))return;
+    fetch('/api/browser-presence',{method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:true,cache:'no-store'}).catch(()=>{});
+  }
+  async function pulse(){
+    if(!active || pending)return;
+    if(!key){pending=true;try{const r=await fetch('/api/browser-session',{headers:{'X-Contracts-Launch':'1'},cache:'no-store'});if(r.ok)key=(await r.json()).key;}catch(_){}finally{pending=false;}}
+    if(key)send(active);
+  }
+  function start(){active=true;clearInterval(timer);pulse();timer=setInterval(pulse,5000);}
+  addEventListener('pagehide',()=>{active=false;clearInterval(timer);send(false);});
+  addEventListener('pageshow',e=>{if(e.persisted || !active)start();});
+  document.addEventListener('visibilitychange',()=>{if(active)pulse();});
+  start();
+})();
+</script>

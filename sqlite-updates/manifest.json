@@ -1,23 +1,16 @@
 {
   "format": 1,
-  "version": 20,
-  "minVersion": 19,
-  "notes": "Сборка 020: подтверждение копии Google Drive через rclone; стоимость остатков; ручной ввод товаров конкурентов; список действий заказчика; МСК и часы по городу; интернет-поиск GeoNames.",
+  "version": 21,
+  "minVersion": 20,
+  "notes": "Упрощён поиск местного времени без регистрации (Photon и TimeAPI). Убран режим доски, сохранён реестр и карточки контрактов. Исправлено скрытие контрактов с некорректной импортной датой; исходные даты не меняются.",
   "files": {
-    "BUILD.txt": "c4ce4de92f2a0c593b839c123cc66a5db1c2febbbc9fa259a888924fad2d4c6b",
-    "app/app.mjs": "77b7f9cb52046e31b31dbaca724d28ada691ae2e76cac64ac823045f56cff93b",
-    "app/competitors-logic.mjs": "b762f575cdc285cec12cc495330770be4e6d1565a0815af2d901c38d41b13675",
-    "app/competitors.mjs": "27874252db091ce24b92c226c3d594c91c09b9a3c9cf408465ae94b5a3edb2e9",
-    "app/home-logic.mjs": "d21dcfc714163b6db7deac583cf6dd3bc75b06c0d25695c3cd7041b8810aea97",
-    "app/home.css": "504ad5e10dc2fcbb3f84d49bad25bda62328b34254b91bf3ce9e238e5c672b4e",
-    "app/home.mjs": "90a85a75ec1d33c836087d1ac31acc74c56c21aa65d9b4689fbb8993537c9f0c",
-    "app/index.html": "0289b7e929b5d06cf0af6e9df734ec100e8a872eca2c44cb1db9dad98079aa15",
-    "app/logic.mjs": "d687b831ddf32b9584bb15eee4ed176662f5a98c9a0ab44fa57a60c48a6000f9",
-    "app/stock.mjs": "dc14504d35f3a3ff0fe0bbce4e50643fd54e4e23fe253675f539580e102f1fe5",
-    "app/style.css": "5a24b64d58ef1f912400beff38e707ff98e7957004291e00b8be5d9810b7a1bd",
-    "browser-check.html": "537836224c2d54a3662791e10efe245a7d2e93cfeab1d7b3093bdc9ea2a36e68",
-    "original-ui-sha256.json": "657cd743b4533051d888c5bb9e270e158ba2c7ea59144124ecf6effe2d8f7433",
-    "server.py": "6ca26e2d2b87cd22f309830688fa11bb0c2d5b2ff096d3dec23eda47df5ae82d",
-    "version.json": "d8c88a7d6b50e4a349c3ff88ad89919268ed3190c3856234cc8545bcbc2724e2"
+    "BUILD.txt": "dfccfff9c45f997c1ae4cb248261a9451724f3d18ef6b623caa0724a5231a201",
+    "app/app.mjs": "f7b8317f78dbf08bc5b26705c6786cb3dc4ff2edb2b1fd58be59f63aa85a33b3",
+    "app/index.html": "85c79139eed3820cc69a88d1b128373f90a7e9a4dde1094504941f661f331e9f",
+    "browser-check.html": "20554d40fb0f1feef4beb34839ef22e6918dc7c6541e57dfc1de2d5aaea3a470",
+    "original-ui-sha256.json": "6a4a97b8c370a5c581545c14f657150eccebbb539872a090def0ab580808bc62",
+    "server.py": "d5b10f242b22f08d47d2b87ee43adbbc1feddcee0f2f7ead638a01c821c24857",
+    "version.json": "08b5ce452d6edf937a37059d703664cc92d0cbb0f2aa94ad623f920568279bbd",
+    "app/header-logic.mjs": "761d81ab49928a031f429a06ef95b8c8854c2ce6aa91006001bb463ed34bb516"
   }
 }
