@@ -1,16 +1,17 @@
 {
   "format": 1,
-  "version": 21,
-  "minVersion": 20,
-  "notes": "Упрощён поиск местного времени без регистрации (Photon и TimeAPI). Убран режим доски, сохранён реестр и карточки контрактов. Исправлено скрытие контрактов с некорректной импортной датой; исходные даты не меняются.",
+  "version": 22,
+  "minVersion": 21,
+  "notes": "Предварительный список при наведении на карточки «Требуются мои действия» и «Ожидаем оплату». Список оплат содержит заказчика, номер контракта, сумму и срок. Нажатие открывает полный список.",
   "files": {
-    "BUILD.txt": "dfccfff9c45f997c1ae4cb248261a9451724f3d18ef6b623caa0724a5231a201",
-    "app/app.mjs": "f7b8317f78dbf08bc5b26705c6786cb3dc4ff2edb2b1fd58be59f63aa85a33b3",
-    "app/index.html": "85c79139eed3820cc69a88d1b128373f90a7e9a4dde1094504941f661f331e9f",
-    "browser-check.html": "20554d40fb0f1feef4beb34839ef22e6918dc7c6541e57dfc1de2d5aaea3a470",
-    "original-ui-sha256.json": "6a4a97b8c370a5c581545c14f657150eccebbb539872a090def0ab580808bc62",
-    "server.py": "d5b10f242b22f08d47d2b87ee43adbbc1feddcee0f2f7ead638a01c821c24857",
-    "version.json": "08b5ce452d6edf937a37059d703664cc92d0cbb0f2aa94ad623f920568279bbd",
-    "app/header-logic.mjs": "761d81ab49928a031f429a06ef95b8c8854c2ce6aa91006001bb463ed34bb516"
+    "BUILD.txt": "66654fa73e5130c3635e5d723d3c64e8684f2d070e5aeed0b8ca1b36df811992",
+    "server.py": "dac090139ded2f8b4e7ad160540be83fa7b0f1683f820f5af50323e5bf46bc5a",
+    "browser-check.html": "e4f67391d450abead520dffd3ef493e6f2f6fac52091c44ebab59197e2d0b3ad",
+    "version.json": "84124216c2a8c874f56c7a2e103d40718274ec8a0bfe18b0f30e7fb3b1bf47d3",
+    "original-ui-sha256.json": "adba7a3a28b1a86859fd5bff9d78740080ead48b806f631c924d9aa507dea836",
+    "app/app.mjs": "3aea30c11e369226577aeaca01d7a080d3006e539c30266b14143407ad42bd3b",
+    "app/home.mjs": "8dec72dc5454070125221ec26315217b490ab978395ead8dd986483bb22c6ecf",
+    "app/home.css": "ca34a4b123eb3a72228ef9e357abc53d1ff3666bd90c010111f798784d977b96",
+    "app/index.html": "ccaef975aeee876462323824ebbb90f7f6b9632a39761100286452d8ce0de914"
   }
 }
