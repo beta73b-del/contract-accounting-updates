@@ -1,17 +1,16 @@
 {
   "format": 1,
-  "version": 22,
-  "minVersion": 21,
-  "notes": "Предварительный список при наведении на карточки «Требуются мои действия» и «Ожидаем оплату». Список оплат содержит заказчика, номер контракта, сумму и срок. Нажатие открывает полный список.",
+  "version": 23,
+  "minVersion": 22,
+  "notes": "Главная → Итоги: «Всего расходов» включает комиссии, логистику, прочие и общие расходы, а также налог, без себестоимости товара. Себестоимость сохраняется в расчёте чистой прибыли и налога. При неизвестной ставке — прочерк.",
   "files": {
-    "BUILD.txt": "66654fa73e5130c3635e5d723d3c64e8684f2d070e5aeed0b8ca1b36df811992",
-    "server.py": "dac090139ded2f8b4e7ad160540be83fa7b0f1683f820f5af50323e5bf46bc5a",
-    "browser-check.html": "e4f67391d450abead520dffd3ef493e6f2f6fac52091c44ebab59197e2d0b3ad",
-    "version.json": "84124216c2a8c874f56c7a2e103d40718274ec8a0bfe18b0f30e7fb3b1bf47d3",
-    "original-ui-sha256.json": "adba7a3a28b1a86859fd5bff9d78740080ead48b806f631c924d9aa507dea836",
-    "app/app.mjs": "3aea30c11e369226577aeaca01d7a080d3006e539c30266b14143407ad42bd3b",
-    "app/home.mjs": "8dec72dc5454070125221ec26315217b490ab978395ead8dd986483bb22c6ecf",
-    "app/home.css": "ca34a4b123eb3a72228ef9e357abc53d1ff3666bd90c010111f798784d977b96",
-    "app/index.html": "ccaef975aeee876462323824ebbb90f7f6b9632a39761100286452d8ce0de914"
+    "BUILD.txt": "4248371ee4392071265c7fbbd686e3fbb3a41f456fea8f5f86a5521bbadabd48",
+    "app/app.mjs": "67011641ebc72d5420be27582079d9e22ac556f4325734f922a3c8be0e900ded",
+    "app/home.mjs": "51d263103f2fbb35fe11cfd8111ac04025dc18f504bccb04ff0452785f40d579",
+    "app/index.html": "9aa72ce74c420b144ebd4e4ada979da44caabe202cba8e0d83080496595fab43",
+    "browser-check.html": "cc4e5a18ca739b96ebb88928871a037ee5b2b4cf909ee00ddcf2e1c3682d64fb",
+    "original-ui-sha256.json": "74f63b1c6219ffdf9d6cdcb056380d4058dcf460178cf5dbae7b35ea79d03bbd",
+    "server.py": "33e2b1ae759424b21975462e0771349b426567f3ceac6a79811298588649a63f",
+    "version.json": "aac5c8a67df0e92ec34fc282c43b7d7c9ef4ca367038fa816fb6eee2cc03578c"
   }
 }
