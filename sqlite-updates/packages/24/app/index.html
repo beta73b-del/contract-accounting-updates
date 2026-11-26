@@ -1,0 +1,1234 @@
+<!doctype html>
+
+<html lang="ru">
+
+<head>
+
+  <meta charset="utf-8">
+
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <title>Контракты ИП</title>
+
+  <link rel="icon" href="/app/favicon.ico" sizes="any" type="image/x-icon">
+
+  <link rel="icon" href="/app/favicon-32.png" sizes="32x32" type="image/png">
+
+  <link rel="icon" href="/app/favicon-16.png" sizes="16x16" type="image/png">
+
+  <link rel="stylesheet" href="/app/style.css?v=build024-labels1">
+
+  <link rel="stylesheet" href="/app/home.css?v=build022-kpi1">
+
+<script data-contracts-presence="017">
+(()=>{
+  if(window.top!==window || !/^https?:$/.test(location.protocol))return;
+  const tab=crypto.randomUUID();let key='',seq=0,active=true,timer=0,pending=false;
+  function send(open){
+    if(!key)return;
+    const body=JSON.stringify({key,tab,seq:++seq,open});
+    if(!open && navigator.sendBeacon && navigator.sendBeacon('/api/browser-presence',new Blob([body],{type:'application/json'})))return;
+    fetch('/api/browser-presence',{method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:true,cache:'no-store'}).catch(()=>{});
+  }
+  async function pulse(){
+    if(!active || pending)return;
+    if(!key){pending=true;try{const r=await fetch('/api/browser-session',{headers:{'X-Contracts-Launch':'1'},cache:'no-store'});if(r.ok)key=(await r.json()).key;}catch(_){}finally{pending=false;}}
+    if(key)send(active);
+  }
+  function start(){active=true;clearInterval(timer);pulse();timer=setInterval(pulse,5000);}
+  addEventListener('pagehide',()=>{active=false;clearInterval(timer);send(false);});
+  addEventListener('pageshow',e=>{if(e.persisted || !active)start();});
+  document.addEventListener('visibilitychange',()=>{if(active)pulse();});
+  start();
+})();
+</script>
+</head>
+
+<body>
+
+<div class="shell" id="shell">
+
+  <aside class="sidebar">
+
+    <button type="button" class="brand" id="openProfile" aria-current="page" aria-label="Перейти на главную страницу"><img class="brand-logo" src="/app/cover-logo.png" alt=""><strong id="owner-side"><span>Контракты ИП</span><small></small></strong></button>
+
+    <nav class="nav" aria-label="Разделы реестра">
+
+
+      <button class="nav-item" data-view="contracts"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="3.5" width="18" height="5" rx="1"/><rect x="3" y="11" width="18" height="5" rx="1"/><path d="M3 20h18"/></svg></span><span>Контракты</span></button>
+
+      <button class="nav-item" data-view="stock" id="navStock"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="m3 7 9-4 9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg></span><span>Склад</span></button>
+
+      <button class="nav-item" data-view="calculator" id="navCalculator"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h2m4 0h2M8 14h2m4 0h2M8 18h2m4 0h2"/></svg></span><span>Калькулятор</span></button>
+
+      <button class="nav-item" data-view="proposal" id="navProposal"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8l4 4v14H4V3h4z"/><path d="M14 3v5h6M8 12h8M8 16h6"/></svg></span><span>Формирование КП</span></button>
+
+      <button type="button" class="nav-item" data-view="act"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M8 3h8l4 4v14H4V3h4z"/><path d="M14 3v5h6M8 12h8M8 16h8"/></svg></span><span>Акт</span></button>
+
+    <button class="nav-item" data-view="summary"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M4 19V5M4 19h16M8 15l4-5 4 2 4-6"/></svg></span><span>Финансовые итоги</span></button>
+
+
+      <button class="nav-item" data-view="profile"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M5.5 16c.5-2 6.5-2 7 0M15 9h4M15 13h4"/></svg></span><span>Карточка ИП</span></button>
+
+      <button class="nav-item" data-view="competitors"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span><span>Конкуренты</span></button>
+
+      <button class="nav-item" data-view="trash" id="navTrash"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg></span><span>Корзина</span></button>
+
+    </nav>
+
+    <div class="side-footer">
+
+      <div class="side-bottom">
+
+        <div class="health">
+
+          <span class="indicator" id="db-indicator" aria-hidden="true"></span>
+
+          <div><strong id="db-status">Проверка подключения</strong><small id="cloud-status">Ожидание ответа сервера</small></div>
+
+        </div>
+
+      </div>
+
+      <div class="backup-control">
+
+        <button class="save-item" type="button" id="saveApp" aria-describedby="backupPurpose backupStatus">Резервная копия</button>
+
+        <button class="nav-item settings-footer" type="button" data-view="settings"><span class="i" aria-hidden="true"><svg class="nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M10 2h4l1 3 2 1 3-1 2 4-2 2v2l2 2-2 4-3-1-2 1-1 3h-4l-1-3-2-1-3 1-2-4 2-2v-2L2 9l2-4 3 1 2-1Z"/></svg></span><span>Настройки</span></button>
+
+        <span id="backupPurpose" hidden>Создаёт резервную копию базы SQLite</span>
+
+        <span id="backupStatus" aria-live="polite">Копия: проверяем…</span>
+
+      </div>
+
+    </div>
+
+  </aside>
+
+  <main class="main">
+
+    <header class="topbar">
+
+      <div class="topbar-upper">
+
+        <div class="home-page-heading home-visually-hidden"><h1>Главная</h1></div>
+
+        <div class="header-metrics" role="group" aria-label="Обязательства по всем контрактам">
+
+          <button type="button" id="headerSignatures" class="header-metric"><span>Требуются мои действия</span><strong id="headerSignCount">0</strong></button>
+
+          <button type="button" id="headerUnpaid" class="header-metric" title="Вручённые, но пока не оплаченные контракты по всем периодам"><span>Ожидаем оплату</span><strong id="headerUnpaidAmount">0,00 ₽</strong></button>
+
+        </div>
+
+        <div class="moscow-clock" aria-label="Дата и время по Москве">
+
+          <button type="button" id="homeCalendarToggle" class="home-date-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="homeCalendarPopover"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6m10-6v6M3 11h18"/></svg><time id="headerMoscowDate"></time><span aria-hidden="true">⌄</span></button><button type="button" id="cityClockOpen" class="city-clock-open" title="Посмотреть время в другом городе" aria-haspopup="dialog"><strong id="headerMoscowTime"></strong></button>
+
+        </div>
+
+      </div>
+
+      <div class="topbar-lower">
+
+        <h1 id="title" class="section-context-title" hidden></h1>
+
+        <div class="toolbar-left" id="listPeriod" aria-label="Период контрактов">
+
+          <div class="legacy-period-controls" hidden>
+
+            <label for="yearSelect">Год</label><select id="yearSelect"><option value="2026">2026</option><option value="2027">2027</option></select>
+
+            <label for="monthSelect">Месяц</label><select id="monthSelect"></select>
+
+          </div>
+
+          <div class="month-navigation">
+
+            <strong id="periodLabel" hidden aria-hidden="true"></strong>
+
+            <button type="button" id="periodPickerToggle" title="Выбрать месяц и год" aria-label="Выбрать месяц и год" aria-expanded="false" aria-controls="periodPicker"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/><path d="M8 14h2m4 0h2m-8 4h2"/></svg></button>
+
+            <button type="button" id="periodToday" title="Вернуться к текущему месяцу" aria-label="Вернуться к текущему месяцу"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.5 6.3"/><path d="M3 4v7h7"/></svg></button>
+
+            <div id="periodPicker" class="period-picker" hidden><label for="periodPickMonth">Месяц</label><select id="periodPickMonth"></select><label for="periodPickYear">Год</label><select id="periodPickYear"></select></div>
+
+          </div>
+
+        </div>
+
+        <div class="top-actions">
+
+          <div class="view-alert-group">
+
+          <button type="button" id="headerBell" class="header-bell" title="Сроки заказчика: просроченные и ближайшие 3 дня" aria-label="Срочные сроки заказчика" aria-expanded="false">
+
+            <span class="bell-icon-wrap" aria-hidden="true"><svg class="bell-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+
+              <path d="M10 21h4"/>
+
+            </svg></span><span id="headerBellCount" class="header-bell-count" hidden></span>
+
+          </button>
+
+          </div>
+
+          <button class="btn btn-primary" id="top-new"><span class="plus" aria-hidden="true">＋</span> Новый контракт</button>
+
+        </div>
+
+      </div>
+
+      <div id="headerActionPanel" class="header-action-panel" role="region" aria-label="Список необходимых действий" hidden></div>
+
+      <dialog id="cityClockDialog" class="city-clock-dialog" aria-labelledby="cityClockTitle">
+        <div class="city-clock-head"><h3 id="cityClockTitle">Время в городе</h3><button type="button" id="cityClockClose" aria-label="Закрыть">×</button></div>
+        <p>Основное время приложения — Москва (МСК).</p>
+        <label for="cityClockInput">Введите город</label><input id="cityClockInput" list="cityClockOptions" maxlength="120" autocomplete="off" placeholder="Например, Владивосток"><datalist id="cityClockOptions"></datalist>
+        <div class="city-clock-online">
+          <button type="button" id="cityClockSearch">Найти</button>
+          <label id="cityClockResultLabel" for="cityClockOnlineResults" hidden>Уточните населённый пункт</label><select id="cityClockOnlineResults" hidden disabled><option value="">Выберите населённый пункт</option></select>
+          <div id="cityClockSearchStatus" role="status"></div>
+          <small>Источники: <a href="https://photon.komoot.io/" target="_blank" rel="noopener noreferrer">Photon</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> · <a href="https://timeapi.io/" target="_blank" rel="noopener noreferrer">TimeAPI</a>.</small>
+        </div>
+        <details><summary>Ручной выбор часового пояса (без интернета)</summary><label for="cityClockZone">Часовой пояс</label><select id="cityClockZone"><option value="">Выберите часовой пояс</option></select></details>
+        <div id="cityClockResult" role="status" class="city-clock-result"></div>
+      </dialog>
+      <div id="homeCalendarPopover" class="home-calendar-popover" role="dialog" aria-label="Календарь задач" hidden>
+
+        <div class="home-cal-head"><button type="button" id="homeCalPrev" aria-label="Предыдущий месяц">‹</button><strong id="homeCalTitle"></strong><button type="button" id="homeCalNext" aria-label="Следующий месяц">›</button></div>
+
+        <div class="home-calendar-days" id="homeCalendarDays"></div>
+
+        <div class="home-calendar-events"><strong id="homeCalSelected"></strong><div id="homeCalEvents"></div></div>
+
+        <div class="home-calendar-legend"><span>● Контракты</span><span>● Заметки</span></div>
+
+      </div>
+
+    </header>
+
+    <section id="view-home" class="view active" aria-label="Главная страница">
+
+      <div class="home-kpis">
+
+        <div class="home-customer-kpi-wrap">
+        <button type="button" class="home-kpi supplier" id="homeSupplierKpi" aria-describedby="homeSupplierPreview" aria-controls="headerActionPanel" aria-expanded="false">
+
+          <span class="home-kpi-icon" data-icon="clipboard"></span><span class="home-kpi-copy"><span>Требуются мои действия</span><strong id="homeSupplierCount">0</strong><small>Подписать, отправить, контролировать</small></span><span class="home-kpi-arrow">›</span>
+
+        </button>
+        <div class="home-customer-preview" id="homeSupplierPreview" role="tooltip"></div>
+        </div>
+
+        <div class="home-customer-kpi-wrap">
+        <button type="button" class="home-kpi customer" id="homeCustomerKpi" aria-describedby="homeCustomerPreview" aria-controls="headerActionPanel" aria-expanded="false">
+
+          <span class="home-kpi-icon" data-icon="handshake"></span><span class="home-kpi-copy"><span>Требуются действия от заказчика</span><strong id="homeCustomerCount">0</strong><small>Подписание и оплата</small></span><span class="home-kpi-arrow">›</span>
+
+        </button>
+
+        <div class="home-customer-preview" id="homeCustomerPreview" role="tooltip"></div>
+        </div>
+
+        <div class="home-customer-kpi-wrap">
+        <button type="button" class="home-kpi money" id="homeUnpaidKpi" aria-describedby="homeUnpaidPreview" aria-controls="headerActionPanel" aria-expanded="false">
+
+          <span class="home-kpi-icon" data-icon="coins"></span><span class="home-kpi-copy"><span>Ожидаем оплату</span><strong id="homeUnpaidValue">0 ₽</strong><small id="homeUnpaidCount">0 контрактов</small></span><span class="home-kpi-arrow">›</span>
+
+        </button>
+        <div class="home-customer-preview" id="homeUnpaidPreview" role="tooltip"></div>
+        </div>
+
+      </div>
+
+      <div class="home-top-notes">            <section class="home-panel home-notes" aria-labelledby="homeNotesTitle">
+
+              <div class="home-panel-head"><div class="home-title"><span class="home-icon" data-icon="note"></span><div><h2 id="homeNotesTitle">Заметки <span id="homeNotesCount"></span></h2></div></div><button type="button" class="home-mini-link" id="homeAllNotes" hidden>Показать все</button></div>
+              <div id="homeNotesList" class="home-notes-list"></div>
+
+              <form id="homeNoteAdd" class="home-notes-create" autocomplete="off">
+                <div class="home-notes-input-row">
+                  <label class="home-visually-hidden" for="homeNoteText">Текст заметки</label>
+                  <input id="homeNoteText" type="text" maxlength="500" placeholder="Например, торги в 10:00…" required>
+                  <button type="button" id="homeNoteScheduleToggle" class="home-note-schedule-toggle" aria-label="Указать дату и время" aria-expanded="false" aria-controls="homeNoteScheduleFields" title="Указать дату и время без уведомления">🕒</button>
+                  <button type="submit" aria-label="Добавить заметку" title="Добавить заметку">＋</button>
+                </div>
+                <div class="home-notes-schedule" id="homeNoteScheduleFields" hidden>
+                  <label>Дата <input id="homeNoteDue" type="date"></label>
+                  <label>Время (МСК) <input id="homeNoteTime" type="time" step="60"></label>
+                  
+                </div>
+              </form>
+
+            </section>
+
+
+
+      </div>
+
+      <section id="demoContractSummary" class="home-panel demo-summary-panel" aria-label="Информационная сводка" hidden>
+        <div class="home-panel-head"><div class="home-title"><span class="home-icon" data-icon="chart"></span><h2>Итоги</h2></div></div>
+        <div id="demoContractSummaryRows" class="demo-summary-rows"></div>
+        <small class="demo-summary-foot" id="demoSummaryPeriod"></small>
+      </section>
+      <div class="home-body-grid home-contracts-notes-layout">
+
+        <div class="home-main-col">
+
+          <section class="home-panel home-contracts" aria-labelledby="homeContractsTitle">
+
+            <div class="home-panel-head">
+
+              <div class="home-title"><span class="home-icon" data-icon="file"></span><h2 id="homeContractsTitle">Контракты</h2></div>
+
+              <div class="home-table-tools">
+
+                <label class="home-visually-hidden" for="homeContractSearch">Поиск контрактов</label>
+
+                <input type="search" id="homeContractSearch" placeholder="Поиск по заказчику, номеру…" autocomplete="off">
+
+              </div>
+
+            </div>
+
+            <div class="home-contract-scroll"><table class="home-contract-table" aria-label="Реестр контрактов на главной"><thead><tr><th>Заказчик / контракт</th><th>Товар / количество</th><th>Статус</th><th class="home-money-head">Сумма</th></tr></thead><tbody id="homeContractsBody"></tbody></table></div>
+
+            <button type="button" class="home-more-link" id="homeAllContracts">Открыть реестр контрактов <span aria-hidden="true">›</span></button>
+
+          </section>
+
+          <div class="home-lower-grid" hidden>
+
+            <section class="home-panel home-stock" aria-labelledby="homeStockTitle">
+
+              <div class="home-panel-head"><div class="home-title"><span class="home-icon" data-icon="package"></span><div><h2 id="homeStockTitle">Склад</h2></div></div><button class="home-mini-link" type="button" id="homeGoStock">Подробнее ›</button></div>
+
+              <div class="home-stock-body" id="homeStockRows"></div>
+
+              <button class="home-stock-shortage" type="button" id="homeStockShortage" hidden></button>
+
+            </section>
+
+          </div>
+
+        </div>
+
+        <div class="home-side-col">
+          <section class="home-panel home-finance" hidden aria-labelledby="homeFinanceTitle">
+
+            <div class="home-panel-head"><div class="home-title"><span class="home-icon" data-icon="chart"></span><div><h2 id="homeFinanceTitle">Финансовые итоги</h2><p id="homeFinanceMonth">Текущий месяц</p></div></div><span class="home-finance-info" title="Плановый финансовый результат, а не поступление оплаты">ⓘ</span></div>
+
+            <div id="homeFinanceBars" class="home-finance-bars" role="region" aria-label="График финансовых итогов за текущий месяц"></div>
+
+            <div class="home-finance-footer"><strong id="homeProfitability">Рентабельность: —</strong><button class="home-mini-link" id="homeGoSummary" type="button">Перейти в итоги ›</button></div>
+
+          </section>
+
+          <section class="home-panel home-profile" hidden aria-labelledby="homeProfileTitle">
+
+            <div class="home-panel-head"><div class="home-title"><span class="home-icon" data-icon="id"></span><h2 id="homeProfileTitle">Карточка ИП</h2></div><small>Основные реквизиты</small></div>
+
+            <div class="home-profile-rows" id="homeProfileRows"></div>
+
+            <button class="home-primary-link" type="button" id="homeOpenFullProfile">Все реквизиты ›</button>
+
+          </section>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <section id="view-contracts" class="view">
+
+      <div class="stat-strip" aria-label="Итоги месяца">
+
+        <div><span class="strip-label">Записей</span><strong id="stat-count">0</strong></div>
+
+        <div><span class="strip-label">Сумма контрактов</span><strong id="stat-contract">0 ₽</strong></div>
+
+        <div><span class="strip-label">Всего единиц товара</span><strong id="stat-quantity">0 шт.</strong></div>
+
+        <div class="stat-products">
+
+          <span class="strip-label">По товарам</span>
+
+          <p id="stat-products-empty">—</p>
+
+          <dl id="stat-products"></dl>
+
+        </div>
+
+      </div>
+
+      <div class="table-card" id="contractList">
+        <div class="action-row" style="padding:6px 12px"><label for="contractSort">Сортировка:</label><select id="contractSort"><option value="newest">Сначала новые</option><option value="oldest">Сначала старые</option><option value="customer">По заказчику</option></select></div>
+
+        <div class="table-scroll"><table class="contracts-table" id="contractsTable" aria-label="Контракты за выбранный месяц">
+
+          <thead><tr><th scope="col">Заказчик и товар</th><th scope="col" class="money">Сумма, ₽</th><th scope="col">Статус</th><th scope="col">Сроки</th></tr></thead>
+
+          <tbody id="contractsBody"></tbody>
+
+        </table></div>
+
+      </div>
+
+    </section>
+
+    <section id="view-competitors" class="view">
+
+      <div class="comp-page">
+
+        <div class="comp-topline">
+
+          <div><p><strong>Последние 6 месяцев</strong> <span id="competitorsWindow"></span></p></div>
+
+          <button type="button" id="competitorAdd" class="btn btn-primary">+ Добавить</button>
+
+        </div>
+
+        <div id="competitorFeedback" class="comp-feedback" role="status" hidden></div>
+
+        <div id="competitorProductFilters" class="comp-product-filters" role="group" aria-label="Фильтр по товару"></div>
+
+        <div class="comp-columns" id="competitorProductGroups"></div>
+
+        <details id="competitorArchive" class="comp-archive"><summary>Архивные процедуры</summary><div id="competitorArchiveRows" class="comp-archive-rows"></div></details>
+
+        <section id="competitorWinnerPanel" class="comp-winner-panel" aria-label="История победителя" hidden></section>
+
+        <div id="competitorFormBackdrop" class="comp-modal-backdrop" hidden>
+
+          <div class="comp-form-dialog" role="dialog" aria-modal="true" aria-labelledby="competitorFormTitle">
+
+            <form id="competitorForm" novalidate>
+
+              <div class="comp-form-heading"><h3 id="competitorFormTitle">Добавить процедуру</h3><button type="button" id="competitorFormClose" aria-label="Закрыть">×</button></div>
+
+              <div class="comp-form-grid">
+
+                <label>Дата процедуры <input id="competitorDate" type="date" min="2020-01-01" required></label>
+
+                <label>Товар <input id="competitorModel" type="text" maxlength="200" autocomplete="off" placeholder="Введите наименование товара" required></label>
+
+                <label class="comp-wide">Площадка <input id="competitorPlatform" maxlength="120" list="competitorPlatformList" required></label>
+
+                <datalist id="competitorPlatformList"><option value="Берёзка"></option><option value="РТС-тендер"></option><option value="Сбер А"></option><option value="Росэлторг"></option><option value="Портал поставщиков"></option></datalist>
+
+                <label class="comp-wide">Победитель <input id="competitorWinner" maxlength="200" required></label>
+
+                <label>ИНН (необязательно) <input id="competitorInn" inputmode="numeric" maxlength="12" autocomplete="off"></label>
+
+                <label>Количество, шт. <input id="competitorQuantity" type="number" min="1" max="1000000" step="1" required></label>
+
+                <label class="comp-wide">Цена победителя за 1 шт., ₽ <input id="competitorPrice" inputmode="decimal" placeholder="0,00" required></label>
+
+              </div>
+
+              <p id="competitorFormError" class="comp-form-error" role="alert" hidden></p>
+
+              <div class="comp-form-actions"><button type="button" id="competitorFormCancel" class="btn btn-secondary">Отмена</button><button type="submit" id="competitorFormSave" class="btn btn-primary">Сохранить</button></div>
+
+            </form>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <section id="view-stock" class="view">
+
+      <div class="stock-tabs contract-view-switch" role="tablist" aria-label="Разделы склада">
+
+        <button type="button" role="tab" id="stockBalanceTab" data-stock-tab="stockBalances" aria-controls="stockBalances" aria-selected="true">Остатки</button>
+
+        <button type="button" role="tab" id="stockHistoryTab" data-stock-tab="stockHistory" aria-controls="stockHistory" aria-selected="false">Движение по складу</button>
+
+      </div>
+
+      <section id="stockBalances" role="tabpanel" aria-labelledby="stockBalanceTab">
+
+        <div class="stock-actions">
+
+          <button class="btn btn-primary" type="button" id="stockReceipt">Оформить приход</button>
+
+          <button class="btn btn-secondary" type="button" id="stockCreateProduct">Создать карточку товара</button>
+
+        </div>
+
+        <form class="panel" id="stockCreateForm" hidden>
+
+          <h2>Новый товар</h2>
+
+          <div class="field"><label for="stockCreateName">Наименование товара</label><input id="stockCreateName" maxlength="100" required autocomplete="off"></div>
+
+          <div class="field" hidden><label for="stockCreateCharacteristics">Характеристики</label><textarea id="stockCreateCharacteristics" maxlength="3000" rows="3" placeholder="Например: тип, интерфейс, объём памяти"></textarea></div>
+
+          <p id="stockCreateSimilar" role="status" aria-live="polite"></p>
+
+          <div class="stock-actions"><button type="submit" class="btn btn-primary" id="stockCreateSave">Создать карточку</button><button type="button" class="btn btn-secondary" id="stockCreateCancel">Отмена</button></div>
+
+          <p id="stockCreateMessage" role="alert"></p>
+
+        </form>
+
+        <div class="table-card table-scroll"><table class="contracts-table stock-table" aria-label="Остатки склада">
+
+          <thead><tr><th>Товар</th><th>На складе, шт.</th><th>Резерв, шт.</th><th>Доступно, шт.</th><th>К закупке</th><th>Стоимость остатка</th></tr></thead>
+
+          <tbody id="stockBalanceBody"></tbody>
+
+          <tfoot class="stock-balance-total"><tr><th scope="row">Итого по складу</th><td></td><td></td><td></td><td></td><td id="stockBalanceTotal" aria-live="polite">—</td></tr></tfoot>
+
+        </table></div>
+
+        <section class="panel stock-reservations" id="stockProductCard" aria-labelledby="stockProductCardName" hidden>
+
+          <div class="stock-card-heading"><h2 id="stockProductCardName"></h2><div><button type="button" class="btn btn-secondary" id="stockProductDelete">Удалить товар</button> <button type="button" class="btn btn-secondary" id="stockProductRestore" hidden>Восстановить товар</button> <button type="button" class="btn btn-secondary" id="stockProductCardClose">Закрыть</button></div></div>
+
+          <form id="stockProductDetailsForm" hidden>
+
+            <div class="field"><label for="stockProductCharacteristics">Характеристики</label><textarea id="stockProductCharacteristics" maxlength="3000" rows="3"></textarea></div>
+
+            <button type="submit" class="btn btn-secondary" id="stockProductDetailsSave">Сохранить характеристики</button>
+
+            <p id="stockProductDetailsMessage" role="alert"></p>
+
+          </form>
+
+          <p id="stockProductCardBalance"></p>
+
+          <div id="stockReservations"></div>
+
+          <details id="productAdjustmentSection">
+
+            <summary>Корректировка остатка</summary>
+
+            <form id="productAdjustment">
+
+            <div class="form-grid form-grid-three">
+
+              <div class="field"><label for="productAdjustmentQuantity">Фактический остаток (включая резерв), шт.</label><input id="productAdjustmentQuantity" type="number" min="0" max="999999999" step="1" required></div>
+
+              <div class="field" id="productAdjustmentPriceField" hidden><label for="productAdjustmentPrice">Закупочная цена за штуку для всего остатка, ₽</label><input id="productAdjustmentPrice" inputmode="decimal" placeholder="0,00"></div>
+
+              <input id="productAdjustmentNote" type="hidden">
+
+            </div>
+
+            <p id="productAdjustmentPreview" role="status"></p>
+
+            <div class="stock-actions"><button type="submit" class="btn btn-primary" id="productAdjustmentSave">Сохранить корректировку</button></div>
+
+            <p id="productAdjustmentMessage" role="alert"></p>
+
+            </form>
+
+          </details>
+
+        </section>
+
+      </section>
+
+      <section id="stockHistory" role="tabpanel" aria-labelledby="stockHistoryTab" hidden>
+
+        <div class="stock-actions">
+
+          <div class="field"><label for="stockFilterProduct">Товар</label><select id="stockFilterProduct"></select></div>
+
+          <div class="stock-period-toolbar" role="group" aria-label="Период движения по складу">
+          <button type="button" class="stock-period-icon" data-stock-period="month" title="Текущий месяц" aria-label="Текущий месяц" aria-pressed="true"><span aria-hidden="true">▦</span></button>
+          <button type="button" class="stock-period-icon" data-stock-period="year" title="Текущий год" aria-label="Текущий год" aria-pressed="false"><span aria-hidden="true">▤</span></button>
+          <button type="button" class="stock-period-icon" data-stock-period="custom" title="Произвольный период" aria-label="Произвольный период" aria-pressed="false"><span aria-hidden="true">▣</span></button>
+          <span id="stockPeriodLabel" class="stock-period-label" aria-live="polite"></span>
+          <div id="stockCustomDates" class="stock-custom-dates" hidden>
+            <div class="field"><label for="stockFrom">С</label><input id="stockFrom" type="date"></div>
+            <div class="field"><label for="stockTo">По</label><input id="stockTo" type="date"></div>
+          </div>
+        </div>
+
+        </div>
+
+
+
+        <p id="stockPeriodMessage" role="status"></p>
+
+        <section class="stock-chart-panel" aria-labelledby="stockChartTitle">
+
+          <h3 id="stockChartTitle">Движение по товарам, шт.</h3>
+
+          <div class="stock-chart-legend"><span class="receipt">Приход</span><span class="ship">Реализация</span></div>
+
+          <div id="stockChart"></div>
+
+          <p class="stock-chart-hint">Реализация — отправки за период за вычетом возвратов и отмен отправки. Отрицательное значение означает, что возвратов и отмен было больше, чем отправок.</p>
+
+        </section>
+
+        <div class="table-card table-scroll"><table class="stock-analytics-table" aria-label="Приход и реализация по товарам за период">
+
+          <thead><tr><th>Товар</th><th>Приход, шт.</th><th>Стоимость прихода</th><th>Реализация, шт.</th><th>Себестоимость реализации</th></tr></thead>
+
+          <tbody id="stockPeriodBody"></tbody>
+
+        </table></div>
+
+        <h3>Приходы и реализация по датам</h3>
+
+        <div class="table-card table-scroll"><table class="contracts-table stock-table" aria-label="Складские движения">
+
+          <thead><tr><th>Дата</th><th>Операция</th><th>Товар</th><th>Количество, шт.</th><th>Закупочная стоимость</th><th>Действия</th></tr></thead>
+
+          <tbody id="stockMovementBody"></tbody>
+
+        </table></div>
+
+      </section>
+
+      <form class="panel stock-form" id="stockForm" hidden>
+
+        <h2 id="stockFormTitle">Приход товара</h2>
+
+        <div class="form-grid form-grid-three">
+
+          <div class="field"><label for="stockDate">Дата прихода</label><input id="stockDate" type="date" required></div>
+
+          <div class="field"><label for="stockProduct">Товар</label><select id="stockProduct"></select></div>
+
+          <div class="field"><label for="stockQuantity" id="stockQtyLabel">Количество, шт.</label><input id="stockQuantity" type="number" min="0" max="999999999" step="1" required></div>
+
+          <div class="field"><label for="stockPrice">Цена за штуку, ₽</label><input id="stockPrice" inputmode="decimal" placeholder="0,00"></div>
+
+        </div>
+
+        <div class="field" id="stockNewProductField" hidden><label for="stockNewProduct">Наименование нового товара</label><input id="stockNewProduct" maxlength="100"></div>
+
+        <div id="stockSimilarProducts" role="status" aria-live="polite"></div>
+
+        <div class="field" id="stockPartyField"><label for="stockParty">Поставщик</label><input id="stockParty" maxlength="200"></div>
+
+        <div class="field"><label for="stockNote">Примечание</label><input id="stockNote" maxlength="500"></div>
+
+        <div class="stock-actions"><button type="submit" class="btn btn-primary" id="stockSave">Сохранить</button><button type="button" class="btn btn-secondary" id="stockCloseForm">Отмена</button></div>
+
+        <p id="stockFormMessage" role="alert"></p>
+
+      </form>
+
+    </section>
+
+    <section id="view-trash" class="view"><div class="panel"><p>Удалённые контракты и товары можно восстановить в течение 5 суток. Складские движения сохраняются в истории. Папки контрактов и документы сохраняются даже после очистки корзины.</p><div class="stock-actions"><button type="button" class="btn btn-secondary" id="trashClear" disabled>Очистить корзину</button></div><p id="trashMessage" role="status"></p><div id="trashItems"></div></div></section>
+
+    <section id="view-profile" class="view">
+
+      <div class="panel profile-panel">
+
+        
+
+        <div id="profileDetails" class="profile-details" aria-label="Реквизиты индивидуального предпринимателя"></div>
+
+      </div>
+
+    </section>
+
+    <section id="view-calculator" class="view"><iframe id="calculatorFrame" title="Аукционный калькулятор" loading="lazy" src="/app/auction-calculator.html?v=1.7.23-visual-refine1"></iframe></section>
+
+    <section id="view-act" class="view" aria-label="Конструктор актов"><iframe id="actFrame" title="Конструктор актов" loading="lazy" src="/app/act-constructor.html"></iframe></section>
+
+    <section id="view-proposal" class="view" aria-label="Формирование коммерческого предложения">
+
+      <iframe id="proposalFrame" class="proposal-frame" title="Редактор коммерческого предложения" loading="lazy" src="/app/quote-editor.html?v=1.7.25-kp1"></iframe>
+
+      
+
+    </section>
+
+    <section id="view-summary" class="view">
+
+      <div class="summary-toolbar">
+
+        
+
+        <div class="summary-view-controls">
+
+          <button type="button" id="summaryShowAllMonths" class="btn btn-secondary summary-months-switch" aria-pressed="false">Показать все месяцы</button>
+
+          <div class="select-inline"><label for="summaryRate">УСН</label><select id="summaryRate"><option value="">Выбрать</option><option value="5">5%</option><option value="15">15%</option></select></div>
+          <div class="select-inline"><label for="summaryYear">Год</label><select id="summaryYear"><option value="2026">2026</option><option value="2027">2027</option></select></div>
+
+        </div>
+
+      </div>
+
+      <p id="summaryRateNotice" class="summary-rate-notice" hidden>Выберите ставку УСН для этого года. До выбора налог и чистая прибыль не рассчитаны.</p>
+      <div class="summary-export">
+
+        <label for="exportMonth">Период выгрузки</label><select id="exportMonth"><option value="0">Весь год</option></select>
+
+        <button class="btn btn-secondary" type="button" id="exportExecuted">Выгрузить исполненные в Excel</button>
+
+        
+
+      </div>
+
+      <div class="summary-table-card">
+
+        <div class="table-scroll"><table class="summary-table" aria-label="Финансовые итоги по месяцам">
+
+          <thead><tr>
+
+            <th scope="col">Месяц</th><th scope="col">Сумма контрактов</th><th scope="col">Себестоимость</th><th scope="col">Не оплачено</th>
+
+            <th scope="col" title="Комиссии, логистика, прочие расходы и налог: введённый или расчётный">Операционные расходы</th><th scope="col">Общие расходы</th><th scope="col" title="Плановый результат: сумма контрактов минус себестоимость, операционные и общие расходы">Чистая прибыль</th>
+
+          </tr></thead>
+
+          <tbody id="summaryBody"></tbody><tfoot id="summaryTotal"></tfoot>
+
+        </table></div>
+
+      </div>
+
+      <section id="annualChart" class="annual-chart-card" aria-label="Годовой график финансовых итогов"></section>
+
+    </section>
+
+    <section id="view-settings" class="view">
+
+
+
+      <div class="panel settings-panel">
+
+        <h2>Основное</h2>
+
+        <form id="settingsForm" novalidate>
+
+          <div class="field"><label for="settingOwner">Название реестра</label><input type="text" id="settingOwner" maxlength="160"></div>
+
+          <div class="settings-block"><h2>Облачная копия</h2>
+
+            <p id="settingsCloudStatus" class="settings-status" role="status"></p>
+            <div class="system-line"><span>Последняя локальная облачная копия (МСК)</span><strong id="settingsCloudAt">—</strong></div>
+            <div class="system-line"><span>Файл облачной копии на ПК</span><strong id="settingsCloudPath">—</strong></div>
+            <div class="system-line"><span>Загрузка на сервер Google Drive</span><strong id="settingsCloudVerified">Не подтверждена</strong></div>
+
+            <div class="field"><label for="settingCloud">Папка Google Drive на этом ПК</label><input type="text" id="settingCloud"><small>Копия сначала записывается в папку на ПК. Загрузку на сервер выполняет Google Drive для компьютеров.</small></div>
+
+            <div class="action-row"><button class="btn btn-secondary" type="button" id="chooseCloudFolder">Выбрать папку</button><button class="btn btn-secondary" type="button" id="useDetectedDrive">Выбрать обнаруженную папку Google Drive</button><small id="detectedDrive"></small></div>
+
+            <div class="system-line"><span>Последняя попытка проверки (МСК)</span><strong id="settingsCloudVerifyAt">—</strong></div>
+            <div class="system-line"><span>Последняя подтверждённая копия (МСК)</span><strong id="settingsCloudLastVerifiedAt">—</strong></div>
+            <div class="system-line"><span>Подтверждённый файл на сервере</span><strong id="settingsCloudServerPath">—</strong></div>
+            <div class="system-line"><span>Размер и MD5 локального архива</span><strong id="settingsCloudChecksum">—</strong></div>
+            <div class="field"><label for="settingCloudRemote">Google Drive через rclone (remote:папка)</label><input type="text" id="settingCloudRemote" placeholder="gdrive:ChatGPT/Контракты_ИП"><small>Для подтверждения на сервере нужен настроенный rclone в PATH. При заполнении используется прямая загрузка rclone; архив остаётся в локальной папке резервных копий. Без remote используется папка Google Drive, без подтверждения сервером. Сначала сохраните настройки.</small></div>
+
+            <div class="action-row"><button class="btn btn-secondary" type="button" id="syncNow">Принудительно синхронизировать</button><button class="btn btn-secondary" type="button" id="checkCloudNow">Проверить на сервере</button></div>
+
+          </div>
+
+          <div class="action-row"><button class="btn btn-primary" type="submit">Сохранить настройки</button></div>
+
+        </form>
+
+      </div>
+
+      <div class="panel backup-panel">
+        <h2>Запуск и завершение работы</h2>
+        <form id="launchSettingsForm">
+          <div class="field"><label for="launchBrowser">Браузер для открытия приложения</label><select id="launchBrowser"><option value="system">Системный браузер</option><option value="gost">Chromium-Gost</option><option value="firefox">Mozilla Firefox</option><option value="chrome">Google Chrome</option><option value="edge">Microsoft Edge</option><option value="yandex">Яндекс Браузер</option><option value="custom">Другой браузер</option></select></div>
+          <div class="field" id="launchBrowserPathField" hidden><label for="launchBrowserPath">Путь к браузеру (.exe)</label><input id="launchBrowserPath" type="text" autocomplete="off"><button type="button" class="btn btn-secondary" id="chooseBrowser">Выбрать EXE</button></div>
+          <div class="field"><label for="launchPort">Порт приложения</label><select id="launchPort"><option value="0">Автоматически (8877–8886)</option><option value="8877">8877 — постоянный</option><option value="8878">8878 — постоянный</option><option value="8879">8879 — постоянный</option><option value="8880">8880 — постоянный</option><option value="8881">8881 — постоянный</option><option value="8882">8882 — постоянный</option><option value="8883">8883 — постоянный</option><option value="8884">8884 — постоянный</option><option value="8885">8885 — постоянный</option><option value="8886">8886 — постоянный</option></select><small>Действующий адрес: <span id="launchActivePort">—</span>. Изменение порта вступает в силу после завершения и повторного запуска.</small></div>
+          <div class="field"><label><input type="checkbox" id="launchAutostart"> Запускать приложение при входе в Windows</label><label><input type="checkbox" id="launchAutoOpen" checked> Открывать вкладку при автозапуске</label><label><input type="checkbox" id="launchBackground"> Продолжать работу после закрытия браузера</label><small>При выключенном фоновом режиме сервер завершится после закрытия последней вкладки. Ярлык создаётся при запуске EXE. Настройки запуска хранятся рядом с приложением.</small></div>
+          <div class="action-row"><button type="submit" class="btn btn-primary">Сохранить настройки запуска</button></div>
+          <p id="launchStatus" class="settings-status" role="status"></p>
+        </form>
+      </div>
+
+      <div class="panel backup-panel">
+        <h2>Обновление приложения</h2>
+        <div class="system-line"><span>Установленная версия</span><strong id="installedVersion">—</strong></div>
+        <div class="system-line"><span>Источник обновлений</span><strong>GitHub · тестовые сборки</strong></div>
+        <p id="updateStatus" class="settings-status" role="status">Проверка выполняется по запросу.</p>
+        <div class="action-row"><button class="btn btn-secondary" type="button" id="checkUpdate">Проверить обновления</button><button class="btn btn-primary" type="button" id="installUpdate" hidden>Установить обновление</button></div>
+        <small>Обновляются только программные файлы. База и документы сохраняются. Перед установкой сохраните изменения во всех вкладках.</small>
+      </div>
+
+      <div class="panel backup-panel">
+
+        <h2>Резервные копии</h2><div class="system-line"><span>Последняя локальная копия (МСК)</span><strong id="settingsBackupAt">—</strong></div>
+
+        <div class="system-line"><span>Файл локальной копии</span><strong id="settingsBackupPath">—</strong></div>
+        <p id="settingsBackupWarning" class="settings-status" role="status"></p>
+
+        <div class="action-row"><button class="btn btn-secondary" type="button" id="settingsBackupNow">Создать копию сейчас</button><button class="btn btn-secondary" type="button" id="openBackupFolder">Открыть папку копий</button></div>
+
+        <div class="field restore-field"><label for="restoreBackup">Восстановление из копии</label><select id="restoreBackup"><option value="">Выберите копию</option></select><small>Будут восстановлены контракты и склад на дату выбранной копии. Перед заменой создаётся копия текущей базы.</small></div>
+
+        <div class="action-row"><button class="btn btn-secondary" type="button" id="restoreBackupButton">Восстановить выбранную копию</button></div>
+
+      </div>
+
+      <div class="panel backup-panel">
+
+        <h2>Перенос приложения и документов</h2>
+        <p>Полный комплект включает программу, текущую базу SQLite и все папки документов. Обычная резервная копия не содержит программу.</p>
+        <div class="action-row"><button class="btn btn-secondary" type="button" id="transferPackage">Создать полный комплект</button><button class="btn btn-secondary" type="button" id="openPackageFolder">Открыть общую папку</button><button class="btn btn-secondary" type="button" id="stopForTransfer">Завершить работу для переноса</button></div>
+        <p id="transferStatus" class="settings-status" role="status"></p>
+      </div>
+      <div class="panel backup-panel">
+        <h2>Расположение рабочей базы</h2><div class="system-line"><span>Файл SQLite</span><strong id="sourcePath">—</strong></div>
+
+        <div class="action-row"><button class="btn btn-secondary" type="button" id="openDatabaseFolder">Открыть папку базы</button></div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div id="homeProfileModal" class="home-modal-backdrop" hidden>
+
+  <div class="home-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="homeProfileDialogTitle">
+
+    <div class="home-modal-head"><div><h2 id="homeProfileDialogTitle">Карточка ИП — полные реквизиты</h2></div><button type="button" id="homeProfileClose" aria-label="Закрыть полную карточку">×</button></div>
+
+    <div class="home-profile-modal-data" id="homeProfileModalDetails"></div>
+
+    <div class="home-profile-actions"><button type="button" id="homeProfileCopyAll">Копировать все реквизиты</button><button type="button" id="homeProfilePrint">Печать карточки</button><button type="button" id="homeProfileCloseBottom">Закрыть</button></div>
+
+  </div>
+
+</div>
+
+<div id="homeNoteModal" class="home-modal-backdrop" hidden>
+
+  <div class="home-note-dialog" role="dialog" aria-modal="true" aria-labelledby="homeNoteDialogTitle">
+
+    <h2 id="homeNoteDialogTitle">Редактировать заметку</h2>
+
+    <form id="homeNoteEditForm">
+      <label>Заметка<input type="text" maxlength="500" required id="homeNoteEditText"></label>
+      <label>Дата (необязательно)<input type="date" id="homeNoteEditDue"></label>
+      <label>Время (МСК, необязательно)<input type="time" step="60" id="homeNoteEditTime"></label>
+      <div class="home-note-modal-actions">
+        <button type="button" id="homeNoteCancel">Отмена</button>
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+
+  </div>
+
+</div>
+
+<div id="modalBackdrop" class="modal-backdrop" hidden>
+
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+
+    <div class="modal-head">
+
+      <div>
+
+        <h2 id="formTitle">Новый контракт</h2>
+
+        <details id="formPeriod" class="form-period">
+
+          <summary><span id="cardPeriod">Ноябрь 2026</span><span class="period-action">Изменить период</span></summary>
+
+          <div class="form-grid period-fields">
+
+            <div class="field"><label for="contractYear">Год</label><select id="contractYear" name="year" form="contractForm" aria-describedby="yearError"><option value="2026">2026</option><option value="2027">2027</option></select><span class="field-error" id="yearError" data-error="year"></span></div>
+
+            <div class="field"><label for="contractMonth">Месяц</label><select id="contractMonth" name="month" form="contractForm" aria-describedby="monthError"></select><span class="field-error" id="monthError" data-error="month"></span></div>
+
+          </div>
+
+        </details>
+
+      </div>
+
+      <button class="modal-close" type="button" id="closeModal" aria-label="Закрыть карточку">×</button>
+
+    </div>
+
+    <form id="contractForm" novalidate>
+
+      <input type="hidden" name="id"><input type="hidden" name="revision">
+
+      <div class="form-body">
+
+        <div class="form-grid contract-identity"><div class="field">
+
+          <label for="customer">Заказчик <b aria-hidden="true">*</b></label>
+
+          <textarea id="customer" name="customer" rows="2" maxlength="500" aria-describedby="customerError" placeholder="Наименование организации"></textarea>
+
+          
+
+          <span class="field-error" id="customerError" data-error="customer"></span>
+
+        </div>
+
+          <div class="field"><label for="contractNumber">Номер контракта</label><input type="text" id="contractNumber" name="contractNumber" maxlength="100" aria-describedby="contractNumberError"><span class="field-error" id="contractNumberError" data-error="contractNumber"></span></div>
+
+          <div class="field"><label for="contractDate">Дата контракта</label><input type="date" id="contractDate" name="contractDate" aria-describedby="contractDateError"><span class="field-error" id="contractDateError" data-error="contractDate"></span></div>
+
+        </div>
+
+        <div class="form-grid form-grid-three">
+
+          <div class="field">
+
+            <label for="platform">Торговая площадка <b aria-hidden="true">*</b></label>
+
+            <select id="platform" name="platform" aria-describedby="platformError"></select>
+
+            <span class="field-error" id="platformError" data-error="platform"></span>
+
+          </div>
+
+          <div class="field">
+
+            <label for="contactPerson">Контактное лицо</label>
+
+            <input type="text" id="contactPerson" name="contactPerson" maxlength="200" aria-describedby="contactPersonError">
+
+            <span class="field-error" id="contactPersonError" data-error="contactPerson"></span>
+
+          </div>
+
+          <div class="field">
+
+            <label for="phone">Телефон</label>
+
+            <input type="tel" id="phone" name="phone" maxlength="80" aria-describedby="phoneError">
+
+            <span class="field-error" id="phoneError" data-error="phone"></span>
+
+          </div>
+
+        </div>
+
+        <section class="contract-items" aria-labelledby="contractItemsTitle">
+
+          <div class="contract-items-heading">
+
+            <h3 id="contractItemsTitle">Товарные позиции</h3>
+
+            <button type="button" class="item-action" id="addContractItem">+ Добавить позицию</button>
+
+          </div>
+
+          <div id="contractItems"></div>
+
+          <div class="contract-items-total">
+
+            <label for="contractAmount">Сумма контракта</label>
+
+            <output id="contractAmount">—</output>
+
+          </div>
+
+          <p class="field-error" id="contractItemsError" role="alert"></p>
+
+        </section>
+
+        <div class="form-grid form-grid-dates">
+
+          <div class="field">
+
+          <label for="status">Статус <b aria-hidden="true">*</b></label>
+
+          <select id="status" name="status" aria-describedby="statusError"></select>
+
+          
+
+          <span class="field-error" id="statusError" data-error="status"></span>
+
+        </div>
+
+          <div class="field">
+
+          <label for="signBy">Подписать</label>
+
+          <input type="date" id="signBy" name="signBy" aria-describedby="signByError" >
+
+          
+
+          <span class="field-error" id="signByError" data-error="signBy"></span>
+
+        </div>
+
+          <div class="field">
+
+          <label for="fulfillBy">Срок поставки</label>
+
+          <input type="date" id="fulfillBy" name="fulfillBy" aria-describedby="fulfillByError" >
+
+          
+
+          <span class="field-error" id="fulfillByError" data-error="fulfillBy"></span>
+
+        </div>
+
+          <div class="field">
+
+            <label for="paymentDue">Срок оплаты</label>
+
+            <input type="date" id="paymentDue" name="paymentDue" aria-describedby="paymentDueError">
+
+            <span class="field-error" id="paymentDueError" data-error="paymentDue"></span>
+
+            
+
+          </div>
+
+          <div class="field">
+
+            <label for="handoverDate">Дата вручения</label>
+
+            <input type="date" id="handoverDate" name="handoverDate" aria-describedby="handoverDateError" min="2020-01-01">
+
+            <button type="button" class="cancel-handover" id="cancelHandover" hidden>Отменить вручение</button>
+
+            <span class="field-error" id="handoverDateError" data-error="handoverDate"></span>
+
+          </div>
+
+        </div>
+
+        <section id="formExpenses" class="form-expenses" aria-labelledby="formExpensesTitle">
+
+          <div class="form-expenses-heading">
+
+            <h3 id="formExpensesTitle">Расходы</h3>
+
+            <span>Себестоимость и введённые затраты: <strong id="expensesTotal">0,00 ₽</strong></span>
+
+          </div>
+
+          <div class="form-grid expense-fields">
+
+            <div class="field">
+
+          <label for="cost">Себестоимость, ₽</label>
+
+          <input type="text" id="cost" name="cost" aria-describedby="costError" inputmode="decimal" placeholder="0,00"><small id="costStockHint" hidden></small>
+
+          
+
+          <span class="field-error" id="costError" data-error="cost"></span>
+
+        </div>
+
+            <div class="field" hidden>
+
+          <label for="taxAmount">Налог по контракту, ₽</label>
+
+          <input type="text" id="taxAmount" name="taxAmount" aria-describedby="taxAmountError" inputmode="decimal" placeholder="Оценка, если пусто">
+
+          
+
+          <span class="field-error" id="taxAmountError" data-error="taxAmount"></span>
+
+        </div>
+
+            <div class="field">
+
+          <label for="fee">Комиссия, ₽</label>
+
+          <input type="text" id="fee" name="fee" aria-describedby="feeError" inputmode="decimal" placeholder="0,00">
+
+          
+
+          <span class="field-error" id="feeError" data-error="fee"></span>
+
+        </div>
+
+            <div class="field">
+
+          <label for="logistics">Логистика, ₽</label>
+
+          <input type="text" id="logistics" name="logistics" aria-describedby="logisticsError" inputmode="decimal" placeholder="0,00">
+
+          
+
+          <span class="field-error" id="logisticsError" data-error="logistics"></span>
+
+        </div>
+
+            <div class="field">
+
+          <label for="other">Прочие расходы, ₽</label>
+
+          <input type="text" id="other" name="other" aria-describedby="otherError" inputmode="decimal" placeholder="0,00">
+
+          
+
+          <span class="field-error" id="otherError" data-error="other"></span>
+
+        </div>
+
+          </div>
+
+          <div class="other-expenses" aria-labelledby="otherExpenseHeading" style="display:none">
+
+            <div class="other-expenses-heading">
+
+              <h4 id="otherExpenseHeading">Прочие расходы по назначению</h4>
+
+              <button type="button" class="btn btn-secondary" id="addOtherExpense">+ Добавить расход</button>
+
+            </div>
+
+            
+
+            <div id="otherExpenseRows" class="other-expense-rows"></div>
+
+            <p class="field-error" id="otherExpenseError" role="alert"></p>
+
+          </div>
+
+        </section>
+
+        <section class="form-expenses" id="contractStock" hidden aria-label="Склад по контракту">
+
+          <p id="stockCardState" role="status"></p>
+
+          <div class="stock-actions">
+
+            <button type="button" class="btn btn-secondary" id="stockShip" hidden>Отметить отправку</button>
+
+          </div>
+
+        </section>
+
+      </div>
+
+      <div class="modal-actions">
+
+        <span id="formMessage" aria-live="polite">* Обязательные поля</span>
+
+        <div> <button type="button" class="btn btn-secondary contract-folder-button" id="contractFolderOpen" hidden>📁 Документы</button> <button type="button" class="btn btn-secondary" id="contractLetterOpen" hidden>Сопроводительное письмо</button> <button type="button" class="btn btn-secondary" id="terminateContract" hidden>Расторгнуть контракт</button> <button type="button" class="btn btn-secondary" id="cancelForm">Отмена</button><button type="submit" class="btn btn-primary" id="saveContract">Сохранить контракт</button></div>
+
+      </div>
+
+    </form>
+
+  </div>
+
+</div>
+
+<template id="contractItemTemplate">
+
+  <div class="contract-item">
+
+    <div class="field">
+
+      <label>Товар</label>
+
+      <select name="item.product"></select>
+
+      <span class="field-error" data-item-error="product"></span>
+
+    </div>
+
+    <div class="field">
+
+      <label>Количество, шт.</label>
+
+      <input name="item.quantity" type="number" min="1" max="1000000" step="1">
+
+      <span class="field-error" data-item-error="quantity"></span>
+
+    </div>
+
+    <div class="field">
+
+      <label>Цена за ед., ₽</label>
+
+      <input name="item.unitPrice" inputmode="decimal" placeholder="0,00" title="При вводе цены пересчитывается сумма, при вводе суммы — цена">
+
+      <span class="field-error" data-item-error="unitPrice"></span>
+
+    </div>
+
+    <div class="field">
+
+      <label>Сумма позиции, ₽</label>
+
+      <input name="item.amount" inputmode="decimal" placeholder="0,00">
+
+      <span class="field-error" data-item-error="amount"></span>
+
+    </div>
+
+    <button type="button" class="remove-contract-item" title="Удалить позицию">×</button>
+
+  </div>
+
+</template>
+
+<dialog id="paymentConfirmationDialog" class="payment-confirmation-dialog" aria-labelledby="paymentConfirmationTitle" aria-describedby="paymentConfirmationExplanation">
+
+  <div class="payment-confirmation-content">
+
+    <h2 id="paymentConfirmationTitle">Подтверждение полной оплаты</h2>
+
+    <p id="paymentConfirmationContract" class="payment-confirmation-contract"></p>
+
+    <p id="paymentConfirmationExplanation">Убедитесь, что по контракту действительно поступила вся сумма. После подтверждения статус станет «Оплачен», а документы будут перенесены в «Исполненные контракты».</p>
+
+    <label class="payment-confirmation-check">
+
+      <input id="paymentConfirmationCheck" type="checkbox">
+
+      <span>Подтверждаю фактическое получение полной оплаты</span>
+
+    </label>
+
+    <p class="payment-confirmation-note">Если впоследствии отменить отметку об оплате, документы останутся в архивной папке и продолжат открываться из карточки.</p>
+
+    <div class="payment-confirmation-actions">
+
+      <button id="paymentConfirmationCancel" type="button" class="btn btn-secondary">Отмена</button>
+
+      <button id="paymentConfirmationAccept" type="button" class="btn btn-primary" disabled>Подтвердить оплату</button>
+
+    </div>
+
+  </div>
+
+</dialog>
+
+<script type="module" src="/app/app.mjs?v=build024-labels1"></script>
+
+<dialog id="commonExpenseDialog" class="common-expense-dialog" aria-labelledby="commonExpenseTitle">
+  <div class="common-expense-heading"><h2 id="commonExpenseTitle"></h2><button class="btn btn-secondary" type="button" id="commonExpenseClose">Закрыть</button></div>
+  <p>Расходы месяца без привязки к отдельным контрактам. Они учитываются в итогах и расчётной базе УСН.</p>
+  <form id="commonExpenseForm" class="common-expense-form">
+    <div class="field"><label for="commonExpenseDate">Дата</label><input type="date" id="commonExpenseDate" required></div>
+    <div class="field"><label for="commonExpenseAmount">Сумма, ₽</label><input type="text" inputmode="decimal" id="commonExpenseAmount" placeholder="0,00" required></div>
+    <div class="field common-expense-comment"><label for="commonExpenseComment">Комментарий (необязательно)</label><input type="text" id="commonExpenseComment" maxlength="500" placeholder="Упаковка, интернет, банк…"></div>
+    <div class="common-expense-actions"><button class="btn btn-primary" type="submit" id="commonExpenseSave">Добавить</button><button class="btn btn-secondary" type="button" id="commonExpenseCancelEdit" hidden>Отмена</button></div>
+    <p id="commonExpenseError" role="alert"></p>
+  </form>
+  <div class="table-scroll"><table class="common-expense-table"><thead><tr><th>Дата</th><th>Назначение</th><th>Сумма</th><th>Действия</th></tr></thead><tbody id="commonExpenseRows"></tbody></table></div>
+  <div class="common-expense-total">Итого за месяц <strong id="commonExpenseTotal"></strong></div>
+</dialog>
+</body>
+
+</html>
+

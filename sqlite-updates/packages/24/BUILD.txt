@@ -1,0 +1,5 @@
+ContractsIP SQLite
+Build: 024
+Date: 2026-11-26
+Server: sqlite-original-ui-20261126-build-024
+URL: localhost, port 8877-8886 (automatic selection via EXE)

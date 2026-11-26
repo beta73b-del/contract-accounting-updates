@@ -1,16 +1,15 @@
 {
   "format": 1,
-  "version": 23,
-  "minVersion": 22,
-  "notes": "Главная → Итоги: «Всего расходов» включает комиссии, логистику, прочие и общие расходы, а также налог, без себестоимости товара. Себестоимость сохраняется в расчёте чистой прибыли и налога. При неизвестной ставке — прочерк.",
+  "version": 24,
+  "minVersion": 23,
+  "notes": "Главная: Итоги, Контракты, Заметки. Карточка ИП и Конкуренты: устранены дубли заголовков; увеличен шрифт реквизитов. Логика и данные не изменены.",
   "files": {
-    "BUILD.txt": "4248371ee4392071265c7fbbd686e3fbb3a41f456fea8f5f86a5521bbadabd48",
-    "app/app.mjs": "67011641ebc72d5420be27582079d9e22ac556f4325734f922a3c8be0e900ded",
-    "app/home.mjs": "51d263103f2fbb35fe11cfd8111ac04025dc18f504bccb04ff0452785f40d579",
-    "app/index.html": "9aa72ce74c420b144ebd4e4ada979da44caabe202cba8e0d83080496595fab43",
-    "browser-check.html": "cc4e5a18ca739b96ebb88928871a037ee5b2b4cf909ee00ddcf2e1c3682d64fb",
-    "original-ui-sha256.json": "74f63b1c6219ffdf9d6cdcb056380d4058dcf460178cf5dbae7b35ea79d03bbd",
-    "server.py": "33e2b1ae759424b21975462e0771349b426567f3ceac6a79811298588649a63f",
-    "version.json": "aac5c8a67df0e92ec34fc282c43b7d7c9ef4ca367038fa816fb6eee2cc03578c"
+    "BUILD.txt": "0d330af486bd90fa66a52713fa2ed20a9bae4cbe3ddda17d4a3ee07e7183a31d",
+    "app/index.html": "6087ec7d12da453c07ee6b82b9ff2101705b1b21145359545b3864b018dacb61",
+    "app/style.css": "c875fc54c56c69b63d93b4fbffe1fca6d442a95f78d7d04e664bb2b910fe9fd0",
+    "browser-check.html": "9b7043630ecdb9c6c735c9cc6b1b6b0e5f7ce4e707ccf6a79030dfa7896a28ed",
+    "original-ui-sha256.json": "4bb2149666e830fc22cf4ca2c57547f82cacf87539dcba21e4cbd546c6ebb2d9",
+    "server.py": "2e7dbae874d8bd511d907a69bc36ec26a5f26e232d33956fd2dfcf3e5002d63d",
+    "version.json": "544294b184bc5b14eb017b0765701e731e85708813e5c8511fa3f39524f49d97"
   }
 }
