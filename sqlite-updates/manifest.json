@@ -1,20 +1,18 @@
 {
   "format": 1,
-  "version": 26,
-  "minVersion": 25,
-  "notes": "Сборка 026: компактная анимированная кнопка домашней страницы, индикаторы копирования и загрузки, шесть календарных месяцев конкурентов по МСК, упрощение калькулятора и новый селектор времени заметок.",
+  "version": 27,
+  "minVersion": 26,
+  "notes": "Сборка 027: компактная нижняя панель, компактный выбор даты и времени заметок, символ ₽ в карточке ожидаемой оплаты.",
   "files": {
-    "BUILD.txt": "e95c1cc4c4c123253c8d6adb96af069119c85fc7982e5c7f75334a0922668cab",
-    "version.json": "00de0e722e78ff9ec3afd2f80b46c71227fcbcb1356c1a862179843fd086a9a0",
-    "server.py": "6ec5eab4c2d0a37e77071f539611a9e96874ff33440cdc8e7d36f76d448eafa3",
-    "original-ui-sha256.json": "e6db374629951551ffc4894276cb4bb394763b5606e3d9966e862afa475f460c",
-    "browser-check.html": "7f21cdae157212581b643091c412fbc934a2be39e759172b78395cacfe4eaefd",
-    "app/index.html": "c52a2fb0e156bed6c6c9ef41d60f8fe159cda6e298c09700ca537751821bfb16",
-    "app/app.mjs": "5b515271f9339aac18ddaa9935939a5559bbb9a11f6879f46fdb6a2cbef9575e",
-    "app/home.mjs": "7068d9e932619a94638ffdd62921dc4b81f8841a8ae3df676208a29cd143b47c",
-    "app/home.css": "22533e3fffb329d881bd463b86571e2864a19c586c693e8cf995a8f575ab849e",
-    "app/style.css": "22dba1707bad608cce5191cf249664ddba06a24cd63f83cc6f00293f4b987194",
-    "app/competitors.mjs": "9600f66de677b7a67e5df0b8878bd0e7aedefc7a9467ca578777fbe7cc852436",
-    "app/competitors-logic.mjs": "a698871c418485ff440dcc2ecb2798d344fa0c53a8c2450937e2ccf7e611433b"
+    "BUILD.txt": "01a30b17c59d1705c36395897f3b27490e390f76ff1fccc73456e179a83f9655",
+    "version.json": "870f9e3b30c07a37e3406dad2f7457634dab0077f7953518f10201f709a98140",
+    "server.py": "e9d2ae7cbc6d56d7ff9cf26300391848abb078fe64e30ea451fdc780c0213359",
+    "original-ui-sha256.json": "6669e56a5f2e4b5ca523e4be02401d51e5458c4f728dffbcbc950782c0cc8745",
+    "browser-check.html": "8cdb33b4c51db2eab098d2d19f6c0edaac447e5cfc5896e4b0dd89b4b7d23f43",
+    "app/index.html": "3451a9a4df0c1fe5fb8ff46854b5d95dc8d14497483b81e48e57516979d3189d",
+    "app/app.mjs": "51177759fb3104986b70a27732d69379330ad35a89180be2263ba380db708ff4",
+    "app/style.css": "33214459d2e766494cee95ada18d625254ac4c4d94fc21bf26026fd390497eb9",
+    "app/home.mjs": "9fa76fed3d02a24db18d8f7d78d8b18c045ea1c4c8328b741f9c797169efc9ec",
+    "app/home.css": "f5f59746a3a421dbbf47a1a8705dff35e33749ef714737f1cb51f09350a722ba"
   }
 }
