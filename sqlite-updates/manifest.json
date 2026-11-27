@@ -1,18 +1,16 @@
 {
   "format": 1,
-  "version": 27,
-  "minVersion": 26,
-  "notes": "Сборка 027: компактная нижняя панель, компактный выбор даты и времени заметок, символ ₽ в карточке ожидаемой оплаты.",
+  "version": 29,
+  "minVersion": 27,
+  "notes": "Сборка 029 (объединены 028 и 029): необязательное название реестра, убраны пояснения и всплывающая подсказка главной; полные имена новых папок документов, существующие пути сохранены.",
   "files": {
-    "BUILD.txt": "01a30b17c59d1705c36395897f3b27490e390f76ff1fccc73456e179a83f9655",
-    "version.json": "870f9e3b30c07a37e3406dad2f7457634dab0077f7953518f10201f709a98140",
-    "server.py": "e9d2ae7cbc6d56d7ff9cf26300391848abb078fe64e30ea451fdc780c0213359",
-    "original-ui-sha256.json": "6669e56a5f2e4b5ca523e4be02401d51e5458c4f728dffbcbc950782c0cc8745",
-    "browser-check.html": "8cdb33b4c51db2eab098d2d19f6c0edaac447e5cfc5896e4b0dd89b4b7d23f43",
-    "app/index.html": "3451a9a4df0c1fe5fb8ff46854b5d95dc8d14497483b81e48e57516979d3189d",
-    "app/app.mjs": "51177759fb3104986b70a27732d69379330ad35a89180be2263ba380db708ff4",
-    "app/style.css": "33214459d2e766494cee95ada18d625254ac4c4d94fc21bf26026fd390497eb9",
-    "app/home.mjs": "9fa76fed3d02a24db18d8f7d78d8b18c045ea1c4c8328b741f9c797169efc9ec",
-    "app/home.css": "f5f59746a3a421dbbf47a1a8705dff35e33749ef714737f1cb51f09350a722ba"
+    "app/app.mjs": "2783dd0cfbf8c00854dc900e000ebb5d06031c2de28a03b7c5cc187672fb80dc",
+    "app/index.html": "54ca6c8259ba6436516e5286d29f12e5030c10160d998cf044b0d4409300ab4c",
+    "app/finance-chart.mjs": "38733f2dabf26ad115c4e2828c9f965de020dd28aba76dce06a701f3500e016c",
+    "server.py": "35a2759330c4b80ee47cf9245684c42b9faf3118d414365765163cacde1f7285",
+    "BUILD.txt": "62592e1e768f5d050ceaeb4748a3fe68a7934fdb48766c63d3c0be8625c70517",
+    "version.json": "293b84d92b3e8f6650b0140986aead00d17135b2f71caeb3e3d8669db9e79bfe",
+    "browser-check.html": "6beff6fb276e3b25aec2a50e83958cc37b2f542780a6c96552a188b954d67dad",
+    "original-ui-sha256.json": "b254312ce2145768b8f9782acd0a7090265500b5feb3a679434e61c9d1debd78"
   }
 }
