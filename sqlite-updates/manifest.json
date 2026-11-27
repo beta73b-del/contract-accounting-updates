@@ -1,14 +1,20 @@
 {
   "format": 1,
-  "version": 25,
-  "minVersion": 24,
-  "notes": "Универсальная папка и автоматическое копирование без rclone. Полный ZIP: база с заметками, документы и пустые папки, персональные шаблоны, подпись и печать, настройки запуска. Восстановление ZIP с проверкой SHA-256, страховочной копией и откатом. 30 архивов, интервал 30 минут, повтор через 60 секунд.",
+  "version": 26,
+  "minVersion": 25,
+  "notes": "Сборка 026: компактная анимированная кнопка домашней страницы, индикаторы копирования и загрузки, шесть календарных месяцев конкурентов по МСК, упрощение калькулятора и новый селектор времени заметок.",
   "files": {
-    "BUILD.txt": "abe0234eeab6409a4ca9bbc8f2b689b1abcf6285ff461caad86f71e49db47504",
-    "app/app.mjs": "8ffc73933c7bde9c45290926699793a3383e99dcaafd48b9a20cd09058b2a2f3",
-    "app/index.html": "ee67ee46ec9318b1d0202b9cbf4fd48d7645004393b68ab558685cc0a6c0e677",
-    "original-ui-sha256.json": "4e488cbf4d908c2244407965574db986f09dee44fbae6903a75195d87b44f0e6",
-    "server.py": "c5b995c0e616122c9e7b0f82ca4bb0572f487a1fe5e86f1e9a6e0ee7028f892a",
-    "version.json": "88f036ac44055734446217aac1c54261fd040f6b733d2d878191ef75a1aafb1a"
+    "BUILD.txt": "e95c1cc4c4c123253c8d6adb96af069119c85fc7982e5c7f75334a0922668cab",
+    "version.json": "00de0e722e78ff9ec3afd2f80b46c71227fcbcb1356c1a862179843fd086a9a0",
+    "server.py": "6ec5eab4c2d0a37e77071f539611a9e96874ff33440cdc8e7d36f76d448eafa3",
+    "original-ui-sha256.json": "e6db374629951551ffc4894276cb4bb394763b5606e3d9966e862afa475f460c",
+    "browser-check.html": "7f21cdae157212581b643091c412fbc934a2be39e759172b78395cacfe4eaefd",
+    "app/index.html": "c52a2fb0e156bed6c6c9ef41d60f8fe159cda6e298c09700ca537751821bfb16",
+    "app/app.mjs": "5b515271f9339aac18ddaa9935939a5559bbb9a11f6879f46fdb6a2cbef9575e",
+    "app/home.mjs": "7068d9e932619a94638ffdd62921dc4b81f8841a8ae3df676208a29cd143b47c",
+    "app/home.css": "22533e3fffb329d881bd463b86571e2864a19c586c693e8cf995a8f575ab849e",
+    "app/style.css": "22dba1707bad608cce5191cf249664ddba06a24cd63f83cc6f00293f4b987194",
+    "app/competitors.mjs": "9600f66de677b7a67e5df0b8878bd0e7aedefc7a9467ca578777fbe7cc852436",
+    "app/competitors-logic.mjs": "a698871c418485ff440dcc2ecb2798d344fa0c53a8c2450937e2ccf7e611433b"
   }
 }

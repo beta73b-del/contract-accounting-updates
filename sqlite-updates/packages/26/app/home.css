@@ -1,0 +1,575 @@
+/* Approved home dashboard; scoped to home-mode or home-prefixed classes. */
+.home-visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.home-page-heading{display:none}
+.home-date-toggle{border:1px solid #d4e3fa;background:#f8fbff;color:#234e89;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border-radius:10px;cursor:pointer;white-space:nowrap;font-weight:650}
+.home-date-toggle:hover,.home-date-toggle[aria-expanded="true"]{background:#e9f2ff;border-color:#83b1f1}
+.home-mode .topbar{min-height:75px;height:auto;padding:5px 0 9px;gap:0;border-bottom:0;position:relative;z-index:40}
+.home-mode .topbar-upper{min-height:57px;justify-content:space-between;padding-right:51px;align-items:center}
+.home-mode .header-metrics{display:none}
+.home-mode .home-page-heading{display:block;min-width:0}
+.home-mode .home-page-heading h1{font-size:28px;line-height:1.2;letter-spacing:-.7px;color:#142940;margin:0}
+.home-mode .home-page-heading p{color:#486c96;font-size:12px;margin:3px 0 0}
+.home-mode .moscow-clock{flex:0 0 auto;width:auto;max-width:none;display:flex;flex-direction:row;align-items:center;gap:12px;margin:0;white-space:nowrap}
+.home-mode .home-date-toggle{width:auto;min-width:220px;max-width:none;white-space:nowrap}
+.home-mode .moscow-clock strong{font-size:16px;border:1px solid #e1e8f4;border-radius:10px;padding:9px 10px;background:#fafdff;white-space:nowrap}
+.home-mode .topbar-lower{position:absolute;right:0;top:12px;width:43px;min-height:39px;justify-content:flex-end;pointer-events:none}
+.home-mode .topbar-lower #listPeriod,.home-mode .topbar-lower #contractViewSwitch,.home-mode .topbar-lower #top-new{display:none!important}
+.home-mode .topbar-lower .top-actions,.home-mode .topbar-lower .view-alert-group,.home-mode .topbar-lower #headerBell{pointer-events:auto}
+.home-mode .topbar-lower .top-actions{gap:0}
+.home-mode #view-home{padding:2px 0 15px}
+.home-mode .main{background:linear-gradient(165deg,#f9fcff 0%,#eff5fe 75%,#edf3fb 100%);min-height:100vh}
+.home-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-bottom:14px}
+.home-kpi{min-width:0;border:1px solid #bbd5f5;border-radius:13px;min-height:104px;padding:15px 17px;display:flex;align-items:center;text-align:left;gap:13px;color:#153355;background:#eaf3ff;box-shadow:0 2px 5px #194e9b14}
+.home-kpi.customer{background:#f1f6ff}.home-kpi.money{background:#fff9ee;border-color:#efdfc6}
+.home-kpi:hover,.home-kpi:focus-visible{border-color:#548ee2;box-shadow:0 4px 13px #194e9b20}
+.home-kpi-icon{color:#1475ed;flex:0 0 39px;display:grid;place-items:center}
+.home-kpi.customer .home-kpi-icon{color:#266bd5}.home-kpi.money .home-kpi-icon{color:#dc8900}
+.home-kpi-icon svg{width:38px;height:38px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.home-kpi-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.home-kpi-copy>span{font-weight:750;font-size:14px;line-height:1.25}
+.home-kpi-copy strong{font-size:27px;color:#102f50;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.home-kpi-copy small{font-size:11px;color:#647a91;line-height:1.3}
+.home-kpi-arrow{font-size:26px;line-height:1;color:#2b5c9c}
+.home-body-grid{display:grid;grid-template-columns:minmax(0,2.08fr) minmax(365px, .98fr);gap:14px;align-items:start}
+.home-main-col,.home-side-col{display:grid;gap:14px;min-width:0}
+.home-panel{background:#fff;border:1px solid #cbdcf3;border-radius:13px;box-shadow:0 3px 9px #0d3a7b12;padding:13px;min-width:0}
+.home-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:11px}
+.home-title{display:flex;align-items:center;gap:10px;min-width:0}
+.home-icon{flex:0 0 29px;width:29px;height:29px;color:#1374e6;display:inline-grid;place-items:center}
+.home-icon svg{width:27px;height:27px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.home-title h2{font-size:19px;color:#142c46;line-height:1.15;margin:0;font-weight:750}
+.home-title p{font-size:11px;color:#5d7895;margin:2px 0 0}
+.home-panel-head>small{color:#5f7998;font-size:11px}
+.home-table-tools{display:flex;align-items:center;gap:8px;min-width:0}
+.home-table-tools select,.home-table-tools input{height:33px;border-radius:8px;border:1px solid #d4e2f5;background:#fafdff;color:#245a9a;font-size:11px;padding:6px 8px;min-width:0}
+.home-table-tools input{width:186px;color:#233c54}
+.home-table-tools select{max-width:158px}
+.home-contract-scroll{overflow-x:auto}
+.home-contract-table{border-collapse:collapse;table-layout:fixed;min-width:570px;width:100%}
+.home-contract-table thead{background:#e9f1fa}
+.home-contract-table th{font-size:11px;color:#526d8c;text-align:left;font-weight:700;padding:9px 9px}
+.home-contract-table th:nth-child(1){width:31%}
+.home-contract-table th:nth-child(2){width:32%}
+.home-contract-table th:nth-child(3){width:19%}
+.home-contract-table th:nth-child(4){width:18%}
+.home-contract-table td{padding:9px;border-bottom:1px solid #eaf0f7;color:#213f5f;font-size:12px;line-height:1.25;vertical-align:middle;overflow-wrap:anywhere}
+.home-contract-table tr[data-urgency="overdue"]{background:#fff0f0}
+.home-contract-table tr[data-urgency="critical"]{background:#fff4f2}
+.home-contract-table tr[data-urgency="soon"]{background:#fff9e9}
+.home-contract-table tbody tr:not(.home-empty):hover{background:#eaf4ff}
+.home-contract-name{border:0;background:none;color:#16395d;text-align:left;font-weight:700;padding:0;cursor:pointer;display:block;max-width:100%}
+.home-contract-name:hover{text-decoration:underline;color:#1a71c8}
+.home-contract-name small{font-size:10px;color:#758ba2;display:block;font-weight:400;margin-top:3px}
+.home-action-pill{font-size:11px;font-weight:700;background:#dfedff;color:#1563ae;border-radius:7px;padding:4px 7px;display:inline-block;line-height:1.25}
+.home-action-pill.customer{background:#fff1d7;color:#8b5e0f}
+.home-action-pill.done{background:#e4f6e8;color:#187942}
+.home-action-pill.draft{background:#eef2f7;color:#516983}
+.home-contract-sum{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:11px}
+.home-due{font-size:11px;font-weight:700;white-space:nowrap}
+.home-due.overdue,.home-due.critical{color:#bc3034}
+.home-due.soon{color:#a97309}
+.home-due.none{color:#6e8298;font-weight:500}
+.home-more-link{display:block;width:100%;background:none;border:0;color:#256cc0;text-align:right;font-size:11px;font-weight:650;padding:7px 2px 0}
+.home-more-link:hover{text-decoration:underline}
+.home-lower-grid{display:grid;grid-template-columns:minmax(0,1.18fr) minmax(0,1fr);gap:14px;align-items:stretch}
+.home-lower-grid>.home-panel{min-height:268px}
+.home-mini-link{background:none;border:0;padding:3px 0;color:#246ec2;font-size:11px;font-weight:650;white-space:nowrap}
+.home-mini-link:hover{text-decoration:underline}
+.home-notes-list{min-height:154px}
+.home-note-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto 23px;gap:6px;align-items:center;min-height:30px;border-bottom:1px solid #edf2f8;padding:4px 0;font-size:11px}
+.home-note-complete{width:18px;height:18px;border-radius:5px;border:1.7px solid #ad9979;background:#fff;display:grid;place-items:center;color:#196bd3;cursor:pointer;padding:0}
+.home-note-complete:hover{background:#e9f7ed;border-color:#299756}
+.home-note-text{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#1c3754}
+.home-note-date{font-size:10px;color:#77540f;background:#fff0bc;border-radius:6px;padding:4px 6px;white-space:nowrap}
+.home-note-date.overdue,.home-note-date.critical{color:#ad2828;background:#ffe0e2}
+.home-note-date.none{background:#eef2f8;color:#74869a}
+.home-note-edit{border:0;background:none;color:#577ba5;font-size:15px;cursor:pointer}
+.home-notes-create{display:flex;gap:5px;margin-top:10px;align-items:center}
+.home-notes-create>input{min-width:0;flex:1;border:1px solid #cdddf3;border-radius:8px;background:#fafdff;height:34px;padding:6px 9px;font-size:11px}
+.home-date-editor{width:31px;height:33px;display:grid;place-items:center;border:1px solid #cdddf3;border-radius:8px;position:relative;background:#fff}
+.home-date-editor input{width:25px;height:27px;min-width:0;padding:0;border:0;background:none;color:#2677ce;font-size:9px}
+.home-notes-create>button{height:33px;min-width:34px;border:0;border-radius:7px;background:#1373ec;color:#fff;font-size:24px}
+.home-stock-body{min-height:145px}
+.home-stock-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 4px;border-bottom:1px solid #e9eef6;font-size:12px}
+.home-stock-row-name{min-width:0;overflow-wrap:anywhere}
+.home-stock-row-name small{display:block;font-size:10px;color:#7891a7;margin-top:3px}
+.home-stock-row strong{white-space:nowrap;background:#dbf7da;color:#126331;font-size:12px;border-radius:7px;padding:5px 7px;font-variant-numeric:tabular-nums}
+.home-stock-row.negative strong{background:#ffe0e0;color:#a82323}
+.home-stock-shortage{margin-top:12px;display:flex;width:100%;justify-content:space-between;background:#eef5ff;border:0;border-radius:8px;color:#ba2d2d;padding:10px;font-size:12px;font-weight:700;text-align:left}
+.home-stock-shortage[hidden]{display:none}
+.home-profile-rows{display:grid;gap:0}
+.home-profile-row{display:grid;grid-template-columns:101px minmax(0,1fr) 28px;align-items:center;gap:7px;border-bottom:1px solid #eaf0f7;padding:8px 1px}
+.home-profile-row dt{font-size:11px;color:#476282;font-weight:650}
+.home-profile-row dd{margin:0;color:#173755;font-size:12px;overflow-wrap:anywhere;font-weight:600;font-variant-numeric:tabular-nums}
+.home-copy{border:0;background:none;color:#1874d9;min-width:28px;min-height:30px;display:grid;place-items:center;border-radius:6px;font-size:17px}
+.home-copy:hover{background:#e8f3ff}
+.home-copy svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+.home-primary-link{background:#116af0;color:white;border:0;width:100%;border-radius:9px;padding:12px 9px;font-weight:700;font-size:12px;margin-top:12px}
+.home-primary-link:hover{background:#0757be}
+.home-finance-bars{display:grid;gap:15px;margin:19px 0 13px}
+.home-finance-row{display:grid;grid-template-columns:112px minmax(0,1fr) 98px;gap:9px;align-items:center;font-size:11px;color:#243d59}
+.home-finance-row>strong{text-align:right;font-size:11px;font-weight:750;font-variant-numeric:tabular-nums;white-space:nowrap}
+.home-bar-track{height:22px;background:#f0f4fa;border-radius:5px;overflow:hidden}
+.home-bar-track>i{display:block;height:100%;min-width:2px;border-radius:5px;background:#1178e7}
+.home-finance-row[data-type="cost"] i{background:#8d9bb0}
+.home-finance-row[data-type="expenses"] i{background:#f49b37}
+.home-finance-row[data-type="profit"] i{background:#2ca35d}
+.home-finance-row[data-negative="true"] i{background:#d64b4b}
+.home-finance-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:12px;border-top:1px solid #e8eef6}
+.home-finance-footer strong{color:#126c3b;background:#e4f8e6;border-radius:8px;font-size:12px;padding:9px}
+.home-finance-footer strong.loss{color:#a12e2e;background:#ffe8e8}
+.home-finance-info{color:#7d97b1;font-size:19px}
+.home-calendar-popover{position:absolute;z-index:55;top:59px;right:22px;width:min(390px,calc(100vw - 32px));border:1px solid #abcaf0;background:#fff;border-radius:13px;box-shadow:0 15px 38px #173c6a36;padding:13px;max-height:min(70vh,610px);overflow:auto}
+.home-calendar-popover[hidden]{display:none}
+.home-cal-head{display:flex;align-items:center;justify-content:space-between;padding:3px 0 10px;color:#183b62}
+.home-cal-head button{background:none;border:0;color:#2865ae;font-size:25px;min-width:37px}
+.home-calendar-days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.home-cal-weekday{text-align:center;font-size:10px;color:#667e99;padding:8px 0}
+.home-calendar-day{position:relative;min-height:33px;border:0;border-radius:7px;background:transparent;color:#183955;display:grid;place-items:center;font-size:12px;padding:2px}
+.home-calendar-day:hover{background:#e8f2ff}
+.home-calendar-day.selected{background:#156be0;color:#fff;font-weight:750}
+.home-calendar-day.today:not(.selected){outline:1px solid #89b6eb}
+.home-calendar-day.has-contract:after,.home-calendar-day.has-note:after{content:'';position:absolute;bottom:2px;width:4px;height:4px;border-radius:50%;background:#1874e2}
+.home-calendar-day.has-note:after{background:#25a262}
+.home-calendar-day.has-contract.has-note:after{width:9px;background:linear-gradient(90deg,#1874e2 50%,#25a262 50%)}
+.home-calendar-events{border-top:1px solid #e3edf8;margin-top:12px;padding-top:10px;color:#35516f}
+.home-calendar-events>strong{font-size:12px}
+.home-cal-event{display:block;background:#f4f8ff;border:0;border-radius:8px;padding:7px 9px;margin-top:7px;width:100%;text-align:left;font-size:11px;color:#214b72}
+.home-cal-event small{display:block;color:#718ba6;margin-top:2px}
+.home-calendar-legend{display:flex;gap:18px;margin-top:10px;font-size:10px;color:#637e97}
+.home-calendar-legend span:first-child{color:#1976e5}
+.home-calendar-legend span:last-child{color:#22824e}
+.home-notes-page-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:8px 0 16px}
+.home-notes-page-head h2{margin:0;color:#213f5e}
+.home-note-tabs{display:flex;gap:6px}
+.home-note-tabs button{border:1px solid #cbdaf0;background:#fff;color:#2465af;padding:9px 12px;border-radius:8px}
+.home-note-tabs button[aria-pressed="true"]{background:#146de8;color:#fff}
+.home-notes-page-list{display:grid;gap:8px}
+.home-notes-page-item{border:1px solid #d9e5f4;background:#fff;border-radius:9px;padding:12px;display:flex;align-items:center;gap:12px}
+.home-notes-page-item>span{flex:1;overflow-wrap:anywhere}
+.home-notes-page-item button{border:1px solid #c7daed;background:#f5faff;border-radius:7px;padding:6px 9px;color:#2360a0}
+.home-modal-backdrop{position:fixed;inset:0;background:#08253b9c;z-index:105;display:flex;align-items:center;justify-content:center;padding:20px}
+.home-modal-backdrop[hidden]{display:none}
+.home-profile-dialog,.home-note-dialog{width:min(850px,95vw);max-height:93vh;overflow:auto;border:1px solid #a9c6ec;background:#fff;border-radius:16px;padding:19px;box-shadow:0 24px 70px #071a326a}
+.home-note-dialog{width:min(510px,95vw)}
+.home-modal-head{display:flex;justify-content:space-between;align-items:start;gap:14px;border-bottom:1px solid #e5edf9;padding-bottom:12px}
+.home-modal-head h2{margin:0;color:#153557;font-size:22px}
+.home-modal-head p{margin:4px 0 0;color:#627e98;font-size:12px}
+.home-modal-head button{border:0;background:none;font-size:30px;color:#365c8d}
+.home-profile-modal-data{display:grid;grid-template-columns:1fr 1fr;gap:13px;align-items:start;margin:15px 0}
+.home-profile-modal-section{padding:12px;border:1px solid #d1e3f7;border-radius:11px;min-width:0}
+.home-profile-modal-section h3{font-size:14px;color:#185ab0;margin:0 0 9px}
+.home-profile-modal-row{display:grid;grid-template-columns:130px minmax(0,1fr) 27px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid #eef2f7}
+.home-profile-modal-row dt{font-size:10px;color:#536b88;font-weight:700}
+.home-profile-modal-row dd{margin:0;overflow-wrap:anywhere;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.home-profile-actions{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.home-profile-actions button,.home-note-modal-actions button{border:1px solid #bfd4f0;border-radius:8px;background:#f5faff;color:#145daa;padding:10px;font-weight:650}
+.home-profile-actions button:first-child,.home-note-modal-actions button[type="submit"]{background:#146de8;color:white}
+.home-note-dialog h2{margin:0 0 14px;font-size:20px}
+.home-note-dialog label{display:grid;gap:6px;font-size:12px;margin:12px 0;color:#3b5a79;font-weight:650}
+.home-note-dialog input{width:100%;border-radius:8px;border:1px solid #cbd8e8;padding:10px;color:#1f425d}
+.home-note-modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}
+.home-note-modal-actions button:first-child{margin-right:auto;color:#a12c2c}
+.home-empty-state{padding:20px 12px;text-align:center;color:#6d849d;font-size:12px}
+@media(max-width:1320px){.home-body-grid{grid-template-columns:minmax(0,1fr) 350px}.home-kpi{padding:12px;gap:8px}.home-kpi-copy>span{font-size:12px}.home-kpi-copy strong{font-size:23px}.home-kpi-copy small{font-size:10px}.home-contract-table{min-width:545px}.home-finance-row{grid-template-columns:100px minmax(0,1fr) 86px;gap:5px;font-size:10px}}
+@media(max-width:1110px){.home-body-grid{grid-template-columns:1fr}.home-side-col{grid-template-columns:1fr}.home-lower-grid{grid-template-columns:1fr 1fr}.home-kpis{gap:8px}.home-kpi-icon{flex-basis:27px}.home-kpi-icon svg{height:28px;width:28px}.home-profile-modal-data{grid-template-columns:1fr 1fr}}
+@media(max-width:800px){.home-mode .topbar{padding-right:0}.home-mode .topbar-upper{padding-right:45px;flex-wrap:wrap}.home-mode .home-page-heading h1{font-size:23px}.home-mode .moscow-clock{gap:6px}.home-mode .moscow-clock strong{font-size:12px}.home-body-grid,.home-side-col,.home-lower-grid{grid-template-columns:1fr}.home-kpis{grid-template-columns:1fr 1fr}.home-kpis>.home-customer-kpi-wrap:last-child{grid-column:1/-1}.home-panel{padding:11px}.home-contract-table{min-width:610px}.home-profile-modal-data{grid-template-columns:1fr}.home-calendar-popover{right:0}}
+@media(max-width:520px){.home-kpis{grid-template-columns:1fr}.home-kpis>.home-customer-kpi-wrap:last-child{grid-column:auto}.home-mode .home-page-heading p{display:none}.home-date-toggle{font-size:10px;padding:6px}.home-mode .topbar-upper{gap:4px}.home-mode .moscow-clock strong{display:none}.home-table-tools input{width:115px}.home-title h2{font-size:17px}.home-panel-head{flex-wrap:wrap}.home-note-row{font-size:10px}.home-profile-modal-row{grid-template-columns:100px minmax(0,1fr) 27px}}
+@media print{.home-modal-backdrop{position:static;display:block;padding:0;background:#fff}.home-profile-dialog{width:100%;max-height:none;overflow:visible;border:0;box-shadow:none}.home-modal-head button,.home-profile-actions,.home-mode .shell{display:none!important}.home-profile-modal-data{display:grid!important}}
+
+
+/* UX fixes 2026-11-14: responsive controls, readable mobile contract cards.
+   Presentation only; preserves the existing table DOM and financial data. */
+.home-contracts > .home-panel-head {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.home-contracts .home-table-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+.home-contracts .home-table-tools select { min-width: 120px; }
+.home-contracts .home-table-tools input { min-width: 145px; }
+.home-mini-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 40px;
+  padding: 7px 4px;
+  text-align: right;
+  white-space: normal;
+  cursor: pointer;
+}
+.home-more-link {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 9px 3px;
+  cursor: pointer;
+}
+.home-profile-row {
+  grid-template-columns: 101px minmax(0,1fr) 40px;
+  min-height: 52px;
+}
+.home-profile-modal-row {
+  grid-template-columns: 130px minmax(0,1fr) 40px;
+  min-height: 48px;
+}
+.home-copy {
+  min-width: 40px;
+  min-height: 40px;
+  cursor: pointer;
+}
+.home-note-row { grid-template-columns: 34px minmax(0,1fr) auto 36px; }
+.home-note-complete { width: 34px; height: 34px; }
+.home-note-edit { min-width: 36px; min-height: 36px; }
+.home-finance-footer { flex-wrap: wrap; }
+/* The contracts pane can be narrow on desktop at 125–150% zoom. */
+.home-contracts { container-type: inline-size; }
+@container (max-width: 600px) {
+  /* Full content without sideways scrolling; the same live rows and click handlers. */
+  .home-contract-scroll { overflow-x: visible; }
+  .home-contract-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+    table-layout: auto;
+    border-collapse: separate;
+  }
+  .home-contract-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .home-contract-table tbody { display: grid; gap: 8px; }
+  .home-contract-table tbody tr:not(.home-empty) {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+    align-items: start;
+    gap: 8px;
+    padding: 11px 12px;
+    border: 1px solid #dce7f5;
+    border-radius: 9px;
+    box-shadow: 0 2px 4px #163c6810;
+  }
+  .home-contract-table tbody tr td {
+    display: block;
+    min-width: 0;
+    width: auto;
+    border-bottom: 0;
+    padding: 0;
+  }
+  .home-contract-table tbody tr td:first-child,
+  .home-contract-table tbody tr td:nth-child(2) { grid-column: 1 / -1; }
+  .home-contract-table tbody tr td:nth-child(3) { grid-column: 1; }
+  .home-contract-table tbody tr td:nth-child(4) { grid-column: 2; }
+  .home-contract-table tbody tr td:nth-child(3)::before,
+  .home-contract-table tbody tr td:nth-child(4)::before {
+    display: block;
+    margin-bottom: 4px;
+    color: #6f859e;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .home-contract-table tbody tr td:nth-child(3)::before { content: "Сумма"; }
+  .home-contract-table tbody tr td:nth-child(4)::before { content: "Срок"; }
+  .home-contract-sum, .home-due { white-space: normal; overflow-wrap: anywhere; }
+  .home-contract-name { min-height: 32px; }
+  .home-contract-table tbody tr.home-empty { display: block; }
+  .home-contract-table tbody tr.home-empty td { display: block; width: 100%; }
+}
+@media (max-width: 520px) {
+  .home-profile-modal-row { grid-template-columns: 100px minmax(0,1fr) 40px; }
+  .home-contracts .home-table-tools { width: 100%; justify-content: flex-start; }
+  .home-contracts .home-table-tools select { flex: 1 1 130px; }
+  .home-contracts .home-table-tools input { flex: 1 1 150px; }
+}
+
+/* Home finance: compact single-month version of the existing six-series
+   Financial Results chart (same color palette and raised SVG faces). */
+.home-finance .home-finance-bars{display:block;margin:4px 0 11px}
+.home-month-chart-graphic{max-width:100%;overflow:hidden}
+.home-month-chart-graphic svg{display:block;width:100%;height:auto;max-height:215px}
+.home-month-chart-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 9px;margin:4px 0 12px}
+.home-month-legend-line{min-width:0;display:grid;grid-template-columns:10px minmax(0,1fr);column-gap:5px;row-gap:1px;align-items:start}
+.home-month-legend-dot{display:block;width:9px;height:9px;border-radius:2px;margin-top:3px}
+.home-month-legend-label{font-size:10px;line-height:1.25;color:#4c667d;overflow-wrap:break-word}
+.home-month-legend-value{grid-column:2;font-size:11px;line-height:1.35;color:#1b3957;font-weight:750;font-variant-numeric:tabular-nums;white-space:nowrap}
+.home-month-net-profit{display:flex;gap:7px;align-items:center;justify-content:space-between;border-top:1px solid #e6edf6;padding:10px 2px 2px;color:#244d39}
+.home-month-net-profit span{font-size:11px;font-weight:700}
+.home-month-net-profit strong{font-weight:800;font-size:13px;color:#168153;white-space:nowrap;font-variant-numeric:tabular-nums}
+.home-month-net-profit[data-negative="true"] strong{color:#c33b45}
+@media(max-width:520px){
+ .home-month-chart-legend{column-gap:5px}
+ .home-month-legend-label{font-size:9.5px}
+ .home-month-legend-value{font-size:10px}
+}
+
+
+/* Quick notes live only on Home. No history drawer or saved copies. */
+.home-notes-create{display:grid;gap:8px;margin-top:10px}
+.home-notes-input-row{display:flex;gap:6px;align-items:center;min-width:0}
+.home-notes-input-row>input{min-width:0;flex:1;border:1px solid #cdddf3;border-radius:8px;background:#fafdff;height:36px;padding:7px 10px;font-size:12px}
+.home-notes-input-row>button{flex:none;min-width:35px;height:36px;border-radius:8px;cursor:pointer}
+.home-notes-input-row>button[type="submit"]{background:#1373ec;border:0;color:#fff;font-size:23px}
+.home-note-schedule-toggle{background:#f1f6ff;color:#2767ad;border:1px solid #cdddf3;font-size:16px}
+.home-note-schedule-toggle[aria-expanded="true"]{background:#dfeeff;border-color:#75a6e7}
+.home-notes-schedule{display:flex;flex-wrap:wrap;align-items:end;gap:8px;border:1px solid #e0eaf7;border-radius:8px;padding:9px;background:#f7faff}
+.home-notes-schedule[hidden]{display:none}
+.home-notes-schedule label{font-size:11px;color:#476282;display:grid;gap:4px}
+.home-notes-schedule input{font-size:12px;min-height:34px;max-width:160px;border:1px solid #cdddf3;border-radius:7px;background:#fff;padding:4px}
+.home-notes-schedule small{width:100%;font-size:10px;color:#607c95}
+.home-note-row{grid-template-columns:22px minmax(0,1fr) auto 23px;gap:6px}
+.home-note-row:has(.home-note-text:last-of-type){grid-template-columns:22px minmax(0,1fr) 23px}
+.home-note-date{background:#eef2f8;color:#476282;white-space:nowrap;font-size:10px}
+.home-note-complete{flex:none}
+
+
+/* Home: four equal-size supporting cards. Left contract table grows independently;
+   notes and stock follow it; right column stays aligned to the top. */
+@media (min-width:1111px) {
+ .home-body-grid { align-items:start; }
+ .home-main-col,.home-side-col { align-content:start; align-self:start; }
+ .home-lower-grid { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; }
+ .home-lower-grid>.home-panel,.home-side-col>.home-panel {
+   height:310px; min-height:0; max-height:310px; box-sizing:border-box;
+   display:flex; flex-direction:column; overflow:hidden;
+ }
+ .home-notes-list { min-height:0; flex:1 1 auto; overflow-y:auto; }
+ .home-notes-create { flex:0 0 auto; }
+ .home-stock-body { min-height:0; flex:1 1 auto; overflow-y:auto; }
+ .home-stock-shortage { flex:0 0 auto; }
+ .home-profile-rows { min-height:0; flex:1 1 auto; overflow-y:auto; }
+ .home-primary-link { flex:0 0 auto; padding:9px; margin-top:7px; }
+ .home-finance .home-panel-head { margin-bottom:5px; }
+ .home-finance .home-finance-bars { flex:1 1 auto; min-height:0; overflow-y:auto; margin:0 0 5px; }
+ .home-month-chart-graphic svg { max-height:112px; }
+ .home-month-chart-legend { gap:3px 7px; margin:2px 0 4px; }
+ .home-month-legend-label { font-size:9px; }
+ .home-month-legend-value { font-size:10px; }
+ .home-month-net-profit { padding:5px 2px 2px; }
+ .home-finance-footer { flex:0 0 auto; padding-top:6px; }
+ .home-finance-footer strong { padding:5px 7px; }
+}
+@media (max-width:1110px) {
+ .home-lower-grid>.home-panel,.home-side-col>.home-panel { min-height:0; height:auto; max-height:none; }
+}
+
+
+/* Main work surface: contracts grow down, quick notes remain at the top right. */
+.home-contracts-notes-layout { grid-template-columns:minmax(0,2.2fr) minmax(290px,1fr); align-items:start; }
+.home-contracts-notes-layout .home-main-col,.home-contracts-notes-layout .home-side-col { align-content:start; align-self:start; }
+.home-contracts-notes-layout .home-lower-grid[hidden],.home-contracts-notes-layout .home-finance[hidden],.home-contracts-notes-layout .home-profile[hidden] { display:none!important; }
+.home-contracts-notes-layout .home-notes { height:auto;max-height:none;min-height:270px;overflow:visible;display:block; }
+.home-contracts-notes-layout .home-notes-list { overflow:visible;min-height:0; }
+.home-contracts-notes-layout .home-contract-scroll { overflow:visible; }
+.home-contracts-notes-layout .home-contract-table { min-width:0; }
+.home-contracts-notes-layout .home-contract-table th:nth-child(1) { width:34%; }
+.home-contracts-notes-layout .home-contract-table th:nth-child(2) { width:32%; }
+.home-contracts-notes-layout .home-contract-table th:nth-child(3) { width:17%; }
+.home-contracts-notes-layout .home-contract-table th:nth-child(4) { width:17%; }
+.home-contracts-notes-layout .home-product-cell small { display:block;margin-top:4px;color:#71879d;font-size:10px; }
+.home-contracts-notes-layout .home-contract-table tbody tr[data-urgency] { background:transparent; }
+.home-contracts-notes-layout .home-contract-table tbody tr:hover { background:#eaf4ff; }
+@media (max-width:1110px) {
+ .home-contracts-notes-layout { grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr); }
+}
+@media (max-width:800px) {
+ .home-contracts-notes-layout { grid-template-columns:1fr; }
+ .home-contracts-notes-layout .home-side-col { grid-row:1; }
+ .home-contracts-notes-layout .home-main-col { grid-row:2; }
+}
+@container (max-width:600px) {
+ .home-contracts-notes-layout .home-contract-table tbody tr td:nth-child(2) { grid-column:1/-1; }
+ .home-contracts-notes-layout .home-contract-table tbody tr td:nth-child(3) { grid-column:1; }
+ .home-contracts-notes-layout .home-contract-table tbody tr td:nth-child(4) { grid-column:2; }
+ .home-contracts-notes-layout .home-contract-table tbody tr td:nth-child(3)::before { content:"Статус"; }
+ .home-contracts-notes-layout .home-contract-table tbody tr td:nth-child(4)::before { content:"Сумма"; }
+}
+
+
+/* Notes above the full-width contract registry. No empty right column. */
+.home-top-notes { margin-bottom:14px; }
+.home-top-notes .home-notes { display:block;height:auto;max-height:none;min-height:0;overflow:visible; }
+.home-top-notes .home-notes-list { min-height:0;overflow:visible; }
+.home-top-notes .home-note-text { font-weight:750;font-size:13px;white-space:normal;overflow-wrap:anywhere; }
+.home-top-notes .home-note-row { min-height:36px; }
+.home-contracts-notes-layout { display:block; }
+.home-contracts-notes-layout .home-main-col { display:block; }
+.home-contracts-notes-layout .home-side-col { display:none!important; }
+.home-contracts-notes-layout .home-contracts { width:100%; }
+@media (max-width:800px) {
+ .home-contracts-notes-layout .home-main-col { display:block; }
+}
+
+
+/* Demo-only adaptive home: contracts start alongside notes. */
+@media (min-width:801px) {
+ body.demo-adaptive-home #view-home.active {
+   display:grid;grid-template-columns:minmax(0,2.2fr) minmax(290px,1fr);
+   gap:14px;align-items:start;
+ }
+ body.demo-adaptive-home #view-home .home-kpis {grid-column:1/-1;grid-row:1;}
+ body.demo-adaptive-home #view-home .home-body-grid {
+   grid-column:1;grid-row:2;min-width:0;margin:0;
+ }
+ body.demo-adaptive-home #view-home .home-top-notes {
+   grid-column:2;grid-row:2;min-width:0;margin:0;
+ }
+ body.demo-adaptive-home #view-home .home-top-notes .home-notes {
+   padding:14px;min-height:0;
+ }
+ body.demo-adaptive-home #view-home .home-top-notes.notes-empty {
+   grid-column:1/-1;grid-row:2;justify-self:end;width:min(310px,100%);
+ }
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .home-body-grid {
+   grid-column:1/-1;grid-row:3;
+ }
+ body.demo-adaptive-home #view-home .home-contract-table th:nth-child(1){width:34%;}
+ body.demo-adaptive-home #view-home .home-contract-table th:nth-child(2){width:32%;}
+ body.demo-adaptive-home #view-home .home-contract-table th:nth-child(3){width:17%;}
+ body.demo-adaptive-home #view-home .home-contract-table th:nth-child(4){width:17%;}
+}
+@media (max-width:800px) {
+ body.demo-adaptive-home #view-home .home-body-grid {display:block;}
+}
+
+
+/* Demo: summary follows notes in the right column and fills its empty area. */
+.demo-summary-panel[hidden]{display:none!important}
+body.demo-adaptive-home #view-home .demo-summary-panel{min-width:0;padding:15px}
+.demo-summary-rows{display:grid;gap:0}
+.demo-summary-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 2px;border-bottom:1px solid #e6edf6;font-size:12px;color:#31506d}
+.demo-summary-row strong{font-size:15px;color:#163f6c;font-variant-numeric:tabular-nums}
+.demo-summary-foot{display:block;margin-top:11px;font-size:10px;color:#788da4}
+@media (min-width:801px){
+ body.demo-adaptive-home #view-home .demo-summary-panel{grid-column:2;grid-row:3;margin-top:-2px}
+ body.demo-adaptive-home #view-home .home-body-grid{grid-row:2 / span 3}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .demo-summary-panel{grid-column:2;grid-row:2}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .home-body-grid{grid-column:1;grid-row:2 / span 3}
+ body.demo-adaptive-home #view-home .home-top-notes.notes-empty{grid-column:2;grid-row:1;align-self:end;display:none}
+}
+@media (max-width:800px){
+ body.demo-adaptive-home #view-home .demo-summary-panel{margin-bottom:14px}
+}
+
+
+/* Compact, symmetric demo summary below notes. */
+body.demo-adaptive-home #view-home .demo-summary-panel{padding:14px;border-radius:12px}
+body.demo-adaptive-home #view-home .demo-summary-panel .home-panel-head{margin-bottom:10px}
+.demo-summary-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.demo-summary-tile{min-width:0;background:#f2f6fb;border-radius:8px;padding:10px 9px;display:grid;gap:4px}
+.demo-summary-tile small{font-size:11px;color:#6a819a}
+.demo-summary-tile strong{font-size:16px;color:#153b62;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.demo-summary-profitability{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 2px 10px;font-size:12px}
+.demo-summary-profitability strong{font-size:15px;color:#167451}
+.demo-summary-stock-title{font-size:12px;font-weight:750;padding:10px 2px 4px;border-top:1px solid #e4ebf3}
+.demo-summary-row{padding:8px 2px;gap:8px;align-items:start}
+.demo-summary-row span{overflow-wrap:anywhere;min-width:0}
+.demo-summary-row strong{white-space:nowrap;font-size:12px}
+@media(min-width:801px){
+ body.demo-adaptive-home #view-home .home-top-notes.notes-empty{display:none}
+ body.demo-adaptive-home #view-home .home-body-grid{grid-column:1;grid-row:2 / span 3}
+ body.demo-adaptive-home #view-home .demo-summary-panel{grid-column:2;grid-row:3;margin:0}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .demo-summary-panel{grid-column:2;grid-row:2}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .home-body-grid{grid-column:1;grid-row:2 / span 3}
+}
+
+
+/* Production: notes and summary aligned in a single right-hand stack. */
+@media(min-width:801px){
+ body.demo-adaptive-home #view-home.active{
+   display:grid;grid-template-columns:minmax(0,2.2fr) minmax(290px,1fr);
+   grid-template-rows:auto max-content 1fr;gap:12px 14px;align-items:start;
+ }
+ body.demo-adaptive-home #view-home .home-kpis{grid-column:1/-1;grid-row:1}
+ body.demo-adaptive-home #view-home .home-body-grid{grid-column:1;grid-row:2 / span 2;min-width:0;margin:0}
+ body.demo-adaptive-home #view-home .home-top-notes{grid-column:2;grid-row:2;margin:0;min-width:0}
+ body.demo-adaptive-home #view-home .demo-summary-panel{grid-column:2;grid-row:3;margin:0;min-width:0}
+ body.demo-adaptive-home #view-home .home-top-notes.notes-empty{display:block;grid-column:2;grid-row:2;width:100%;justify-self:stretch;align-self:start}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .home-body-grid{grid-column:1;grid-row:2 / span 2}
+ body.demo-adaptive-home #view-home:has(.home-top-notes.notes-empty) .demo-summary-panel{grid-column:2;grid-row:3}
+}
+body.demo-adaptive-home #view-home .home-top-notes .home-notes{padding:14px;min-height:0}
+body.demo-adaptive-home #view-home .home-note-row{
+ display:grid;grid-template-columns:14px minmax(0,1fr) auto 19px;
+ gap:8px;align-items:start;min-height:32px;padding:7px 0;
+}
+body.demo-adaptive-home #view-home .home-note-complete{
+ width:13px;height:13px;min-width:13px;min-height:13px;
+ border-radius:3px;border-width:1.3px;margin-top:3px;
+ box-sizing:border-box;position:relative;z-index:0;
+}
+body.demo-adaptive-home #view-home .home-note-text{
+ display:block;min-width:0;overflow:visible;white-space:normal;
+ overflow-wrap:anywhere;line-height:1.4;font-size:12px;font-weight:750;
+}
+body.demo-adaptive-home #view-home .home-note-edit{
+ min-width:19px;width:19px;padding:0;line-height:20px;text-align:center;
+}
+body.demo-adaptive-home #view-home .home-note-date{max-width:100%;font-size:9px}
+body.demo-adaptive-home #view-home .home-top-notes.notes-empty .home-notes-list{display:none}
+body.demo-adaptive-home #view-home .home-top-notes.notes-empty .home-panel-head{margin-bottom:4px}
+@media(max-width:800px){
+ body.demo-adaptive-home #view-home.active{display:flex;flex-direction:column;gap:12px}
+ body.demo-adaptive-home #view-home .home-kpis,
+ body.demo-adaptive-home #view-home .home-top-notes,
+ body.demo-adaptive-home #view-home .demo-summary-panel,
+ body.demo-adaptive-home #view-home .home-body-grid{width:100%;min-width:0;margin:0}
+ body.demo-adaptive-home #view-home .home-body-grid{order:1}
+ body.demo-adaptive-home #view-home .home-top-notes{order:2}
+ body.demo-adaptive-home #view-home .demo-summary-panel{order:3}
+}
+
+/* Approved: header obligation cards are redundant outside Home; Home has its own KPI cards. */
+body:not(.home-mode) .topbar-upper .header-metrics{display:none!important}
+
+/* Current stock snapshot in the monthly home summary. */
+.demo-summary-stock-item{padding:8px 2px;border-bottom:1px solid #e6edf6;min-width:0}
+.demo-summary-stock-name{font-size:12px;font-weight:700;color:#31506d;overflow-wrap:anywhere;margin-bottom:5px}
+.demo-summary-stock-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.demo-summary-stock-values>div{display:grid;gap:3px;min-width:0}
+.demo-summary-stock-values small{font-size:10px;color:#6a819a;overflow-wrap:anywhere}
+.demo-summary-stock-values strong{font-size:12px;color:#163f6c;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.demo-summary-stock-values .negative strong{color:#b42318}
+/* Build 008: no visible duplicate home heading; preserve accessible h1. */
+.home-mode .topbar-upper {justify-content:flex-end;}
+.home-mode .moscow-clock {margin-left:auto;}
+
+/* Build 020: preview uses the same complete queue as the customer KPI. */
+.home-customer-kpi-wrap{position:relative;min-width:0;display:flex}
+.home-customer-kpi-wrap>.home-kpi{width:100%;flex:1}
+.home-customer-preview{display:none;position:absolute;top:100%;left:0;width:max(100%, min(350px, 75vw));max-width:85vw;max-height: min(50vh, 360px);overflow:auto;z-index:39;background:white;border:1px solid #bbd5f5;border-radius:10px;box-shadow:0 5px 18px #194e9b30;color:#153355;padding:10px 12px;text-align:left}
+.home-customer-kpi-wrap:hover>.home-kpi[aria-expanded="false"]+.home-customer-preview,.home-customer-kpi-wrap>.home-kpi[aria-expanded="false"]:focus-visible+.home-customer-preview{display:block}
+.home-customer-preview-list{list-style:none;padding:0;margin:0}
+.home-customer-preview-list li{padding:7px 0;border-bottom:1px solid #eaf0f7;overflow-wrap:anywhere;font-size:12px;line-height:1.4}
+.home-customer-preview-list li:last-child{border-bottom:0}
+.home-customer-preview-list strong,.home-customer-preview-list span{display:block}
+.home-customer-preview-number{font-size:11px;color:#647a91}
+.home-customer-preview-action{color:#385d85}
+.home-customer-preview-empty{margin:3px 0;font-size:12px;color:#647a91}
+/* Align right-hand previews inside the viewport; left card opens to the right. */
+.home-kpis>.home-customer-kpi-wrap:last-child>.home-customer-preview{left:auto;right:0}
+@media(max-width:800px) and (min-width:521px){.home-kpis>.home-customer-kpi-wrap:nth-child(2)>.home-customer-preview{left:auto;right:0}}
+
+/* 026: optional Moscow time, mouse wheel, keyboard and presets. */
+.note-time-field{display:grid;gap:5px;font-size:12px;color:#476282;min-width:0}
+.note-time-field>input[hidden]{display:none!important}
+.note-time-picker{display:flex;align-items:center;justify-content:center;gap:5px;width:max-content;max-width:100%}
+.note-time-column{display:grid;justify-items:center;gap:1px}
+.note-time-field .note-time-part{width:46px!important;max-width:46px!important;min-height:32px;padding:5px!important;text-align:center;font-size:18px;font-variant-numeric:tabular-nums;border:1px solid #cbd8e8;border-radius:7px;background:#fff;color:#1f425d}
+.note-time-step,.note-time-preset{border:0;background:transparent;color:#486b93;border-radius:5px;cursor:pointer;line-height:1.25;padding:3px 7px;font-size:12px}
+.note-time-step{width:46px;font-size:14px;padding:0;min-height:20px}
+.note-time-step:hover,.note-time-preset:hover{background:#e3eefb;color:#17496a}
+.note-time-step:focus-visible,.note-time-preset:focus-visible{outline:2px solid #4787d8;outline-offset:1px}
+.note-time-colon{font-size:18px;font-weight:650}
+.note-time-presets{display:flex;flex-wrap:wrap;gap:2px}
+.note-time-presets button{border:1px solid #d4e1ee;background:#fff;font-size:11px;padding:4px 5px}
+.home-note-dialog .note-time-field{margin:12px 0}
+.home-notes-schedule .note-time-field{flex:1;min-width:140px}
