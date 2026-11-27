@@ -1,15 +1,14 @@
 {
   "format": 1,
-  "version": 24,
-  "minVersion": 23,
-  "notes": "Главная: Итоги, Контракты, Заметки. Карточка ИП и Конкуренты: устранены дубли заголовков; увеличен шрифт реквизитов. Логика и данные не изменены.",
+  "version": 25,
+  "minVersion": 24,
+  "notes": "Универсальная папка и автоматическое копирование без rclone. Полный ZIP: база с заметками, документы и пустые папки, персональные шаблоны, подпись и печать, настройки запуска. Восстановление ZIP с проверкой SHA-256, страховочной копией и откатом. 30 архивов, интервал 30 минут, повтор через 60 секунд.",
   "files": {
-    "BUILD.txt": "0d330af486bd90fa66a52713fa2ed20a9bae4cbe3ddda17d4a3ee07e7183a31d",
-    "app/index.html": "6087ec7d12da453c07ee6b82b9ff2101705b1b21145359545b3864b018dacb61",
-    "app/style.css": "c875fc54c56c69b63d93b4fbffe1fca6d442a95f78d7d04e664bb2b910fe9fd0",
-    "browser-check.html": "9b7043630ecdb9c6c735c9cc6b1b6b0e5f7ce4e707ccf6a79030dfa7896a28ed",
-    "original-ui-sha256.json": "4bb2149666e830fc22cf4ca2c57547f82cacf87539dcba21e4cbd546c6ebb2d9",
-    "server.py": "2e7dbae874d8bd511d907a69bc36ec26a5f26e232d33956fd2dfcf3e5002d63d",
-    "version.json": "544294b184bc5b14eb017b0765701e731e85708813e5c8511fa3f39524f49d97"
+    "BUILD.txt": "abe0234eeab6409a4ca9bbc8f2b689b1abcf6285ff461caad86f71e49db47504",
+    "app/app.mjs": "8ffc73933c7bde9c45290926699793a3383e99dcaafd48b9a20cd09058b2a2f3",
+    "app/index.html": "ee67ee46ec9318b1d0202b9cbf4fd48d7645004393b68ab558685cc0a6c0e677",
+    "original-ui-sha256.json": "4e488cbf4d908c2244407965574db986f09dee44fbae6903a75195d87b44f0e6",
+    "server.py": "c5b995c0e616122c9e7b0f82ca4bb0572f487a1fe5e86f1e9a6e0ee7028f892a",
+    "version.json": "88f036ac44055734446217aac1c54261fd040f6b733d2d878191ef75a1aafb1a"
   }
 }
