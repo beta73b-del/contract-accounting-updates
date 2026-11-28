@@ -1,16 +1,15 @@
 {
   "format": 1,
-  "version": 29,
-  "minVersion": 27,
-  "notes": "Сборка 029 (объединены 028 и 029): необязательное название реестра, убраны пояснения и всплывающая подсказка главной; полные имена новых папок документов, существующие пути сохранены.",
+  "version": 30,
+  "minVersion": 29,
+  "notes": "Сборка 030: в карточке контракта площадку можно выбрать из прежнего списка или ввести вручную (до 120 символов).",
   "files": {
-    "app/app.mjs": "2783dd0cfbf8c00854dc900e000ebb5d06031c2de28a03b7c5cc187672fb80dc",
-    "app/index.html": "54ca6c8259ba6436516e5286d29f12e5030c10160d998cf044b0d4409300ab4c",
-    "app/finance-chart.mjs": "38733f2dabf26ad115c4e2828c9f965de020dd28aba76dce06a701f3500e016c",
-    "server.py": "35a2759330c4b80ee47cf9245684c42b9faf3118d414365765163cacde1f7285",
-    "BUILD.txt": "62592e1e768f5d050ceaeb4748a3fe68a7934fdb48766c63d3c0be8625c70517",
-    "version.json": "293b84d92b3e8f6650b0140986aead00d17135b2f71caeb3e3d8669db9e79bfe",
-    "browser-check.html": "6beff6fb276e3b25aec2a50e83958cc37b2f542780a6c96552a188b954d67dad",
-    "original-ui-sha256.json": "b254312ce2145768b8f9782acd0a7090265500b5feb3a679434e61c9d1debd78"
+    "server.py": "a582f5d861e4a71081a5a62788e6d0ca51bfc5e6f9271d9c2def69b5c977b6ec",
+    "original-ui-sha256.json": "24bf798904ced810ea4125b69f346cc60d8856b63076d8a1b1bed60021dde64a",
+    "version.json": "60f711ad176c62687fe73485730d030a7bfd4e2ad94597786ee3ddbad3a70985",
+    "browser-check.html": "14b1db0a037c958b2df59db94c739b411e8c5effb55f0013768059b6438ae50a",
+    "BUILD.txt": "28a8cff7589e13e1c47c742b6c65ce9c89fcafcf31fe33063a6486ea9ffff877",
+    "app/app.mjs": "45233ad0bc55eb779638f07819859db1e85c135b140c26138c134a487211deb4",
+    "app/index.html": "9d11d18130422d4a03e5e553748184897865d5a10f9f0fcad9b44e3a4e615894"
   }
 }
